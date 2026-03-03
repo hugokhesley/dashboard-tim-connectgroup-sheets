@@ -262,8 +262,7 @@ def main():
 
             st.altair_chart(
                 chart.configure_view(fill="#1a1f2e")
-                     .configure_axis(labelColor="#94a3b8", titleColor="#64748b", gridColor="#2d3748", domainColor="#2d3748")
-                     .configure_background("#0f1117"),
+                     .configure_axis(labelColor="#94a3b8", titleColor="#64748b", gridColor="#2d3748", domainColor="#2d3748"),
                 use_container_width=True
             )
         else:
