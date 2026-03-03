@@ -6,7 +6,7 @@ from data_loader import (
 )
 
 st.set_page_config(
-    page_title="Connect Group | Renegociação",
+    page_title="Connect Group | Renegociacao",
     page_icon="🔄",
     layout="wide",
     initial_sidebar_state="expanded"
