@@ -160,11 +160,12 @@ def main():
         </div>""", unsafe_allow_html=True)
 
     st.markdown('<p class="section-title">🗂️ Kanban de Tramitação</p>', unsafe_allow_html=True)
-    k1, k2, k3, k4 = st.columns(4)
-    kanban_column(df[df["status_dash"] == "PENDENTE"],   "PENDENTE",   k1)
-    kanban_column(df[df["status_dash"] == "ANÁLISE"],    "ANÁLISE",    k2)
-    kanban_column(df[df["status_dash"] == "DEVOLVIDOS"], "DEVOLVIDOS", k3)
-    kanban_column(df[df["status_dash"] == "ENTRANTE"],   "ENTRANTE",   k4)
+    k1, k2, k3, k4, k5 = st.columns(5)
+    kanban_column(df[df["status_dash"] == "PRE-VENDA"],   "PRE-VENDA",   k1)
+    kanban_column(df[df["status_dash"] == "EM ANALISE"], "EM ANALISE", k2)
+    kanban_column(df[df["status_dash"] == "CREDITO"],    "CREDITO",    k3)
+    kanban_column(df[df["status_dash"] == "DEVOLVIDOS"], "DEVOLVIDOS", k4)
+    kanban_column(df[df["status_dash"] == "ENTRANTE"],   "ENTRANTE",   k5)
 
     st.markdown('<p class="section-title">📋 Dados Completos</p>', unsafe_allow_html=True)
     with st.expander("Ver todos os registros filtrados"):
