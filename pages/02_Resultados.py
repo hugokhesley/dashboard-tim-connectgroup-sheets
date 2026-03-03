@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns
+from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns, get_meta_mes
 
 st.set_page_config(
     page_title="Connect Group | Resultados",
@@ -46,9 +46,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-TIPOS_DISPONIVEIS = ["NOVO", "ADITIVO", "RENEGOCIACAO"]
-
-
 @st.cache_data(ttl=180)
 def load_resultados():
     try:
@@ -76,13 +73,13 @@ def normalize_resultados(df):
     rename = {}
     for col in df.columns:
         n = _normalize(col)
-        if n == "data de ativacao":    rename[col] = "data_ativacao"
-        elif n == "razao social":      rename[col] = "razao_social"
-        elif n == "tipo de contratacao": rename[col] = "tipo_contratacao"
-        elif n == "acessos":           rename[col] = "acessos"
-        elif n == "preco oferta":      rename[col] = "preco_oferta"
-        elif n == "parceiro":          rename[col] = "parceiro"
-        elif n == "fila atual":        rename[col] = "fila_atual"
+        if n == "data de ativacao":       rename[col] = "data_ativacao"
+        elif n == "razao social":         rename[col] = "razao_social"
+        elif n == "tipo de contratacao":  rename[col] = "tipo_contratacao"
+        elif n == "acessos":              rename[col] = "acessos"
+        elif n == "preco oferta":         rename[col] = "preco_oferta"
+        elif n == "parceiro":             rename[col] = "parceiro"
+        elif n == "fila atual":           rename[col] = "fila_atual"
     df = df.rename(columns=rename)
     df = _dedup_columns(df)
     for col in ["razao_social", "tipo_contratacao", "parceiro"]:
@@ -97,6 +94,18 @@ def normalize_resultados(df):
             df["data_ativacao"].apply(_s), dayfirst=True, errors="coerce"
         ).dt.strftime("%m/%Y")
     return df
+
+
+def _prog(v, t, color):
+    pct = min(int(v / t * 100), 100) if t > 0 else 0
+    return (
+        '<div style="margin-top:10px">'
+        '<div style="display:flex;justify-content:space-between;font-size:0.71rem;color:#64748b;margin-bottom:4px">'
+        f'<span>Atingimento</span><span>{pct}%</span></div>'
+        '<div style="background:#2d3748;border-radius:99px;height:7px">'
+        f'<div style="width:{pct}%;background:{color};height:7px;border-radius:99px"></div>'
+        '</div></div>'
+    )
 
 
 def main():
@@ -122,30 +131,22 @@ def main():
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
 
-        # Tipo de contratação
-        tipos_norm = []
         if "tipo_contratacao" in df.columns:
-            tipos_raw = sorted(df["tipo_contratacao"].apply(lambda x: _s(x).upper()).unique().tolist())
-            tipos_raw = [t for t in tipos_raw if t]
+            tipos_raw = sorted([t for t in df["tipo_contratacao"].apply(
+                lambda x: _s(x).upper()).unique().tolist() if t])
         else:
-            tipos_raw = TIPOS_DISPONIVEIS
+            tipos_raw = ["NOVO", "ADITIVO", "RENEGOCIACAO"]
 
-        tipos_sel = st.multiselect(
-            "Tipo de Contratação",
-            options=tipos_raw,
-            default=tipos_raw
-        )
+        tipos_sel = st.multiselect("Tipo de Contratação", options=tipos_raw, default=tipos_raw)
 
-        # Parceiro
         parceiros = ["Todos"]
         if "parceiro" in df.columns:
             parceiros += sorted([_s(v) for v in df["parceiro"].unique() if _s(v)])
         parceiro_sel = st.selectbox("Parceiro", parceiros)
 
-        # Mês
         meses = ["Todos"]
         if "mes_ativacao" in df.columns:
-            meses_validos = sorted([m for m in df["mes_ativacao"].dropna().unique() if m != "NaT"])
+            meses_validos = sorted([m for m in df["mes_ativacao"].dropna().unique() if m and m != "NaT"])
             meses += meses_validos
         mes_sel = st.selectbox("Mês de Ativação", meses, index=len(meses)-1 if len(meses) > 1 else 0)
 
@@ -157,37 +158,50 @@ def main():
 
     # ── Aplicar filtros ──────────────────────────────────────────────────
     dff = df.copy()
-
     if tipos_sel and "tipo_contratacao" in dff.columns:
         dff = dff[dff["tipo_contratacao"].apply(lambda x: _s(x).upper() in tipos_sel)]
-
     if parceiro_sel != "Todos" and "parceiro" in dff.columns:
         dff = dff[dff["parceiro"].apply(lambda x: _s(x) == parceiro_sel)]
-
     if mes_sel != "Todos" and "mes_ativacao" in dff.columns:
         dff = dff[dff["mes_ativacao"] == mes_sel]
-
     dff = _dedup_columns(dff.reset_index(drop=True))
 
     # ── KPIs ─────────────────────────────────────────────────────────────
-    total_acessos  = int(dff["acessos"].sum())     if "acessos"      in dff.columns else 0
-    total_receita  = dff["preco_oferta"].sum()      if "preco_oferta" in dff.columns else 0
-    ticket_medio   = (total_receita / total_acessos) if total_acessos > 0 else 0
-    total_clientes = dff["razao_social"].nunique()  if "razao_social" in dff.columns else 0
+    dff_vendas = dff[dff["tipo_contratacao"].apply(
+        lambda x: _s(x).upper() in ["NOVO", "ADITIVO"]
+    )] if "tipo_contratacao" in dff.columns else dff
+
+    total_acessos  = int(dff["acessos"].sum())        if "acessos"      in dff.columns else 0
+    acessos_vendas = int(dff_vendas["acessos"].sum()) if "acessos"      in dff_vendas.columns else 0
+    total_receita  = dff["preco_oferta"].sum()         if "preco_oferta" in dff.columns else 0
+    ticket_medio   = (total_receita / total_acessos)   if total_acessos > 0 else 0
+    total_clientes = dff["razao_social"].nunique()     if "razao_social" in dff.columns else 0
+
+    meta = get_meta_mes(mes_sel) if mes_sel != "Todos" else {"vendas_acessos": 0, "vendas_receita": 0}
+    meta_acessos = int(meta["vendas_acessos"])
+    meta_receita = meta["vendas_receita"]
 
     st.markdown('<p class="section-title">📈 KPIs do Período</p>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
+        sub  = f'de <b style="color:#e2e8f0">{meta_acessos:,}</b> meta' if meta_acessos > 0 else "sem meta cadastrada"
+        prog = _prog(acessos_vendas, meta_acessos, "#6366f1") if meta_acessos > 0 else ""
         st.markdown(f"""<div class="kpi-card indigo">
-          <div class="kpi-label">🎯 Total de Acessos</div>
-          <div class="kpi-value">{total_acessos:,}</div>
-          <div class="kpi-sub">acessos ativados</div>
+          <div class="kpi-label">🎯 Acessos (Novo + Aditivo)</div>
+          <div style="display:flex;align-items:baseline;gap:8px;margin:6px 0">
+            <span class="kpi-value">{acessos_vendas:,}</span>
+            <span style="font-size:0.85rem;color:#94a3b8">{sub}</span>
+          </div>{prog}
         </div>""", unsafe_allow_html=True)
     with c2:
+        sub2  = f'de <b style="color:#e2e8f0">R$ {meta_receita:,.2f}</b> meta' if meta_receita > 0 else "sem meta cadastrada"
+        prog2 = _prog(total_receita, meta_receita, "#10b981") if meta_receita > 0 else ""
         st.markdown(f"""<div class="kpi-card green">
           <div class="kpi-label">💰 Receita Total</div>
-          <div class="kpi-value">R$ {total_receita:,.2f}</div>
-          <div class="kpi-sub">receita contratada</div>
+          <div style="display:flex;align-items:baseline;gap:8px;margin:6px 0">
+            <span class="kpi-value">R$ {total_receita:,.2f}</span>
+            <span style="font-size:0.85rem;color:#94a3b8">{sub2}</span>
+          </div>{prog2}
         </div>""", unsafe_allow_html=True)
     with c3:
         st.markdown(f"""<div class="kpi-card amber">
@@ -206,7 +220,6 @@ def main():
     if "mes_ativacao" in df.columns:
         st.markdown('<p class="section-title">📊 Evolução Mensal</p>', unsafe_allow_html=True)
 
-        # Flag para escolher o que exibir
         metrica_graf = st.radio(
             "Exibir no gráfico:",
             ["Acessos", "Receita", "Ambos"],
@@ -214,7 +227,6 @@ def main():
             label_visibility="collapsed"
         )
 
-        # Agrupa por mês considerando filtros de tipo e parceiro (mas não de mês)
         df_graf = df.copy()
         if tipos_sel and "tipo_contratacao" in df_graf.columns:
             df_graf = df_graf[df_graf["tipo_contratacao"].apply(lambda x: _s(x).upper() in tipos_sel)]
@@ -225,7 +237,6 @@ def main():
                   .agg(Acessos=("acessos","sum"), Receita=("preco_oferta","sum"))
                   .dropna(subset=["mes_ativacao"]))
 
-        # Ordena cronologicamente
         try:
             mensal["_dt"] = pd.to_datetime(mensal["mes_ativacao"], format="%m/%Y")
             mensal = mensal.sort_values("_dt").drop(columns=["_dt"])
@@ -236,14 +247,18 @@ def main():
             import altair as alt
 
             if metrica_graf == "Acessos":
-                chart = alt.Chart(mensal).mark_bar(color="#6366f1", cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                chart = alt.Chart(mensal).mark_bar(
+                    color="#6366f1", cornerRadiusTopLeft=4, cornerRadiusTopRight=4
+                ).encode(
                     x=alt.X("mes_ativacao:O", title="Mês", sort=None),
                     y=alt.Y("Acessos:Q", title="Acessos"),
                     tooltip=["mes_ativacao", "Acessos"]
                 ).properties(height=280)
 
             elif metrica_graf == "Receita":
-                chart = alt.Chart(mensal).mark_bar(color="#10b981", cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                chart = alt.Chart(mensal).mark_bar(
+                    color="#10b981", cornerRadiusTopLeft=4, cornerRadiusTopRight=4
+                ).encode(
                     x=alt.X("mes_ativacao:O", title="Mês", sort=None),
                     y=alt.Y("Receita:Q", title="Receita (R$)"),
                     tooltip=["mes_ativacao", "Receita"]
@@ -251,18 +266,24 @@ def main():
 
             else:  # Ambos
                 base = alt.Chart(mensal).encode(x=alt.X("mes_ativacao:O", title="Mês", sort=None))
-                bars = base.mark_bar(color="#6366f1", opacity=0.85, cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                bars = base.mark_bar(
+                    color="#6366f1", opacity=0.85, cornerRadiusTopLeft=4, cornerRadiusTopRight=4
+                ).encode(
                     y=alt.Y("Acessos:Q", title="Acessos", axis=alt.Axis(titleColor="#6366f1")),
                     tooltip=["mes_ativacao","Acessos","Receita"]
                 )
-                line = base.mark_line(color="#10b981", strokeWidth=3, point=alt.OverlayMarkDef(color="#10b981", size=60)).encode(
+                line = base.mark_line(
+                    color="#10b981", strokeWidth=3,
+                    point=alt.OverlayMarkDef(color="#10b981", size=60)
+                ).encode(
                     y=alt.Y("Receita:Q", title="Receita (R$)", axis=alt.Axis(titleColor="#10b981"))
                 )
                 chart = alt.layer(bars, line).resolve_scale(y="independent").properties(height=280)
 
             st.altair_chart(
                 chart.configure_view(fill="#1a1f2e")
-                     .configure_axis(labelColor="#94a3b8", titleColor="#64748b", gridColor="#2d3748", domainColor="#2d3748"),
+                     .configure_axis(labelColor="#94a3b8", titleColor="#64748b",
+                                     gridColor="#2d3748", domainColor="#2d3748"),
                 use_container_width=True
             )
         else:
@@ -271,9 +292,7 @@ def main():
     # ── Tabela detalhada ──────────────────────────────────────────────────
     st.markdown('<p class="section-title">📋 Registros Ativados</p>', unsafe_allow_html=True)
 
-    # Agrupado por parceiro
     col_tab1, col_tab2 = st.columns([1, 2])
-
     with col_tab1:
         st.caption("Por Parceiro")
         if "parceiro" in dff.columns:
@@ -291,15 +310,16 @@ def main():
         st.caption("Detalhe por Cliente")
         cols_show = [c for c in ["razao_social","parceiro","tipo_contratacao","mes_ativacao","acessos","preco_oferta"]
                      if c in dff.columns]
-        st.dataframe(dff[cols_show].sort_values("acessos", ascending=False) if "acessos" in dff.columns else dff[cols_show],
-                     use_container_width=True, hide_index=True,
-                     column_config={
-                         "razao_social":     "Razão Social",
-                         "parceiro":         "Parceiro",
-                         "tipo_contratacao": "Tipo",
-                         "mes_ativacao":     "Mês",
-                         "acessos":          st.column_config.NumberColumn("Acessos", format="%d"),
-                         "preco_oferta":     st.column_config.NumberColumn("Receita", format="R$ %.2f"),
-                     })
+        st.dataframe(
+            dff[cols_show].sort_values("acessos", ascending=False) if "acessos" in dff.columns else dff[cols_show],
+            use_container_width=True, hide_index=True,
+            column_config={
+                "razao_social":     "Razão Social",
+                "parceiro":         "Parceiro",
+                "tipo_contratacao": "Tipo",
+                "mes_ativacao":     "Mês",
+                "acessos":          st.column_config.NumberColumn("Acessos", format="%d"),
+                "preco_oferta":     st.column_config.NumberColumn("Receita", format="R$ %.2f"),
+            })
 
 main()
