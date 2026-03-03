@@ -239,9 +239,9 @@ def apply_filters(df: pd.DataFrame, mes_alvo: str, tipo_list: list, parceiro: st
     df["mes_ativacao"] = parse_month(df["data_ativacao"]) if "data_ativacao" in df.columns else pd.NA
     df["mes_input"]    = parse_month(df["data_input"])    if "data_input"    in df.columns else pd.NA
 
-    # Regra safra + pipeline
+    # Regra: ativado no mês OU sem ativação (tramitando, qualquer data de input)
     mask_ativado  = df["mes_ativacao"] == mes_alvo
-    mask_pipeline = df["mes_ativacao"].isna() & (df["mes_input"] == mes_alvo)
+    mask_pipeline = df["mes_ativacao"].isna()
     df = df[mask_ativado | mask_pipeline].copy()
     df = _dedup_columns(df)
 
