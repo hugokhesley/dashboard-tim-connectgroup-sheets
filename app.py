@@ -127,6 +127,10 @@ def main():
         st.caption("Dados via Google Sheets · cache 3 min")
 
     df = apply_filters(raw.copy(), MES_ALVO, ["NOVO", "ADITIVO"], parceiro_sel)
+    if "status_dash" in df.columns:
+        st.sidebar.caption("STATUS: " + str(df["status_dash"].value_counts().to_dict()))
+    if "fila_atual" in df.columns:
+        st.sidebar.caption("FILA: " + str(df["fila_atual"].unique().tolist()[:8]))
 
     ativados    = df[df["mes_ativacao"] == MES_ALVO]
     vol_ativado = int(ativados["acessos"].sum())
