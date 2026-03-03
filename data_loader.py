@@ -139,10 +139,28 @@ def load_data() -> pd.DataFrame:
 
 @st.cache_data(ttl=180)
 def load_metas() -> dict:
+    """Retorna metas do mes atual (linha sem coluna mes ou primeira linha)."""
     defaults = {
         'vendas_acessos': 626, 'vendas_receita': 0,
         'renegociacao_acessos': 751, 'renegociacao_receita': 0,
     }
+    try:
+        todas = load_metas_historico()
+        if not todas:
+            return defaults
+        # pega a ultima entrada como meta corrente
+        ultima = list(todas.values())[-1]
+        return ultima
+    except Exception:
+        return defaults
+
+
+@st.cache_data(ttl=180)
+def load_metas_historico() -> dict:
+    """Retorna dict {mes: {vendas_acessos, vendas_receita}} para todos os meses da aba metas.
+    Estrutura da planilha:
+      mes | vendas_acessos | vendas_receita | renegociacao_acessos | renegociacao_receita
+    """
     try:
         client = get_gspread_client()
         sheet_url = st.secrets['sheets']['url']
@@ -150,27 +168,36 @@ def load_metas() -> dict:
         try:
             ws = spreadsheet.worksheet('metas')
         except Exception:
-            return defaults
+            return {}
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 2:
-            return defaults
-        result = defaults.copy()
+            return {}
+        headers = [_s(h).lower() for h in all_values[0]]
+        resultado = {}
         for row in all_values[1:]:
-            if not row:
+            if not row or not _s(row[0]):
                 continue
-            indicador  = _s(row[0]).lower()
-            vendas_val = _to_num(row[1]) if len(row) > 1 else 0
-            reneg_val  = _to_num(row[2]) if len(row) > 2 else 0
-            if 'acesso' in indicador:
-                result['vendas_acessos']       = vendas_val
-                result['renegociacao_acessos'] = reneg_val
-            elif 'receita' in indicador or 'valor' in indicador:
-                result['vendas_receita']       = vendas_val
-                result['renegociacao_receita'] = reneg_val
-        return result
+            mes = _s(row[0])  # ex: 03/2026
+            def _v(i): return _to_num(row[i]) if len(row) > i else 0
+            # tenta ler por posicao: mes | vendas_acessos | vendas_receita | reneg_acessos | reneg_receita
+            resultado[mes] = {
+                'vendas_acessos':       _v(1),
+                'vendas_receita':       _v(2),
+                'renegociacao_acessos': _v(3),
+                'renegociacao_receita': _v(4),
+            }
+        return resultado
     except Exception as e:
-        st.warning(f'Erro ao carregar metas: {e}')
-        return defaults
+        st.warning(f'Erro ao carregar metas historico: {e}')
+        return {}
+
+
+def get_meta_mes(mes: str) -> dict:
+    """Retorna metas para um mes especifico. Fallback zeros se nao encontrar."""
+    historico = load_metas_historico()
+    if mes in historico:
+        return historico[mes]
+    return {'vendas_acessos': 0, 'vendas_receita': 0, 'renegociacao_acessos': 0, 'renegociacao_receita': 0}
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
