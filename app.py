@@ -127,10 +127,6 @@ def main():
         st.caption("Dados via Google Sheets · cache 3 min")
 
     df = apply_filters(raw.copy(), MES_ALVO, ["NOVO", "ADITIVO"], parceiro_sel)
-    if "status_dash" in df.columns:
-        st.sidebar.caption("STATUS: " + str(df["status_dash"].value_counts().to_dict()))
-    if "fila_atual" in df.columns:
-        st.sidebar.caption("FILA: " + str(df["fila_atual"].unique().tolist()[:8]))
 
     ativados    = df[df["mes_ativacao"] == MES_ALVO]
     vol_ativado = int(ativados["acessos"].sum())
@@ -172,12 +168,11 @@ def main():
         </div>""", unsafe_allow_html=True)
 
     st.markdown('<p class="section-title">🗂️ Kanban de Tramitação</p>', unsafe_allow_html=True)
-    k1, k2, k3, k4, k5 = st.columns(5)
-    kanban_column(df[df["status_dash"] == "PRÉ-VENDA"],   "PRÉ-VENDA",   k1)
-    kanban_column(df[df["status_dash"] == "EM ANÁLISE"], "EM ANÁLISE", k2)
-    kanban_column(df[df["status_dash"] == "CRÉDITO"],    "CRÉDITO",    k3)
-    kanban_column(df[df["status_dash"] == "DEVOLVIDOS"], "DEVOLVIDOS", k4)
-    kanban_column(df[df["status_dash"] == "ENTRANTE"],   "ENTRANTE",   k5)
+    k1, k2, k3, k4 = st.columns(4)
+    kanban_column(df[df["status_dash"] == "PENDENTE"],   "PENDENTE",   k1)
+    kanban_column(df[df["status_dash"] == "ANÁLISE"],    "ANÁLISE",    k2)
+    kanban_column(df[df["status_dash"] == "DEVOLVIDOS"], "DEVOLVIDOS", k3)
+    kanban_column(df[df["status_dash"] == "ENTRANTE"],   "ENTRANTE",   k4)
 
     st.markdown('<p class="section-title">📋 Dados Completos</p>', unsafe_allow_html=True)
     with st.expander("Ver todos os registros filtrados"):
