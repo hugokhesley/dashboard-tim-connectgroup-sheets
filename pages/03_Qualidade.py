@@ -82,6 +82,7 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
         if n == "safra":                                rename[col] = "safra"
         elif "parceiro" in n:                           rename[col] = "parceiro"
         elif "custcode" in n:                           rename[col] = "custcode"
+        elif "fatura" in n and "enviada" not in n and "atraso" not in n and ("n" in n or "numero" in n): rename[col] = "n_fatura"
         elif "cnpj" in n:                               rename[col] = "cnpj"
         elif "lider" in n or "líder" in n:              rename[col] = "lider"
         elif "cliente" in n and "contato" not in n:     rename[col] = "cliente"
@@ -176,7 +177,7 @@ def _adim_icon(val):
     return "—"
 
 
-COLS_TABELA = ["safra","parceiro","cliente","cnpj","consultor","lider",
+COLS_TABELA = ["safra","parceiro","cliente","cnpj","custcode","n_fatura","consultor","lider",
                "adimplente","venda","vencimento","valor_rs","ultima_analise",
                "contato_cliente","fatura_enviada","observacoes"]
 
@@ -185,6 +186,8 @@ COL_CONFIG = {
     "parceiro":       "Parceiro",
     "cliente":        "Cliente",
     "cnpj":           "CNPJ",
+    "custcode":       "CustCode",
+    "n_fatura":       "Nº Fatura",
     "consultor":      "Consultor",
     "lider":          "Líder",
     "adimplente":     "Adimplente?",
