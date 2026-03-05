@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import unicodedata
+from datetime import datetime
 from data_loader import _s, _to_num, _normalize, _dedup_columns, get_gspread_client
 
 st.set_page_config(
@@ -45,246 +45,274 @@ st.markdown("""
     display:inline-block; background:#2d1f4e; border:1px solid #7c3aed;
     border-radius:8px; padding:4px 12px; font-size:0.8rem; color:#a78bfa; font-weight:600; margin:2px;
   }
-  .inadimplente-row { background: rgba(239,68,68,0.08) !important; }
   section[data-testid="stSidebar"] { background: #130d24 !important; }
-  .stDataFrame { border-radius: 10px; overflow: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-MES_COLS = ["jan", "fev", "mar", "abr", "mai", "jun",
-            "jul", "ago", "set", "out", "nov", "dez"]
-
 
 @st.cache_data(ttl=180)
-def load_qualidade():
-    """Lê todas as abas da planilha de qualidade e retorna dict {safra: df}."""
+def load_qualidade() -> pd.DataFrame:
     try:
         client = get_gspread_client()
         sheet_url = st.secrets["sheets_qualidade"]["url"]
         spreadsheet = client.open_by_url(sheet_url)
-        safras = {}
-        for ws in spreadsheet.worksheets():
-            try:
-                all_values = ws.get_all_values()
-                if not all_values or len(all_values) < 2:
-                    continue
-                headers = all_values[0]
-                rows = all_values[1:]
-                df = pd.DataFrame(rows, columns=headers)
-                df = _dedup_columns(df)
-                df["_safra"] = ws.title.strip()
-                safras[ws.title.strip()] = df
-            except Exception as e:
-                st.warning(f"Aba '{ws.title}' ignorada: {e}")
-        return safras
+        ws = spreadsheet.worksheets()[0]
+        all_values = ws.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return pd.DataFrame()
+        df = pd.DataFrame(all_values[1:], columns=all_values[0])
+        return _dedup_columns(df)
     except Exception as e:
-        st.error(f"Erro ao conectar planilha de qualidade: {e}")
-        return {}
+        st.error(f"Erro ao carregar planilha de qualidade: {e}")
+        return pd.DataFrame()
 
 
 def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
-    """Normaliza nomes de colunas para padrão interno."""
-    df = _dedup_columns(df)
+    df = _dedup_columns(df.copy())
     rename = {}
     for col in df.columns:
         n = _normalize(col)
-        if "parceiro" in n:                              rename[col] = "parceiro"
-        elif "custcode" in n:                            rename[col] = "custcode"
-        elif "cnpj" in n:                                rename[col] = "cnpj"
-        elif "cliente" in n and "contato" not in n:      rename[col] = "cliente"
-        elif n == "venda":                               rename[col] = "venda"
-        elif "consultor" in n:                           rename[col] = "consultor"
-        elif "fatura" in n and "atraso" in n:            rename[col] = "fatura_atraso"
-        elif n == "debito" or "d\u00e9bito" in n or "debito" in n: rename[col] = "debito"
-        elif "contato" in n and "cliente" in n:          rename[col] = "contato_cliente"
-        elif "fatura" in n and "enviada" in n:           rename[col] = "fatura_enviada"
-        elif "observa" in n:                             rename[col] = "observacoes"
+        if n == "safra":                                rename[col] = "safra"
+        elif "parceiro" in n:                           rename[col] = "parceiro"
+        elif "custcode" in n:                           rename[col] = "custcode"
+        elif "cnpj" in n:                               rename[col] = "cnpj"
+        elif "lider" in n or "líder" in n:              rename[col] = "lider"
+        elif "cliente" in n and "contato" not in n:     rename[col] = "cliente"
+        elif n == "venda":                              rename[col] = "venda"
+        elif "consultor" in n:                          rename[col] = "consultor"
+        elif "vencimento" in n:                         rename[col] = "vencimento"
+        elif "valor" in n:                              rename[col] = "valor_rs"
+        elif "ultima" in n and "analise" in n:          rename[col] = "ultima_analise"
+        elif "contato" in n and "cliente" in n:         rename[col] = "contato_cliente"
+        elif "fatura" in n and "enviada" in n:          rename[col] = "fatura_enviada"
+        elif "observa" in n:                            rename[col] = "observacoes"
     df = df.rename(columns=rename)
     df = _dedup_columns(df)
-    # Normaliza valores booleanos
-    for col in ["fatura_atraso", "contato_cliente", "fatura_enviada"]:
+
+    for col in ["safra", "parceiro", "cliente", "consultor", "lider", "cnpj",
+                "contato_cliente", "fatura_enviada", "vencimento"]:
         if col in df.columns:
             df[col] = df[col].apply(_s)
+
     if "venda" in df.columns:
         df["venda"] = df["venda"].apply(_to_num)
+    if "valor_rs" in df.columns:
+        df["valor_rs"] = df["valor_rs"].apply(_to_num)
+
+    # Calcula coluna ADIMPLENTE com 3 estados baseado na data de vencimento
+    hoje = pd.Timestamp(datetime.now().date())
+
+    def _calc_adimplente(venc_str):
+        v = _s(venc_str).strip()
+        if not v:
+            return "SIM"   # sem fatura em aberto
+        try:
+            # Tenta vários formatos de data
+            for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]:
+                try:
+                    dt = pd.to_datetime(v, format=fmt)
+                    return "GERADA" if dt >= hoje else "NÃO"
+                except:
+                    continue
+            # Fallback genérico
+            dt = pd.to_datetime(v, dayfirst=True, errors="coerce")
+            if pd.isna(dt):
+                return "SIM"
+            return "GERADA" if dt >= hoje else "NÃO"
+        except:
+            return "SIM"
+
+    df["adimplente"] = df["vencimento"].apply(_calc_adimplente) if "vencimento" in df.columns else "SIM"
     return df
 
 
 def _bool_icon(val):
     v = _s(val).upper()
-    if v.startswith("SIM"):  return "✅"
+    if v.startswith("SIM"):                         return "✅"
     if v.startswith("NÃO") or v.startswith("NAO"): return "❌"
+    if v:                                           return v
     return "—"
 
 
-def _mes_icon(val):
+def _adim_icon(val):
     v = _s(val).upper()
-    if v == "OK":     return "✅"
-    if v == "ATRASO": return "🔴"
-    if v:             return v
+    if v == "SIM":    return "🟢 SIM"
+    if v == "NÃO" or v == "NAO": return "🔴 NÃO"
+    if v == "GERADA": return "🟡 GERADA"
     return "—"
 
 
-def render_safra_summary(safras_data: dict):
-    """Painel geral com resumo de todas as safras."""
+COLS_TABELA = ["safra","parceiro","cliente","cnpj","consultor","lider",
+               "adimplente","venda","vencimento","valor_rs","ultima_analise",
+               "contato_cliente","fatura_enviada","observacoes"]
+
+COL_CONFIG = {
+    "safra":          "Safra",
+    "parceiro":       "Parceiro",
+    "cliente":        "Cliente",
+    "cnpj":           "CNPJ",
+    "consultor":      "Consultor",
+    "lider":          "Líder",
+    "adimplente":     "Adimplente?",
+    "venda":          st.column_config.NumberColumn("Venda", format="%d"),
+    "vencimento":     "Vencimento",
+    "valor_rs":       st.column_config.NumberColumn("Valor R$", format="R$ %.2f"),
+    "ultima_analise": "Última Análise P2B",
+    "contato_cliente":"Contato?",
+    "fatura_enviada": "Fatura Enviada?",
+    "observacoes":    "Observações",
+}
+
+
+def _tabela(df):
+    cols = [c for c in COLS_TABELA if c in df.columns]
+    d = df[cols].copy()
+    for col in ["contato_cliente", "fatura_enviada"]:
+        if col in d.columns:
+            d[col] = d[col].apply(_bool_icon)
+    if "adimplente" in d.columns:
+        d["adimplente"] = d["adimplente"].apply(_adim_icon)
+    st.dataframe(d, use_container_width=True, hide_index=True, column_config=COL_CONFIG)
+
+
+def _mask_inadim(df):
+    """Retorna máscara booleana: True = NÃO adimplente (vencido)."""
+    if "adimplente" in df.columns:
+        return df["adimplente"].apply(lambda x: _s(x).upper() in ["NÃO", "NAO"])
+    return pd.Series([False] * len(df))
+
+
+def render_painel_geral(df: pd.DataFrame):
     st.markdown('<p class="section-title">📊 Visão Geral por Safra</p>', unsafe_allow_html=True)
 
+    safras = sorted(df["safra"].dropna().unique()) if "safra" in df.columns else []
     rows = []
-    for safra, df in safras_data.items():
-        df_n = normalize_qual(df.copy())
-        total = len(df_n)
-        if total == 0:
-            continue
-        inadim = df_n[df_n.get("fatura_atraso", pd.Series(dtype=str)).apply(
-            lambda x: _s(x).upper().startswith("SIM")
-        )].shape[0] if "fatura_atraso" in df_n.columns else 0
-        adim = total - inadim
-        pct_adim = round(adim / total * 100, 1) if total > 0 else 0
-        total_debito = 0
+    for safra in safras:
+        dfs    = df[df["safra"] == safra]
+        total  = len(dfs)
+        nao    = int(_mask_inadim(dfs).sum())
+        gerada = int((dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA")).sum()) if "adimplente" in dfs.columns else 0
+        sim    = total - nao - gerada
+        debito = dfs["valor_rs"].sum() if "valor_rs" in dfs.columns else 0
+        pct    = round(sim / total * 100, 1) if total > 0 else 0
         rows.append({
-            "Safra": safra,
-            "Total Clientes": total,
-            "Adimplentes": adim,
-            "Inadimplentes": inadim,
-            "% Adimplência": pct_adim,
+            "Safra": safra, "Total": total,
+            "🟢 Adimplentes": sim, "🟡 Gerada": gerada, "🔴 Vencidos": nao,
+            "% Adimplência": pct, "Débito Total": debito,
         })
 
     if not rows:
-        st.info("Nenhuma safra com dados encontrada.")
+        st.info("Nenhuma safra encontrada.")
         return
 
-    df_resumo = pd.DataFrame(rows)
-    st.dataframe(
-        df_resumo,
-        use_container_width=True,
-        hide_index=True,
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
         column_config={
-            "Safra":           st.column_config.TextColumn("Safra"),
-            "Total Clientes":  st.column_config.NumberColumn("Total", format="%d"),
-            "Adimplentes":     st.column_config.NumberColumn("✅ Adimplentes", format="%d"),
-            "Inadimplentes":   st.column_config.NumberColumn("🔴 Inadimplentes", format="%d"),
-            "% Adimplência":   st.column_config.ProgressColumn("% Adimplência", min_value=0, max_value=100, format="%.1f%%"),
-        }
-    )
+            "Safra":            st.column_config.TextColumn("Safra"),
+            "Total":            st.column_config.NumberColumn("Total", format="%d"),
+            "🟢 Adimplentes":   st.column_config.NumberColumn("🟢 Adimplentes", format="%d"),
+            "🟡 Gerada":        st.column_config.NumberColumn("🟡 Gerada", format="%d"),
+            "🔴 Vencidos":      st.column_config.NumberColumn("🔴 Vencidos", format="%d"),
+            "% Adimplência":    st.column_config.ProgressColumn("% Adimplência", min_value=0, max_value=100, format="%.1f%%"),
+            "Débito Total":     st.column_config.NumberColumn("Débito Total", format="R$ %.2f"),
+        })
+
+    # KPIs consolidados
+    st.markdown('<p class="section-title">📈 KPIs Consolidados</p>', unsafe_allow_html=True)
+    total_g  = len(df)
+    nao_g    = int(_mask_inadim(df).sum())
+    gerada_g = int((df["adimplente"].apply(lambda x: _s(x).upper() == "GERADA")).sum()) if "adimplente" in df.columns else 0
+    sim_g    = total_g - nao_g - gerada_g
+    debito_g = df["valor_rs"].sum() if "valor_rs" in df.columns else 0
+    pct_g    = round(sim_g / total_g * 100, 1) if total_g > 0 else 0
+
+    g1, g2, g3, g4 = st.columns(4)
+    with g1:
+        st.markdown(f"""<div class="kpi-card purple">
+          <div class="kpi-label">👥 Total Geral</div>
+          <div class="kpi-value">{total_g:,}</div>
+          <div class="kpi-sub">em {len(safras)} safras</div>
+        </div>""", unsafe_allow_html=True)
+    with g2:
+        st.markdown(f"""<div class="kpi-card green">
+          <div class="kpi-label">🟢 Adimplentes</div>
+          <div class="kpi-value">{sim_g:,}</div>
+          <div class="kpi-sub">{pct_g}% do total</div>
+        </div>""", unsafe_allow_html=True)
+    with g3:
+        st.markdown(f"""<div class="kpi-card red">
+          <div class="kpi-label">🔴 Vencidos</div>
+          <div class="kpi-value">{nao_g:,}</div>
+          <div class="kpi-sub">{round(nao_g/total_g*100,1) if total_g else 0}% do total</div>
+        </div>""", unsafe_allow_html=True)
+    with g4:
+        st.markdown(f"""<div class="kpi-card amber">
+          <div class="kpi-label">💸 Débito Total</div>
+          <div class="kpi-value">R$ {debito_g:,.2f}</div>
+          <div class="kpi-sub">🟡 {gerada_g} faturas geradas</div>
+        </div>""", unsafe_allow_html=True)
 
 
-def render_safra_detalhe(df_raw: pd.DataFrame, safra: str):
-    """Detalhe de uma safra específica."""
-    df = normalize_qual(df_raw.copy())
+def render_safra_detalhe(df: pd.DataFrame, safra: str):
+    dfs = df[df["safra"] == safra].copy() if safra != "Todas" else df.copy()
 
-    # Detecta colunas de mês (datetime ou strings tipo 'OK')
-    mes_cols_raw = [c for c in df_raw.columns if c not in [
-        "PARCEIRO","CUSTCODE","CNPJ","CLIENTE","VENDA","CONSULTOR",
-        "FATURA EM ATRASO?","DÉBITO","CONTATO COM CLIENTE?","FATURA ENVIADA?","OBSERVAÇÕES","_safra"
-    ] and c not in df.columns.tolist()]
+    total       = len(dfs)
+    inadim_mask = _mask_inadim(dfs)
+    nao         = int(inadim_mask.sum())
+    gerada      = int((dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA")).sum()) if "adimplente" in dfs.columns else 0
+    sim         = total - nao - gerada
+    pct         = round(sim / total * 100, 1) if total > 0 else 0
+    debito      = dfs["valor_rs"].sum() if "valor_rs" in dfs.columns else 0
+    sem_contato = dfs[inadim_mask & dfs["contato_cliente"].apply(
+        lambda x: not _s(x).upper().startswith("SIM")
+    )].shape[0] if "contato_cliente" in dfs.columns else 0
 
-    # Também pega colunas que sobraram após normalização (são os meses)
-    cols_base = {"parceiro","custcode","cnpj","cliente","venda","consultor",
-                 "fatura_atraso","debito","contato_cliente","fatura_enviada","observacoes","_safra"}
-    mes_cols_norm = [c for c in df.columns if c not in cols_base]
-
-    total = len(df)
-    inadim_mask = df["fatura_atraso"].apply(lambda x: _s(x).upper().startswith("SIM")) if "fatura_atraso" in df.columns else pd.Series([False]*total)
-    inadim = inadim_mask.sum()
-    adim   = total - inadim
-    pct    = round(adim / total * 100, 1) if total > 0 else 0
-
-    # KPIs
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(f"""<div class="kpi-card purple">
           <div class="kpi-label">👥 Total de Clientes</div>
-          <div class="kpi-value">{total}</div>
-          <div class="kpi-sub">na safra {safra}</div>
+          <div class="kpi-value">{total:,}</div>
+          <div class="kpi-sub">safra {safra}</div>
         </div>""", unsafe_allow_html=True)
     with c2:
         st.markdown(f"""<div class="kpi-card green">
-          <div class="kpi-label">✅ Adimplentes</div>
-          <div class="kpi-value">{adim}</div>
-          <div class="kpi-sub">{pct}% da safra</div>
+          <div class="kpi-label">🟢 Adimplentes</div>
+          <div class="kpi-value">{sim:,}</div>
+          <div class="kpi-sub">{pct}% da safra · 🟡 {gerada} geradas</div>
         </div>""", unsafe_allow_html=True)
     with c3:
         st.markdown(f"""<div class="kpi-card red">
-          <div class="kpi-label">🔴 Inadimplentes</div>
-          <div class="kpi-value">{inadim}</div>
-          <div class="kpi-sub">{round(100-pct,1)}% da safra</div>
+          <div class="kpi-label">🔴 Vencidos</div>
+          <div class="kpi-value">{nao:,}</div>
+          <div class="kpi-sub">R$ {debito:,.2f} em aberto</div>
         </div>""", unsafe_allow_html=True)
     with c4:
-        sem_contato = df[inadim_mask & df["contato_cliente"].apply(
-            lambda x: not _s(x).upper().startswith("SIM")
-        )].shape[0] if "contato_cliente" in df.columns else 0
         st.markdown(f"""<div class="kpi-card amber">
           <div class="kpi-label">📵 Sem Contato</div>
-          <div class="kpi-value">{sem_contato}</div>
+          <div class="kpi-value">{sem_contato:,}</div>
           <div class="kpi-sub">inadimplentes sem contato</div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("")
 
-    # Tabs: Todos / Inadimplentes / Acompanhamento mensal
-    tab1, tab2, tab3 = st.tabs(["📋 Todos os Clientes", "🔴 Inadimplentes", "📅 Acompanhamento Mensal"])
+    tab1, tab2 = st.tabs(["📋 Todos os Clientes", "🔴 Vencidos"])
 
     with tab1:
-        cols_show = [c for c in ["parceiro","cliente","cnpj","consultor","venda","fatura_atraso","debito","contato_cliente","fatura_enviada","observacoes"] if c in df.columns]
-        df_show = df[cols_show].copy()
-        # Aplica ícones
-        for col in ["fatura_atraso","contato_cliente","fatura_enviada"]:
-            if col in df_show.columns:
-                df_show[col] = df_show[col].apply(_bool_icon)
-        st.dataframe(df_show, use_container_width=True, hide_index=True,
-            column_config={
-                "parceiro":        "Parceiro",
-                "cliente":         "Cliente",
-                "cnpj":            "CNPJ",
-                "consultor":       "Consultor",
-                "venda":           st.column_config.NumberColumn("Venda", format="%d"),
-                "fatura_atraso":   "Fatura Atraso?",
-                "debito":          "Débito",
-                "contato_cliente": "Contato?",
-                "fatura_enviada":  "Fatura Enviada?",
-                "observacoes":     "Observações",
-            })
+        _tabela(dfs)
 
     with tab2:
-        df_inadim = df[inadim_mask].copy() if inadim > 0 else pd.DataFrame()
+        df_inadim = dfs[inadim_mask].copy()
         if df_inadim.empty:
-            st.success("🎉 Nenhum cliente inadimplente nesta safra!")
+            st.success("🎉 Nenhum cliente com fatura vencida!")
         else:
-            cols_show = [c for c in ["parceiro","cliente","cnpj","consultor","debito","contato_cliente","fatura_enviada","observacoes"] if c in df_inadim.columns]
-            df_show = df_inadim[cols_show].copy()
-            for col in ["contato_cliente","fatura_enviada"]:
-                if col in df_show.columns:
-                    df_show[col] = df_show[col].apply(_bool_icon)
-            st.dataframe(df_show, use_container_width=True, hide_index=True,
-                column_config={
-                    "parceiro":        "Parceiro",
-                    "cliente":         "Cliente",
-                    "cnpj":            "CNPJ",
-                    "consultor":       "Consultor",
-                    "debito":          "Débito",
-                    "contato_cliente": "Contato?",
-                    "fatura_enviada":  "Fatura Enviada?",
-                    "observacoes":     "Observações",
-                })
-
-            # Botão exportar CSV
-            csv = df_inadim.to_csv(index=False).encode("utf-8")
+            _tabela(df_inadim)
+            cols_export = [c for c in COLS_TABELA if c in df_inadim.columns]
+            csv = df_inadim[cols_export].to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="⬇️ Exportar inadimplentes (.csv)",
+                label="⬇️ Exportar vencidos (.csv)",
                 data=csv,
-                file_name=f"inadimplentes_safra_{safra.replace('/','_')}.csv",
+                file_name=f"vencidos_safra_{safra.replace('/','_')}.csv",
                 mime="text/csv"
             )
-
-    with tab3:
-        if not mes_cols_norm:
-            st.info("Nenhuma coluna de acompanhamento mensal encontrada.")
-        else:
-            cols_id = [c for c in ["parceiro","cliente"] if c in df.columns]
-            df_mes = df[cols_id + mes_cols_norm].copy()
-            for col in mes_cols_norm:
-                df_mes[col] = df_mes[col].apply(_mes_icon)
-            st.dataframe(df_mes, use_container_width=True, hide_index=True)
 
 
 def main():
@@ -298,108 +326,53 @@ def main():
     </div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando planilha de qualidade..."):
-        safras = load_qualidade()
+        raw = load_qualidade()
 
-    if not safras:
-        st.warning("""
-        ⚠️ Nenhuma dado encontrado. Verifique:
-        - Se a URL da planilha de qualidade está nos secrets: `[sheets_qualidade] url = ...`
-        - Se a planilha tem pelo menos uma aba com dados
-        """)
+    if raw.empty:
+        st.warning("⚠️ Nenhum dado encontrado. Verifique se `[sheets_qualidade] url` está nos secrets.")
         st.stop()
 
-    safras_disponiveis = sorted(safras.keys())
+    df = normalize_qual(raw)
 
-    # Sidebar
+    safras_disp   = sorted(df["safra"].dropna().unique().tolist())   if "safra"    in df.columns else []
+    parceiros_disp = sorted(df["parceiro"].dropna().unique().tolist()) if "parceiro" in df.columns else []
+
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
-        visao = st.radio("Visão", ["Painel Geral", "Safra Específica"], horizontal=False)
 
+        visao = st.radio("Visão", ["Painel Geral", "Safra Específica"])
+
+        safra_sel = "Todas"
         if visao == "Safra Específica":
-            safra_sel = st.selectbox("Selecionar Safra", safras_disponiveis,
-                                      index=len(safras_disponiveis)-1)
+            safra_sel = st.selectbox(
+                "Safra", safras_disp,
+                index=len(safras_disp)-1 if safras_disp else 0
+            )
 
-        # Filtro parceiro (global)
-        todos_parceiros = ["Todos"]
-        for df in safras.values():
-            df_n = normalize_qual(df.copy())
-            if "parceiro" in df_n.columns:
-                todos_parceiros += [_s(v) for v in df_n["parceiro"].unique() if _s(v)]
-        todos_parceiros = ["Todos"] + sorted(set(todos_parceiros) - {"Todos"})
-        parceiro_sel = st.selectbox("Parceiro", todos_parceiros)
+        parceiro_sel = st.selectbox("Parceiro", ["Todos"] + parceiros_disp)
 
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
             st.cache_data.clear()
             st.rerun()
         st.markdown("---")
-        st.caption(f"**{len(safras_disponiveis)} safras** carregadas")
-        for s in safras_disponiveis:
+        st.caption(f"**{len(safras_disp)} safras** carregadas")
+        for s in safras_disp:
             st.markdown(f'<span class="safra-badge">{s}</span>', unsafe_allow_html=True)
         st.caption("Dados via Google Sheets · cache 3 min")
 
-    # Aplica filtro de parceiro
-    if parceiro_sel != "Todos":
-        safras_filtradas = {}
-        for safra, df in safras.items():
-            df_n = normalize_qual(df.copy())
-            if "parceiro" in df_n.columns:
-                df_f = df[df_n["parceiro"].apply(lambda x: _s(x) == parceiro_sel)]
-                if not df_f.empty:
-                    safras_filtradas[safra] = df_f
-        safras = safras_filtradas
+    if parceiro_sel != "Todos" and "parceiro" in df.columns:
+        df = df[df["parceiro"] == parceiro_sel]
 
-    if not safras:
-        st.warning("Nenhum dado para o parceiro selecionado.")
+    if df.empty:
+        st.warning("Nenhum dado para o filtro selecionado.")
         st.stop()
 
     if visao == "Painel Geral":
-        render_safra_summary(safras)
-
-        # Mini KPIs globais
-        st.markdown('<p class="section-title">📈 KPIs Consolidados</p>', unsafe_allow_html=True)
-        total_global = sum(len(df) for df in safras.values())
-        inadim_global = 0
-        for df in safras.values():
-            df_n = normalize_qual(df.copy())
-            if "fatura_atraso" in df_n.columns:
-                inadim_global += df_n["fatura_atraso"].apply(
-                    lambda x: _s(x).upper().startswith("SIM")).sum()
-        adim_global = total_global - inadim_global
-        pct_global  = round(adim_global / total_global * 100, 1) if total_global > 0 else 0
-
-        g1, g2, g3, g4 = st.columns(4)
-        with g1:
-            st.markdown(f"""<div class="kpi-card purple">
-              <div class="kpi-label">👥 Total Geral</div>
-              <div class="kpi-value">{total_global}</div>
-              <div class="kpi-sub">em {len(safras)} safras</div>
-            </div>""", unsafe_allow_html=True)
-        with g2:
-            st.markdown(f"""<div class="kpi-card green">
-              <div class="kpi-label">✅ Total Adimplentes</div>
-              <div class="kpi-value">{adim_global}</div>
-              <div class="kpi-sub">{pct_global}% do total</div>
-            </div>""", unsafe_allow_html=True)
-        with g3:
-            st.markdown(f"""<div class="kpi-card red">
-              <div class="kpi-label">🔴 Total Inadimplentes</div>
-              <div class="kpi-value">{inadim_global}</div>
-              <div class="kpi-sub">{round(100-pct_global,1)}% do total</div>
-            </div>""", unsafe_allow_html=True)
-        with g4:
-            st.markdown(f"""<div class="kpi-card amber">
-              <div class="kpi-label">📅 Safras Ativas</div>
-              <div class="kpi-value">{len(safras)}</div>
-              <div class="kpi-sub">em acompanhamento</div>
-            </div>""", unsafe_allow_html=True)
-
+        render_painel_geral(df)
     else:
         st.markdown(f'<p class="section-title">🗓️ Safra: {safra_sel}</p>', unsafe_allow_html=True)
-        if safra_sel in safras:
-            render_safra_detalhe(safras[safra_sel], safra_sel)
-        else:
-            st.warning("Safra não encontrada após filtro de parceiro.")
+        render_safra_detalhe(df, safra_sel)
 
 
 main()
