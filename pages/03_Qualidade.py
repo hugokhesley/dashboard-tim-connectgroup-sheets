@@ -56,12 +56,19 @@ def load_qualidade() -> pd.DataFrame:
         client = get_gspread_client()
         sheet_url = st.secrets["sheets_qualidade"]["url"]
         spreadsheet = client.open_by_url(sheet_url)
-        ws = spreadsheet.worksheets()[0]
+        # Tenta pelo nome exato, cai para primeira aba
+        try:
+            ws = spreadsheet.worksheet("BASE_SAFRAS_QUALIDADE")
+        except Exception:
+            ws = spreadsheet.worksheets()[0]
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 2:
             return pd.DataFrame()
         df = pd.DataFrame(all_values[1:], columns=all_values[0])
-        return _dedup_columns(df)
+        df = _dedup_columns(df)
+        # Remove linhas completamente vazias
+        df = df[df.apply(lambda r: any(_s(v) for v in r), axis=1)].reset_index(drop=True)
+        return df
     except Exception as e:
         st.error(f"Erro ao carregar planilha de qualidade: {e}")
         return pd.DataFrame()
@@ -93,6 +100,33 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
                 "contato_cliente", "fatura_enviada", "vencimento"]:
         if col in df.columns:
             df[col] = df[col].apply(_s)
+
+    # Normaliza safra para MM/AAAA (aceita: out./25, out/25, 10/2025, 10/25)
+    MESES = {"jan":"01","fev":"02","mar":"03","abr":"04","mai":"05","jun":"06",
+             "jul":"07","ago":"08","set":"09","out":"10","nov":"11","dez":"12"}
+
+    def _norm_safra(s):
+        s = _s(s).lower().strip().rstrip(".")
+        if not s:
+            return s
+        # Já está no formato MM/AAAA ou MM/AA
+        import re
+        m = re.match(r"^(\d{1,2})/(\d{2,4})$", s)
+        if m:
+            mes, ano = m.group(1).zfill(2), m.group(2)
+            ano = "20" + ano if len(ano) == 2 else ano
+            return f"{mes}/{ano}"
+        # Formato textual: out./25, out/25, outubro/25
+        m2 = re.match(r"^([a-záéíóúã]+)\.?/(\d{2,4})$", s)
+        if m2:
+            txt, ano = m2.group(1)[:3], m2.group(2)
+            ano = "20" + ano if len(ano) == 2 else ano
+            mes = MESES.get(txt, "??")
+            return f"{mes}/{ano}"
+        return _s(s)  # retorna como veio se não reconhecer
+
+    if "safra" in df.columns:
+        df["safra"] = df["safra"].apply(_norm_safra)
 
     if "venda" in df.columns:
         df["venda"] = df["venda"].apply(_to_num)
