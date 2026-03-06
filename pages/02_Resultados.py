@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns, get_meta_mes
+from auth import require_password
 
 st.set_page_config(
     page_title="Connect Group | Resultados",
@@ -9,6 +10,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+require_password("resultados", "Resultados — Connect Group")
 
 st.markdown("""
 <style>

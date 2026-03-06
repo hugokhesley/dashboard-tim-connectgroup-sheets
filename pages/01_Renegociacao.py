@@ -4,6 +4,7 @@ from data_loader import (
     load_data, apply_filters, get_parceiros,
     STATUS_COLORS
 )
+from auth import require_password
 
 st.set_page_config(
     page_title="Connect Group | Renegociacao",
@@ -11,6 +12,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+require_password("renegociacao", "Renegociação — Connect Group")
 
 MES_ALVO   = "03/2026"
 META_RENEG = 751

@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from data_loader import _s, _to_num, _normalize, _dedup_columns, get_gspread_client
+from auth import require_password
 
 st.set_page_config(
     page_title="Connect Group | Qualidade",
@@ -8,6 +9,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+require_password("qualidade", "Qualidade — Connect Group")
 
 st.markdown("""
 <style>
