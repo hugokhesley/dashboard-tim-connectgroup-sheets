@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 from data_loader import _s, _to_num, _normalize, _dedup_columns, get_gspread_client
 
 st.set_page_config(
@@ -134,30 +133,12 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
     if "valor_rs" in df.columns:
         df["valor_rs"] = df["valor_rs"].apply(_to_num)
 
-    # Calcula coluna ADIMPLENTE com 3 estados baseado na data de vencimento
-    hoje = pd.Timestamp(datetime.now().date())
-
-    def _calc_adimplente(venc_str):
-        v = _s(venc_str).strip()
-        if not v:
-            return "SIM"   # sem fatura em aberto
-        try:
-            # Tenta vários formatos de data
-            for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]:
-                try:
-                    dt = pd.to_datetime(v, format=fmt)
-                    return "GERADA" if dt >= hoje else "NÃO"
-                except:
-                    continue
-            # Fallback genérico
-            dt = pd.to_datetime(v, dayfirst=True, errors="coerce")
-            if pd.isna(dt):
-                return "SIM"
-            return "GERADA" if dt >= hoje else "NÃO"
-        except:
-            return "SIM"
-
-    df["adimplente"] = df["vencimento"].apply(_calc_adimplente) if "vencimento" in df.columns else "SIM"
+    # ADIMPLENTE? é preenchida manualmente pela analista — lê direto da coluna
+    # Se a coluna não existir ou estiver vazia, assume SIM (sem débito)
+    if "adimplente" in df.columns:
+        df["adimplente"] = df["adimplente"].apply(lambda x: _s(x) if _s(x) else "SIM")
+    else:
+        df["adimplente"] = "SIM"
     return df
 
 
