@@ -77,17 +77,18 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
     df = _dedup_columns(df.copy())
     rename = {}
     for col in df.columns:
-        n = _normalize(col)
+        n = _normalize(col).replace("?","").replace(".","").replace("°","").replace("º","").strip()
         if n == "safra":                                rename[col] = "safra"
         elif "parceiro" in n:                           rename[col] = "parceiro"
         elif "custcode" in n:                           rename[col] = "custcode"
         elif "fatura" in n and "enviada" not in n and "atraso" not in n and ("n" in n or "numero" in n): rename[col] = "n_fatura"
         elif "cnpj" in n:                               rename[col] = "cnpj"
-        elif "lider" in n or "líder" in n:              rename[col] = "lider"
+        elif "lider" in n:                              rename[col] = "lider"
+        elif "adimplente" in n:                         rename[col] = "adimplente"
         elif "cliente" in n and "contato" not in n:     rename[col] = "cliente"
         elif n == "venda":                              rename[col] = "venda"
         elif "consultor" in n:                          rename[col] = "consultor"
-        elif "vencimento" in n:                         rename[col] = "vencimento"
+        elif "vencimento" in n or "vecimento" in n:     rename[col] = "vencimento"
         elif "valor" in n:                              rename[col] = "valor_rs"
         elif "ultima" in n and "analise" in n:          rename[col] = "ultima_analise"
         elif "contato" in n and "cliente" in n:         rename[col] = "contato_cliente"
