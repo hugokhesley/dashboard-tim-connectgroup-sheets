@@ -201,21 +201,31 @@ def _mask_inadim(df):
     return pd.Series([False] * len(df))
 
 
+def _acessos(d: pd.DataFrame) -> int:
+    """Soma a coluna VENDA (acessos/linhas). Fallback para contagem de linhas."""
+    if "venda" in d.columns:
+        return int(d["venda"].fillna(0).sum())
+    return len(d)
+
+
 def render_painel_geral(df: pd.DataFrame):
     st.markdown('<p class="section-title">📊 Visão Geral por Safra</p>', unsafe_allow_html=True)
 
     safras = sorted(df["safra"].dropna().unique()) if "safra" in df.columns else []
     rows = []
     for safra in safras:
-        dfs    = df[df["safra"] == safra]
-        total  = len(dfs)
-        nao    = int(_mask_inadim(dfs).sum())
-        gerada = int((dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA")).sum()) if "adimplente" in dfs.columns else 0
-        sim    = total - nao - gerada
+        dfs         = df[df["safra"] == safra]
+        mask_nao    = _mask_inadim(dfs)
+        mask_gerada = dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in dfs.columns else pd.Series([False]*len(dfs))
+        mask_sim    = ~mask_nao & ~mask_gerada
+        total  = _acessos(dfs)
+        nao    = _acessos(dfs[mask_nao])
+        gerada = _acessos(dfs[mask_gerada])
+        sim    = _acessos(dfs[mask_sim])
         debito = dfs["valor_rs"].sum() if "valor_rs" in dfs.columns else 0
         pct    = round(sim / total * 100, 1) if total > 0 else 0
         rows.append({
-            "Safra": safra, "Total": total,
+            "Safra": safra, "Total Acessos": total,
             "🟢 Adimplentes": sim, "🟡 Gerada": gerada, "🔴 Vencidos": nao,
             "% Adimplência": pct, "Débito Total": debito,
         })
@@ -227,7 +237,7 @@ def render_painel_geral(df: pd.DataFrame):
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
         column_config={
             "Safra":            st.column_config.TextColumn("Safra"),
-            "Total":            st.column_config.NumberColumn("Total", format="%d"),
+            "Total Acessos":    st.column_config.NumberColumn("Total Acessos", format="%d"),
             "🟢 Adimplentes":   st.column_config.NumberColumn("🟢 Adimplentes", format="%d"),
             "🟡 Gerada":        st.column_config.NumberColumn("🟡 Gerada", format="%d"),
             "🔴 Vencidos":      st.column_config.NumberColumn("🔴 Vencidos", format="%d"),
@@ -237,17 +247,20 @@ def render_painel_geral(df: pd.DataFrame):
 
     # KPIs consolidados
     st.markdown('<p class="section-title">📈 KPIs Consolidados</p>', unsafe_allow_html=True)
-    total_g  = len(df)
-    nao_g    = int(_mask_inadim(df).sum())
-    gerada_g = int((df["adimplente"].apply(lambda x: _s(x).upper() == "GERADA")).sum()) if "adimplente" in df.columns else 0
-    sim_g    = total_g - nao_g - gerada_g
+    mask_nao_g    = _mask_inadim(df)
+    mask_gerada_g = df["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in df.columns else pd.Series([False]*len(df))
+    mask_sim_g    = ~mask_nao_g & ~mask_gerada_g
+    total_g  = _acessos(df)
+    nao_g    = _acessos(df[mask_nao_g])
+    gerada_g = _acessos(df[mask_gerada_g])
+    sim_g    = _acessos(df[mask_sim_g])
     debito_g = df["valor_rs"].sum() if "valor_rs" in df.columns else 0
     pct_g    = round(sim_g / total_g * 100, 1) if total_g > 0 else 0
 
     g1, g2, g3, g4 = st.columns(4)
     with g1:
         st.markdown(f"""<div class="kpi-card purple">
-          <div class="kpi-label">👥 Total Geral</div>
+          <div class="kpi-label">📶 Total de Acessos</div>
           <div class="kpi-value">{total_g:,}</div>
           <div class="kpi-sub">em {len(safras)} safras</div>
         </div>""", unsafe_allow_html=True)
@@ -267,28 +280,30 @@ def render_painel_geral(df: pd.DataFrame):
         st.markdown(f"""<div class="kpi-card amber">
           <div class="kpi-label">💸 Débito Total</div>
           <div class="kpi-value">R$ {debito_g:,.2f}</div>
-          <div class="kpi-sub">🟡 {gerada_g} faturas geradas</div>
+          <div class="kpi-sub">🟡 {gerada_g} acessos gerados</div>
         </div>""", unsafe_allow_html=True)
 
 
 def render_safra_detalhe(df: pd.DataFrame, safra: str):
     dfs = df[df["safra"] == safra].copy() if safra != "Todas" else df.copy()
 
-    total       = len(dfs)
-    inadim_mask = _mask_inadim(dfs)
-    nao         = int(inadim_mask.sum())
-    gerada      = int((dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA")).sum()) if "adimplente" in dfs.columns else 0
-    sim         = total - nao - gerada
-    pct         = round(sim / total * 100, 1) if total > 0 else 0
-    debito      = dfs["valor_rs"].sum() if "valor_rs" in dfs.columns else 0
-    sem_contato = dfs[inadim_mask & dfs["contato_cliente"].apply(
+    inadim_mask  = _mask_inadim(dfs)
+    gerada_mask  = dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in dfs.columns else pd.Series([False]*len(dfs))
+    sim_mask     = ~inadim_mask & ~gerada_mask
+    total        = _acessos(dfs)
+    nao          = _acessos(dfs[inadim_mask])
+    gerada       = _acessos(dfs[gerada_mask])
+    sim          = _acessos(dfs[sim_mask])
+    pct          = round(sim / total * 100, 1) if total > 0 else 0
+    debito       = dfs["valor_rs"].sum() if "valor_rs" in dfs.columns else 0
+    sem_contato  = _acessos(dfs[inadim_mask & dfs["contato_cliente"].apply(
         lambda x: not _s(x).upper().startswith("SIM")
-    )].shape[0] if "contato_cliente" in dfs.columns else 0
+    )]) if "contato_cliente" in dfs.columns else 0
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(f"""<div class="kpi-card purple">
-          <div class="kpi-label">👥 Total de Clientes</div>
+          <div class="kpi-label">📶 Total de Acessos</div>
           <div class="kpi-value">{total:,}</div>
           <div class="kpi-sub">safra {safra}</div>
         </div>""", unsafe_allow_html=True)
@@ -308,7 +323,7 @@ def render_safra_detalhe(df: pd.DataFrame, safra: str):
         st.markdown(f"""<div class="kpi-card amber">
           <div class="kpi-label">📵 Sem Contato</div>
           <div class="kpi-value">{sem_contato:,}</div>
-          <div class="kpi-sub">inadimplentes sem contato</div>
+          <div class="kpi-sub">acessos vencidos sem contato</div>
         </div>""", unsafe_allow_html=True)
 
     st.markdown("")
