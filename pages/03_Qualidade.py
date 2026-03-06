@@ -314,10 +314,11 @@ def render_safra_detalhe(df: pd.DataFrame, safra: str):
           <div class="kpi-sub">{pct}% da safra · 🟡 {gerada} geradas</div>
         </div>""", unsafe_allow_html=True)
     with c3:
+        pct_nao = round(nao / total * 100, 1) if total > 0 else 0
         st.markdown(f"""<div class="kpi-card red">
           <div class="kpi-label">🔴 Vencidos</div>
           <div class="kpi-value">{nao:,}</div>
-          <div class="kpi-sub">R$ {debito:,.2f} em aberto</div>
+          <div class="kpi-sub">{pct_nao}% da safra · R$ {debito:,.2f} em aberto</div>
         </div>""", unsafe_allow_html=True)
     with c4:
         st.markdown(f"""<div class="kpi-card amber">
