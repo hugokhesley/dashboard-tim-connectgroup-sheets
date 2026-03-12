@@ -110,18 +110,20 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
              "jul":"07","ago":"08","set":"09","out":"10","nov":"11","dez":"12"}
 
     def _norm_safra(s):
-        s = _s(s).lower().strip().rstrip(".")
+        s = _s(s).lower().strip()
         if not s:
             return s
-        # Já está no formato MM/AAAA ou MM/AA
         import re
-        m = re.match(r"^(\d{1,2})/(\d{2,4})$", s)
+        # Remove ponto final solto: "out." → "out"
+        s = re.sub(r"\.$", "", s)
+        # Formato numérico: MM/AAAA ou MM/AA
+        m = re.match(r"^(\d{1,2})[/\-](\d{2,4})$", s)
         if m:
             mes, ano = m.group(1).zfill(2), m.group(2)
             ano = "20" + ano if len(ano) == 2 else ano
             return f"{mes}/{ano}"
-        # Formato textual: out./25, out/25, outubro/25
-        m2 = re.match(r"^([a-záéíóúã]+)\.?/(\d{2,4})$", s)
+        # Formato textual com separador / ou . : out./25, out/25, nov.2025, nov/2025
+        m2 = re.match(r"^([a-záéíóúã]+)\.?[/\.](\d{2,4})$", s)
         if m2:
             txt, ano = m2.group(1)[:3], m2.group(2)
             ano = "20" + ano if len(ano) == 2 else ano
