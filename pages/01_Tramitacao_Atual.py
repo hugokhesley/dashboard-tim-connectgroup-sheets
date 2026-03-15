@@ -70,14 +70,15 @@ def progress_html(value, total, color="#3b82f6"):
     </div>"""
 
 
-def kanban_column(df_col, status, col_obj):
+def kanban_column(df_col, status, col_obj, label=None):
+    display = label if label else status
     cfg     = STATUS_COLORS.get(status, STATUS_COLORS["ENTRANTE"])
     vol     = int(df_col["acessos"].sum())    if not df_col.empty else 0
     receita = df_col["preco_oferta"].sum()     if not df_col.empty else 0
     with col_obj:
         st.markdown(f"""
         <div class="kanban-header" style="background:{cfg['border']}22;border-top:3px solid {cfg['border']};">
-          <span class="kanban-title">{cfg['icon']} {status}</span>
+          <span class="kanban-title">{cfg['icon']} {display}</span>
           <span class="kanban-count">{vol} acessos</span>
         </div>""", unsafe_allow_html=True)
         with st.expander(f"Σ {vol} · R$ {receita:,.2f}", expanded=False):
@@ -175,7 +176,10 @@ def main():
     kanban_column(df[df["status_dash"] == "PENDENTE"],   "PENDENTE",   k1)
     kanban_column(df[df["status_dash"] == "ANÁLISE"],    "ANÁLISE",    k2)
     kanban_column(df[df["status_dash"] == "DEVOLVIDOS"], "DEVOLVIDOS", k3)
-    kanban_column(df[df["status_dash"] == "ENTRANTE"],   "ENTRANTE",   k4)
+    kanban_column(
+        df[(df["status_dash"] == "ENTRANTE") & df["mes_ativacao"].isna()],
+        "ENTRANTE", k4, label="ENTRANTE NÃO ATIVO"
+    )
 
     st.markdown('<p class="section-title">📋 Dados Completos</p>', unsafe_allow_html=True)
     with st.expander("Ver todos os registros filtrados"):
