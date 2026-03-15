@@ -213,9 +213,10 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         elif n == 'acessos':             rename[col] = 'acessos'
         elif n == 'preco oferta':        rename[col] = 'preco_oferta'
         elif n == 'parceiro':            rename[col] = 'parceiro'
+        elif n == 'pedido':              rename[col] = 'pedido'
     df = df.rename(columns=rename)
     df = _dedup_columns(df)
-    for col in ['parceiro', 'tipo_contratacao', 'fila_atual', 'razao_social']:
+    for col in ['parceiro', 'tipo_contratacao', 'fila_atual', 'razao_social', 'pedido']:
         if col in df.columns:
             df[col] = df[col].apply(_s)
     return df
