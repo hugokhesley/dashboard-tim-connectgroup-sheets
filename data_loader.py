@@ -260,3 +260,41 @@ def get_parceiros(df: pd.DataFrame) -> list:
         vals = [_s(v) for v in df_norm['parceiro'].values if _s(v)]
         parceiros += sorted(set(vals))
     return parceiros
+
+
+@st.cache_data(ttl=180)
+def load_bko() -> pd.DataFrame:
+    """Carrega aba BKO-VENDEDOR-REAL e retorna df com pedido, vendedor_real, lider."""
+    try:
+        client = get_gspread_client()
+        sheet_url = st.secrets['sheets']['url']
+        spreadsheet = client.open_by_url(sheet_url)
+        ws = spreadsheet.worksheet('BKO-VENDEDOR-REAL')
+        all_values = ws.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return pd.DataFrame(columns=['pedido', 'vendedor_real', 'lider'])
+        headers = all_values[0]
+        rows = all_values[1:]
+        df = pd.DataFrame(rows, columns=headers)
+        df = _dedup_columns(df)
+        # Normaliza nomes de colunas
+        rename = {}
+        for col in df.columns:
+            n = _normalize(col)
+            if n == 'pedido':                          rename[col] = 'pedido'
+            elif 'vendedor' in n and 'real' in n:      rename[col] = 'vendedor_real'
+            elif n == 'lider' or n == 'líder':         rename[col] = 'lider'
+        df = df.rename(columns=rename)
+        # Garante colunas mínimas
+        for c in ['pedido', 'vendedor_real', 'lider']:
+            if c not in df.columns:
+                df[c] = ''
+        df['pedido']        = df['pedido'].apply(_s)
+        df['vendedor_real'] = df['vendedor_real'].apply(_s)
+        df['lider']         = df['lider'].apply(lambda x: _s(x) if _s(x) else 'Sem Equipe')
+        # Remove linhas sem pedido
+        df = df[df['pedido'] != ''].reset_index(drop=True)
+        return df[['pedido', 'vendedor_real', 'lider']]
+    except Exception as e:
+        st.warning(f'BKO não carregado: {e}')
+        return pd.DataFrame(columns=['pedido', 'vendedor_real', 'lider'])
