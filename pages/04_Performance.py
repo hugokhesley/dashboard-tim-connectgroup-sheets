@@ -209,7 +209,9 @@ def main():
 
     # Join com BKO pelo pedido
     if not bko.empty and "pedido" in df.columns:
-        df["pedido"] = df["pedido"].apply(_s)
+        from data_loader import _norm_pedido
+        df["pedido"] = df["pedido"].apply(_norm_pedido)
+        bko["pedido"] = bko["pedido"].apply(_norm_pedido)
         df = df.merge(bko[["pedido", "vendedor_real", "lider"]], on="pedido", how="left")
         df["vendedor_real"] = df["vendedor_real"].apply(lambda x: _s(x) if _s(x) else "Sem Vendedor")
         df["lider"]         = df["lider"].apply(lambda x: _s(x) if _s(x) else "Sem Equipe")
