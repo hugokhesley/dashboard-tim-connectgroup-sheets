@@ -216,9 +216,11 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         elif n == 'pedido':              rename[col] = 'pedido'
     df = df.rename(columns=rename)
     df = _dedup_columns(df)
-    for col in ['parceiro', 'tipo_contratacao', 'fila_atual', 'razao_social', 'pedido']:
+    for col in ['parceiro', 'tipo_contratacao', 'fila_atual', 'razao_social']:
         if col in df.columns:
             df[col] = df[col].apply(_s)
+    if 'pedido' in df.columns:
+        df['pedido'] = df['pedido'].apply(_norm_pedido)
     return df
 
 
@@ -252,6 +254,14 @@ def apply_filters(df: pd.DataFrame, mes_alvo: str, tipo_list: list, parceiro: st
     df = _dedup_columns(df)
     df['status_dash'] = df['fila_atual_upper'].apply(_lookup_status)
     return df
+
+
+def _norm_pedido(val):
+    """Normaliza pedido: remove .0 de floats, strip de espaços."""
+    s = _s(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
 
 
 def get_parceiros(df: pd.DataFrame) -> list:
@@ -290,7 +300,7 @@ def load_bko() -> pd.DataFrame:
         for c in ['pedido', 'vendedor_real', 'lider']:
             if c not in df.columns:
                 df[c] = ''
-        df['pedido']        = df['pedido'].apply(_s)
+        df['pedido']        = df['pedido'].apply(_norm_pedido)
         df['vendedor_real'] = df['vendedor_real'].apply(_s)
         df['lider']         = df['lider'].apply(lambda x: _s(x) if _s(x) else 'Sem Equipe')
         # Remove linhas sem pedido
