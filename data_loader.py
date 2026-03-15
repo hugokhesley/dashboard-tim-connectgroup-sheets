@@ -282,10 +282,11 @@ def load_bko() -> pd.DataFrame:
         spreadsheet = client.open_by_url(sheet_url)
         ws = spreadsheet.worksheet('BKO-VENDEDOR-REAL')
         all_values = ws.get_all_values()
-        if not all_values or len(all_values) < 2:
+        if not all_values or len(all_values) < 3:
             return pd.DataFrame(columns=['pedido', 'vendedor_real', 'lider'])
-        headers = all_values[0]
-        rows = all_values[1:]
+        # Linha 1 é vazia/aviso — header real está na linha 2 (índice 1)
+        headers = all_values[1]
+        rows = all_values[2:]
         df = pd.DataFrame(rows, columns=headers)
         df = _dedup_columns(df)
         # Normaliza nomes de colunas
