@@ -204,14 +204,23 @@ def main():
         st.markdown(f"**Mês:** `{MES_ALVO}`")
         st.caption("Dados via Google Sheets · cache 3 min")
 
-    # Aplica filtros base
-    df = apply_filters(raw.copy(), MES_ALVO, ["NOVO", "ADITIVO"], parceiro_sel)
+    # Aplica filtros base — inclui RENEGOCIACAO para o join funcionar
+    df = apply_filters(raw.copy(), MES_ALVO, ["NOVO", "ADITIVO", "RENEGOCIACAO", "RENEGOCIAÇÃO"], parceiro_sel)
 
     # Join com BKO pelo pedido
     if not bko.empty and "pedido" in df.columns:
         from data_loader import _norm_pedido
         df["pedido"] = df["pedido"].apply(_norm_pedido)
         bko["pedido"] = bko["pedido"].apply(_norm_pedido)
+
+        # DEBUG temporário — remover depois
+        with st.expander("🔧 DEBUG — remover depois", expanded=True):
+            st.write("**BKO shape:**", bko.shape)
+            st.write("**BKO colunas:**", list(bko.columns))
+            st.write("**BKO primeiros pedidos:**", bko["pedido"].head(5).tolist())
+            st.write("**DF primeiros pedidos:**", df["pedido"].head(5).tolist())
+            match = df["pedido"].isin(bko["pedido"]).sum()
+            st.write(f"**Pedidos com match:** {match} de {len(df)}")
         df = df.merge(bko[["pedido", "vendedor_real", "lider"]], on="pedido", how="left")
         df["vendedor_real"] = df["vendedor_real"].apply(lambda x: _s(x) if _s(x) else "Sem Vendedor")
         df["lider"]         = df["lider"].apply(lambda x: _s(x) if _s(x) else "Sem Equipe")
