@@ -553,6 +553,8 @@ def main():
                         ths = "".join(f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>" for c in df.columns)
                         return f"<h3 style='color:{cor};margin-top:24px'>{titulo} ({len(df)})</h3><table style='border-collapse:collapse;width:100%;font-size:13px'><tr>{ths}</tr>{lns}</table>"
 
+                    BKO_URL = "https://docs.google.com/spreadsheets/d/1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg/edit?gid=2090275960#gid=2090275960"
+
                     html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
                       <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
                         <h2 style="color:#fff;margin:0">⚠️ Pendências BKO — Connect Group</h2>
@@ -563,7 +565,16 @@ def main():
                       <li><strong>{len(df_seq_e)}</strong> pedido(s) sem líder definido</li></ul>
                       {_tab(df_nan_e,"❓ Pedidos não cadastrados no BKO","#dc2626")}
                       {_tab(df_seq_e,"👤 Pedidos sem Equipe","#d97706")}
-                      <br><hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
+                      <br>
+                      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 20px;margin:24px 0">
+                        <p style="margin:0;font-size:14px">
+                          📋 <strong>Acesse a planilha BKO diretamente para preencher:</strong><br><br>
+                          <a href="{BKO_URL}" style="color:#15803d;font-weight:bold;font-size:14px">
+                            👉 Clique aqui para abrir o BKO-VENDEDOR-REAL
+                          </a>
+                        </p>
+                      </div>
+                      <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group · adm@connectgroup.solutions</p>
                     </body></html>"""
 
                     msg = _MM("alternative")
@@ -581,9 +592,16 @@ def main():
                             p.add_header("Content-Disposition", f'attachment; filename="{fname}"')
                             msg.attach(p)
 
-                    with smtplib.SMTP(cfg["host"], int(cfg["port"]), timeout=15) as sv:
-                        sv.ehlo(); sv.starttls(); sv.login(cfg["user"], cfg["password"])
-                        sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+                    # Tenta SSL (465) primeiro, fallback para STARTTLS (587)
+                    try:
+                        with smtplib.SMTP_SSL(cfg["host"], 465, timeout=15) as sv:
+                            sv.login(cfg["user"], cfg["password"])
+                            sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+                    except Exception:
+                        with smtplib.SMTP(cfg["host"], 587, timeout=15) as sv:
+                            sv.ehlo(); sv.starttls()
+                            sv.login(cfg["user"], cfg["password"])
+                            sv.sendmail(cfg["user"], dest_lista, msg.as_string())
 
                     st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
                 except Exception as e:
