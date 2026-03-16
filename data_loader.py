@@ -5,8 +5,8 @@ from google.oauth2.service_account import Credentials
 import unicodedata
 
 SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets.readonly',
-    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive',
 ]
 
 STATUS_MAP = {
