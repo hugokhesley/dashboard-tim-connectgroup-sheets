@@ -1,5 +1,11 @@
 import streamlit as st
 import pandas as pd
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+import io
 from data_loader import (
     load_data, load_bko, apply_filters, get_parceiros,
     STATUS_COLORS, _s, _norm_pedido
@@ -17,6 +23,100 @@ require_password("performance", "Performance — Connect Group")
 
 MES_ALVO      = "03/2026"
 META_VENDEDOR = 850
+
+DESTINATARIOS_TESTE = ["hugo@connectgroup.solutions"]
+
+DESTINATARIOS_FULL = [
+    "bko2@connectbrasil.tech",
+    "bko@connectbrasil.tech",
+    "hugo@connectgroup.solutions",
+    "angelo@connectgroup.solutions",
+    "andrey.albuquerque@connectgroup.solutions",
+]
+
+
+def enviar_email_pendencias(df_nan: pd.DataFrame, df_seq: pd.DataFrame) -> tuple:
+    """Envia e-mail com pendências do BKO. Retorna (sucesso: bool, mensagem: str)."""
+    try:
+        cfg = st.secrets["email"]
+        host     = cfg["host"]
+        port     = int(cfg["port"])
+        user     = cfg["user"]
+        password = cfg["password"]
+    except Exception:
+        return False, "⚠️ Configuração de e-mail não encontrada nos secrets."
+
+    total_nan = len(df_nan)
+    total_seq = len(df_seq)
+
+    # Monta corpo HTML
+    def _tabela_html(df, titulo, cor):
+        if df.empty:
+            return f"<h3 style='color:{cor}'>{titulo}</h3><p>✅ Nenhuma pendência encontrada.</p>"
+        linhas = "".join(
+            f"<tr>{''.join(f'<td style=padding:6px 10px;border:1px solid #ddd>{v}</td>' for v in row)}</tr>"
+            for row in df.values
+        )
+        cabecalho = "".join(
+            f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>"
+            for c in df.columns
+        )
+        return f"""
+        <h3 style="color:{cor};margin-top:24px">{titulo} ({len(df)} registros)</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px">
+          <tr>{cabecalho}</tr>{linhas}
+        </table>"""
+
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
+      <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
+        <h2 style="color:#fff;margin:0">⚠️ Pendências de Cadastro — BKO</h2>
+        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">Connect Group · {MES_ALVO} · Gerado automaticamente pelo dashboard</p>
+      </div>
+      <p>Olá, seguem as pendências de cadastro identificadas no BKO-VENDEDOR-REAL para o mês <strong>{MES_ALVO}</strong>:</p>
+      <ul>
+        <li><strong>{total_nan}</strong> pedido(s) no DadosRadar <strong>sem cadastro</strong> no BKO</li>
+        <li><strong>{total_seq}</strong> pedido(s) no BKO <strong>sem líder</strong> definido</li>
+      </ul>
+      {_tabela_html(df_nan, "❓ Pedidos não cadastrados no BKO", "#dc2626")}
+      {_tabela_html(df_seq, "👤 Pedidos sem Equipe (BKO sem Líder)", "#d97706")}
+      <br><hr>
+      <p style="font-size:11px;color:#999">Mensagem automática enviada pelo dashboard Connect Group · adm@connectgroup.solutions</p>
+    </body></html>"""
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_nan + total_seq} itens)"
+        msg["From"]    = user
+        msg["To"]      = ", ".join(DESTINATARIOS)
+        msg.attach(MIMEText(html, "html"))
+
+        # Anexa CSV se houver pendências
+        if not df_nan.empty:
+            csv_nan = df_nan.to_csv(index=False).encode("utf-8")
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(csv_nan)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="sem_bko_{MES_ALVO.replace("/","_")}.csv"')
+            msg.attach(part)
+
+        if not df_seq.empty:
+            csv_seq = df_seq.to_csv(index=False).encode("utf-8")
+            part2 = MIMEBase("application", "octet-stream")
+            part2.set_payload(csv_seq)
+            encoders.encode_base64(part2)
+            part2.add_header("Content-Disposition", f'attachment; filename="sem_equipe_{MES_ALVO.replace("/","_")}.csv"')
+            msg.attach(part2)
+
+        with smtplib.SMTP(host, port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(user, password)
+            server.sendmail(user, DESTINATARIOS, msg.as_string())
+
+        return True, f"✅ E-mail enviado com sucesso para {', '.join(DESTINATARIOS)}"
+    except Exception as e:
+        return False, f"❌ Erro ao enviar e-mail: {e}"
 
 st.markdown("""
 <style>
@@ -361,6 +461,135 @@ def main():
     st.markdown('<p class="section-title">👤 Desempenho por Equipe — Kanban</p>', unsafe_allow_html=True)
     for lider in lideres:
         render_equipe(df[df["lider"] == lider].copy(), lider)
+
+    # ── Pendências de cadastro ──
+    st.markdown('<p class="section-title">⚠️ Pendências de Cadastro no BKO</p>', unsafe_allow_html=True)
+
+    # Reconstrói df completo sem filtro de líder para pegar todos os pedidos
+    df_full = apply_filters(raw.copy(), MES_ALVO, ["NOVO","ADITIVO"], parceiro_sel)
+    if not bko.empty and "pedido" in df_full.columns:
+        df_full["pedido"] = df_full["pedido"].apply(_norm_pedido)
+        bk2 = bko.copy()
+        bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
+        df_full = df_full.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+        df_full["vendedor_real"] = df_full["vendedor_real"].fillna("")
+        df_full["lider"]         = df_full["lider"].fillna("")
+    else:
+        df_full["vendedor_real"] = ""
+        df_full["lider"]         = ""
+
+    COLS_SHOW = [c for c in ["pedido","razao_social","fila_atual","status_dash","acessos","preco_oferta","mes_ativacao"] if c in df_full.columns]
+    COL_CFG = {
+        "pedido":       "Pedido",
+        "razao_social": "Razão Social",
+        "fila_atual":   "Fila Atual",
+        "status_dash":  "Status",
+        "acessos":      st.column_config.NumberColumn("Acessos", format="%d"),
+        "preco_oferta": st.column_config.NumberColumn("R$", format="R$ %.2f"),
+        "mes_ativacao": "Mês Ativação",
+    }
+
+    tab_nan, tab_seq = st.tabs(["❓ Não cadastrados no BKO", "👤 Sem Equipe (BKO sem Líder)"])
+
+    with tab_nan:
+        df_nan = df_full[df_full["vendedor_real"] == ""][COLS_SHOW].copy()
+        if df_nan.empty:
+            st.success("✅ Todos os pedidos estão cadastrados no BKO!")
+        else:
+            st.warning(f"**{len(df_nan)} pedido(s)** sem cadastro no BKO-VENDEDOR-REAL.")
+            st.dataframe(df_nan, use_container_width=True, hide_index=True, column_config=COL_CFG)
+            csv = df_nan.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Exportar (.csv)", data=csv,
+                file_name=f"sem_bko_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
+
+    with tab_seq:
+        df_seq = df_full[df_full["lider"] == "Sem Equipe"][COLS_SHOW + ["vendedor_real"]].copy() if "Sem Equipe" in df_full["lider"].values else pd.DataFrame()
+        if df_seq.empty:
+            st.success("✅ Todos os pedidos cadastrados no BKO têm equipe definida!")
+        else:
+            st.warning(f"**{len(df_seq)} pedido(s)** com vendedor no BKO mas sem líder definido.")
+            st.dataframe(df_seq, use_container_width=True, hide_index=True,
+                column_config={**COL_CFG, "vendedor_real": "Vendedor Real"})
+            csv2 = df_seq.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Exportar (.csv)", data=csv2,
+                file_name=f"sem_equipe_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
+
+    # ── Botão de envio de e-mail ──
+    st.markdown("")
+    total_pend = len(df_nan) + len(df_seq) if 'df_nan' in dir() and 'df_seq' in dir() else 0
+    st.markdown("---")
+    if total_pend > 0:
+        c_toggle, c_btn, c_info = st.columns([1, 1, 3])
+        with c_toggle:
+            modo_teste = st.toggle("🧪 Só para mim", value=True,
+                help="Ativado = envia só para hugo@connectgroup.solutions | Desativado = envia para toda a lista")
+        with c_btn:
+            enviar = st.button("📧 Notificar por E-mail", type="primary", use_container_width=True)
+        with c_info:
+            dest_lista = DESTINATARIOS_TESTE if modo_teste else DESTINATARIOS_FULL
+            st.markdown(f"""<div style="padding:8px 0;color:#94a3b8;font-size:0.8rem">
+              {'🧪 Modo teste — ' if modo_teste else '📢 Envio completo — '}
+              <strong style="color:#e2e8f0">{' · '.join(dest_lista)}</strong><br>
+              <span style="color:#64748b">Inclui tabelas HTML e CSVs em anexo.</span>
+            </div>""", unsafe_allow_html=True)
+        if enviar:
+            with st.spinner("Enviando e-mail..."):
+                df_nan_e = df_nan if not df_nan.empty else pd.DataFrame()
+                df_seq_e = df_seq if not df_seq.empty else pd.DataFrame()
+                # Usa destinatários conforme o toggle
+                import smtplib as _smtp
+                try:
+                    cfg = st.secrets["email"]
+                    import smtplib
+                    from email.mime.multipart import MIMEMultipart as _MM
+                    from email.mime.text import MIMEText as _MT
+                    from email.mime.base import MIMEBase as _MB
+                    from email import encoders as _enc
+
+                    def _tab(df, titulo, cor):
+                        if df.empty:
+                            return f"<h3 style='color:{cor}'>{titulo}</h3><p>✅ Nenhuma pendência.</p>"
+                        lns = "".join(f"<tr>{''.join(f'<td style=padding:6px 10px;border:1px solid #ddd>{v}</td>' for v in r)}</tr>" for r in df.values)
+                        ths = "".join(f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>" for c in df.columns)
+                        return f"<h3 style='color:{cor};margin-top:24px'>{titulo} ({len(df)})</h3><table style='border-collapse:collapse;width:100%;font-size:13px'><tr>{ths}</tr>{lns}</table>"
+
+                    html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
+                      <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
+                        <h2 style="color:#fff;margin:0">⚠️ Pendências BKO — Connect Group</h2>
+                        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">{MES_ALVO} · Gerado automaticamente</p>
+                      </div>
+                      <p>Seguem as pendências de cadastro no BKO-VENDEDOR-REAL para <strong>{MES_ALVO}</strong>:</p>
+                      <ul><li><strong>{len(df_nan_e)}</strong> pedido(s) sem cadastro no BKO</li>
+                      <li><strong>{len(df_seq_e)}</strong> pedido(s) sem líder definido</li></ul>
+                      {_tab(df_nan_e,"❓ Pedidos não cadastrados no BKO","#dc2626")}
+                      {_tab(df_seq_e,"👤 Pedidos sem Equipe","#d97706")}
+                      <br><hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
+                    </body></html>"""
+
+                    msg = _MM("alternative")
+                    msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)"
+                    msg["From"]    = f"Connect Group BKO <{cfg['user']}>"
+                    msg["To"]      = ", ".join(dest_lista)
+                    msg.attach(_MT(html, "html"))
+
+                    for df_att, fname in [(df_nan_e, f"sem_bko_{MES_ALVO.replace('/','_')}.csv"),
+                                          (df_seq_e, f"sem_equipe_{MES_ALVO.replace('/','_')}.csv")]:
+                        if not df_att.empty:
+                            p = _MB("application","octet-stream")
+                            p.set_payload(df_att.to_csv(index=False).encode("utf-8"))
+                            _enc.encode_base64(p)
+                            p.add_header("Content-Disposition", f'attachment; filename="{fname}"')
+                            msg.attach(p)
+
+                    with smtplib.SMTP(cfg["host"], int(cfg["port"]), timeout=15) as sv:
+                        sv.ehlo(); sv.starttls(); sv.login(cfg["user"], cfg["password"])
+                        sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+
+                    st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
+                except Exception as e:
+                    st.error(f"❌ Erro ao enviar: {e}")
+    else:
+        st.success("✅ Sem pendências — nenhum e-mail necessário.")
 
 
 main()
