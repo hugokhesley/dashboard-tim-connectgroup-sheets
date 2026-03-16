@@ -355,7 +355,8 @@ def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
             return True, "Nenhum pedido novo para inserir — todos já estavam no BKO."
 
         # Monta as linhas para inserir
-        # Estrutura BKO: SAFRA | pedido | RAZÃO SOCIAL | VENDEDOR REAL | LÍDER | TBP
+        # Estrutura BKO colunas não protegidas: SAFRA | PEDIDO | RAZÃO SOCIAL | VENDEDOR REAL
+        # Colunas E em diante (LÍDER, TBP) são protegidas — não incluir
         novas_linhas = []
         for _, row in df_inserir.iterrows():
             novas_linhas.append([
@@ -363,8 +364,6 @@ def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
                 _norm_pedido(row.get('pedido', '')),
                 _s(row.get('razao_social', '')),
                 '',   # VENDEDOR REAL — preencher manualmente
-                '',   # LÍDER — preencher manualmente
-                '',   # TBP — preencher manualmente
             ])
 
         # Insere no final da planilha
