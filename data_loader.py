@@ -346,10 +346,14 @@ def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
                         if v:
                             pedidos_existentes.add(v)
 
-        # Filtra apenas os que realmente faltam
+        # Filtra apenas os que realmente faltam e remove duplicatas pelo pedido
         df_inserir = df_pendentes[
             ~df_pendentes['pedido'].apply(_norm_pedido).isin(pedidos_existentes)
         ].copy()
+
+        # Remove duplicatas — mantém apenas a primeira ocorrência de cada pedido
+        df_inserir['_pedido_norm'] = df_inserir['pedido'].apply(_norm_pedido)
+        df_inserir = df_inserir.drop_duplicates(subset='_pedido_norm').drop(columns='_pedido_norm')
 
         if df_inserir.empty:
             return True, "Nenhum pedido novo para inserir — todos já estavam no BKO."
