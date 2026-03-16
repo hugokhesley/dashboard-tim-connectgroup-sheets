@@ -142,7 +142,7 @@ def render_visual(df, lideres, lider_sel):
         meta    = n_v * META_VENDEDOR
         pct     = min(int(rec_g / meta * 100), 999) if meta > 0 else 0
         cor     = _cor(pct)
-        sub_pip = f"<div class='gauge-sub' style='margin-top:2px'>⏳ +R$ {rec_pip:,.2f} pipeline</div>" if incluir_pipeline else ""
+        sub_pip = f"<div class='gauge-sub' style='margin-top:2px'>⏳ +R$ {rec_pip:,.2f} pipeline</div>" if incluir_pipeline else "<div></div>"
         st.markdown(f"""<div class="gauge-wrap">
           <div class="vis-title">🎯 {'Ativ. + Pipeline' if incluir_pipeline else 'Atingimento Receita'}</div>
           <div class="gauge-pct" style="color:{cor}">{pct}%</div>
@@ -494,18 +494,32 @@ def main():
                         ths = "".join(f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>" for c in df.columns)
                         return f"<h3 style='color:{cor};margin-top:24px'>{titulo} ({len(df)})</h3><table style='border-collapse:collapse;width:100%;font-size:13px'><tr>{ths}</tr>{lns}</table>"
 
+                    from datetime import datetime as _dt
+                    agora = _dt.now().strftime("%d/%m/%Y às %H:%M")
+
                     BKO_URL = "https://docs.google.com/spreadsheets/d/1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg/edit?gid=2090275960#gid=2090275960"
+
+                    # Monta lista de vendedores sem cadastro
+                    vendedores_nan = ""
+                    if not df_nan_e.empty and "razao_social" in df_nan_e.columns:
+                        itens = "".join(
+                            f"<li><strong>{row.get('pedido','')}</strong> — {row.get('razao_social','')}</li>"
+                            for row in df_nan_e.to_dict("records")
+                        )
+                        vendedores_nan = f"<ul style='margin:8px 0 0 0;font-size:13px'>{itens}</ul>"
 
                     html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
                       <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
                         <h2 style="color:#fff;margin:0">⚠️ Pendências BKO — Connect Group</h2>
-                        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">{MES_ALVO} · Gerado automaticamente</p>
+                        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">{MES_ALVO} · Gerado em {agora}</p>
                       </div>
-                      <p>Seguem as pendências de cadastro no BKO-VENDEDOR-REAL para <strong>{MES_ALVO}</strong>:</p>
-                      <ul><li><strong>{len(df_nan_e)}</strong> pedido(s) sem cadastro no BKO</li>
-                      <li><strong>{len(df_seq_e)}</strong> pedido(s) sem líder definido</li></ul>
-                      {_tab(df_nan_e,"❓ Pedidos não cadastrados no BKO","#dc2626")}
-                      {_tab(df_seq_e,"👤 Pedidos sem Equipe","#d97706")}
+                      <p style="font-size:15px">Olá, identificamos <strong>pendência de nome do VENDEDOR REAL</strong> na planilha online em <strong>{agora}</strong>:</p>
+                      <ul>
+                        <li><strong>{len(df_nan_e)}</strong> pedido(s) aguardando cadastro do Vendedor Real no BKO</li>
+                        <li><strong>{len(df_seq_e)}</strong> pedido(s) com vendedor cadastrado mas sem líder definido</li>
+                      </ul>
+                      {_tab(df_nan_e,"❓ Pedidos sem Vendedor Real no BKO","#dc2626")}
+                      {_tab(df_seq_e,"👤 Pedidos sem Líder definido","#d97706")}
                       <br>
                       <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 20px;margin:24px 0">
                         <p style="margin:0;font-size:14px">
