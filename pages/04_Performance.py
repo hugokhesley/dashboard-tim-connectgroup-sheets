@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from data_loader import (
-    load_data, load_bko, apply_filters, get_parceiros,
+    load_data, load_bko, load_colaboradores, apply_filters, get_parceiros,
     STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko
 )
 from auth import require_password
@@ -329,8 +329,9 @@ def main():
       <div class="header-badge">🟢 PERFORMANCE</div></div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando dados..."):
-        raw = load_data()
-        bko = load_bko()
+        raw   = load_data()
+        bko   = load_bko()
+        colab = load_colaboradores()
 
     if raw.empty:
         st.warning("⚠️ Nenhum dado encontrado.")
@@ -410,6 +411,84 @@ def main():
         render_equipe(df[df["lider"] == lider].copy(), lider)
 
     # ── Pendências de cadastro ──
+    # ── Vendedores zerados ────────────────────────────────────────────────────
+    st.markdown('<p class="section-title">🔴 Vendedores Sem Ativação no Mês</p>', unsafe_allow_html=True)
+
+    if not colab.empty:
+        # Filtra colaboradores da equipe/parceiro selecionado
+        colab_fil = colab.copy()
+        if lider_sel != "Todos":
+            colab_fil = colab_fil[colab_fil["lider"] == lider_sel]
+
+        # Receita ativada por vendedor real no mês
+        ser_atv = df[df["mes_ativacao"] == MES_ALVO].groupby("vendedor_real")["preco_oferta"].sum()
+
+        # Cruza colaboradores ativos com ativações
+        colab_fil["receita"] = colab_fil["vendedor"].map(ser_atv).fillna(0)
+        zerados   = colab_fil[colab_fil["receita"] == 0].sort_values("vendedor")
+        parciais  = colab_fil[(colab_fil["receita"] > 0) & (colab_fil["receita"] < colab_fil["meta"])].sort_values("receita")
+        bateram   = colab_fil[colab_fil["receita"] >= colab_fil["meta"]].sort_values("receita", ascending=False)
+
+        z1, z2, z3 = st.columns(3)
+        with z1:
+            st.markdown(f"""<div class="kpi-mini red">
+              <div class="kpi-label">🔴 Zerados</div>
+              <div class="kpi-value">{len(zerados)}</div>
+              <div class="kpi-sub">sem nenhuma ativação</div>
+            </div>""", unsafe_allow_html=True)
+        with z2:
+            st.markdown(f"""<div class="kpi-mini amber">
+              <div class="kpi-label">🟡 Abaixo da Meta</div>
+              <div class="kpi-value">{len(parciais)}</div>
+              <div class="kpi-sub">ativaram mas não bateram</div>
+            </div>""", unsafe_allow_html=True)
+        with z3:
+            st.markdown(f"""<div class="kpi-mini green">
+              <div class="kpi-label">🟢 Bateram a Meta</div>
+              <div class="kpi-value">{len(bateram)}</div>
+              <div class="kpi-sub">acima de R$ {META_VENDEDOR:,}</div>
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("")
+
+        tab_z1, tab_z2, tab_z3 = st.tabs([
+            f"🔴 Zerados ({len(zerados)})",
+            f"🟡 Abaixo da Meta ({len(parciais)})",
+            f"🟢 Bateram ({len(bateram)})"
+        ])
+
+        def _render_vend_table(dff):
+            if dff.empty:
+                st.success("Nenhum vendedor nesta categoria.")
+                return
+            rows_html = ""
+            for _, row in dff.iterrows():
+                pct = min(int(row["receita"] / row["meta"] * 100), 100) if row["meta"] > 0 else 0
+                cor = _cor(pct)
+                bar = _bar(row["receita"], row["meta"], cor, 8)
+                rows_html += f"""
+                <div style="padding:10px 0;border-bottom:1px solid #1e293b">
+                  <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                    <span style="font-size:0.85rem;font-weight:600;color:#e2e8f0">{row['vendedor']}</span>
+                    <span style="font-size:0.82rem;color:{cor};font-weight:700">R$ {row['receita']:,.2f} <span style="color:#64748b">({pct}%)</span></span>
+                  </div>
+                  {bar}
+                  <div style="font-size:0.68rem;color:#64748b;margin-top:2px">{row['lider'] if row['lider'] else '—'} · meta R$ {row['meta']:,.0f}</div>
+                </div>"""
+            st.markdown(f'<div style="max-height:400px;overflow-y:auto">{rows_html}</div>', unsafe_allow_html=True)
+
+        with tab_z1:
+            _render_vend_table(zerados)
+        with tab_z2:
+            _render_vend_table(parciais)
+        with tab_z3:
+            _render_vend_table(bateram)
+    else:
+        st.info("Aba Colaboradores não encontrada ou sem dados.")
+
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+    # ── Pendências de Cadastro no BKO ──────────────────────────────────────────
     st.markdown('<p class="section-title">⚠️ Pendências de Cadastro no BKO</p>', unsafe_allow_html=True)
 
     # Reconstrói df completo sem filtro de líder para pegar todos os pedidos
