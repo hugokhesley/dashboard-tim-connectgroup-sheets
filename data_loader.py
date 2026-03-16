@@ -310,3 +310,67 @@ def load_bko() -> pd.DataFrame:
     except Exception as e:
         st.warning(f'BKO não carregado: {e}')
         return pd.DataFrame(columns=['pedido', 'vendedor_real', 'lider'])
+
+
+def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
+    """
+    Insere na aba BKO-VENDEDOR-REAL os pedidos que estão no DadosRadar
+    mas ainda não foram cadastrados. Evita duplicatas comparando pedidos.
+    
+    df_pendentes: DataFrame com colunas pedido, razao_social
+    safra: ex '03/2026'
+    Retorna (sucesso: bool, mensagem: str)
+    """
+    try:
+        client = get_gspread_client()
+        sheet_url = st.secrets['sheets']['url']
+        spreadsheet = client.open_by_url(sheet_url)
+        ws = spreadsheet.worksheet('BKO-VENDEDOR-REAL')
+
+        # Lê o que já existe no BKO para evitar duplicatas
+        all_values = ws.get_all_values()
+        pedidos_existentes = set()
+        if all_values and len(all_values) >= 3:
+            headers = all_values[1]
+            rows    = all_values[2:]
+            # Descobre índice da coluna pedido
+            idx_pedido = None
+            for i, h in enumerate(headers):
+                if _normalize(h) == 'pedido':
+                    idx_pedido = i
+                    break
+            if idx_pedido is not None:
+                for row in rows:
+                    if idx_pedido < len(row):
+                        v = _norm_pedido(row[idx_pedido])
+                        if v:
+                            pedidos_existentes.add(v)
+
+        # Filtra apenas os que realmente faltam
+        df_inserir = df_pendentes[
+            ~df_pendentes['pedido'].apply(_norm_pedido).isin(pedidos_existentes)
+        ].copy()
+
+        if df_inserir.empty:
+            return True, "Nenhum pedido novo para inserir — todos já estavam no BKO."
+
+        # Monta as linhas para inserir
+        # Estrutura BKO: SAFRA | pedido | RAZÃO SOCIAL | VENDEDOR REAL | LÍDER | TBP
+        novas_linhas = []
+        for _, row in df_inserir.iterrows():
+            novas_linhas.append([
+                safra,
+                _norm_pedido(row.get('pedido', '')),
+                _s(row.get('razao_social', '')),
+                '',   # VENDEDOR REAL — preencher manualmente
+                '',   # LÍDER — preencher manualmente
+                '',   # TBP — preencher manualmente
+            ])
+
+        # Insere no final da planilha
+        ws.append_rows(novas_linhas, value_input_option='USER_ENTERED')
+
+        return True, f"{len(novas_linhas)} pedido(s) inserido(s) no BKO com sucesso."
+
+    except Exception as e:
+        return False, f"Erro ao inserir no BKO: {e}"
