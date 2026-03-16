@@ -26,6 +26,7 @@ DESTINATARIOS_FULL = [
     "hugo@connectgroup.solutions",
     "angelo@connectgroup.solutions",
     "andrey.albuquerque@connectgroup.solutions",
+    "nivandro.nascimento@connectbrasil.tech",
 ]
 
 
