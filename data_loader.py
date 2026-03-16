@@ -366,17 +366,18 @@ def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
                 '',   # VENDEDOR REAL — preencher manualmente
             ])
 
-        # Insere logo após a última linha com PEDIDO preenchido
-        # Encontra a última linha com dados nas colunas A e B
-        ultima_linha = 2  # começa após o header (linha 2 = índice 1)
+        # Encontra a primeira linha onde B (pedido) E C (razão social) estão vazios
+        # Ignora colunas A, D, E, F — só olha B e C
+        primeira_vazia = len(rows) + 3  # fallback: após todos os dados existentes
         for i, row in enumerate(rows):
-            # Considera linha com dados se A (safra) ou B (pedido) estiver preenchida
-            if len(row) >= 2 and (_s(row[0]) or _s(row[1])):
-                ultima_linha = i + 3  # +3 porque: linha 1 vazia, linha 2 header, +1 próxima
+            col_b = _s(row[1]) if len(row) > 1 else ""
+            col_c = _s(row[2]) if len(row) > 2 else ""
+            if not col_b and not col_c:
+                primeira_vazia = i + 3  # +3: linha 1 vazia + linha 2 header + 1-indexed
+                break
 
-        # Insere nas linhas corretas usando update em vez de append
-        inicio = ultima_linha
-        range_notation = f"A{inicio}:F{inicio + len(novas_linhas) - 1}"
+        # Insere a partir da primeira linha vazia em B e C
+        range_notation = f"A{primeira_vazia}:F{primeira_vazia + len(novas_linhas) - 1}"
         ws.update(range_notation, novas_linhas, value_input_option='USER_ENTERED')
 
         return True, f"{len(novas_linhas)} pedido(s) inserido(s) no BKO com sucesso."
