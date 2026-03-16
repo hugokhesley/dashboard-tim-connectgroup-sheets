@@ -15,8 +15,12 @@ st.set_page_config(
 
 require_password("performance", "Performance — Connect Group")
 
-MES_ALVO      = "03/2026"
-META_VENDEDOR = 850
+MES_ALVO          = "03/2026"
+META_VENDEDOR_PAD = 850  # fallback se não encontrar na planilha
+
+def _meta_vend(nome: str, meta_dict: dict) -> float:
+    """Retorna a meta do vendedor da planilha Colaboradores. Fallback: META_VENDEDOR_PAD."""
+    return meta_dict.get(nome, META_VENDEDOR_PAD)
 
 DESTINATARIOS_TESTE = ["hugo@connectgroup.solutions"]
 
@@ -26,7 +30,6 @@ DESTINATARIOS_FULL = [
     "hugo@connectgroup.solutions",
     "angelo@connectgroup.solutions",
     "andrey.albuquerque@connectgroup.solutions",
-    "nivandro.nascimento@connectbrasil.tech",
 ]
 
 
@@ -114,7 +117,7 @@ def kanban_col(df_col, status, col_obj, label=None):
                         "R$":st.column_config.NumberColumn("R$",format="R$ %.2f")})
 
 
-def render_visual(df, lideres, lider_sel):
+def render_visual(df, lideres, lider_sel, meta_dict):
     st.markdown('<p class="section-title">📊 Painel de Performance</p>', unsafe_allow_html=True)
 
     visao = st.radio("Visão do ranking:", ["🎯 Ativação", "🎯 + ⏳ Ativação + Pipeline"],
@@ -139,8 +142,8 @@ def render_visual(df, lideres, lider_sel):
         rec_atv = df_atv_all["preco_oferta"].sum()
         rec_pip = df_pip_all["preco_oferta"].sum()
         rec_g   = rec_atv + rec_pip if incluir_pipeline else rec_atv
-        n_v     = df["vendedor_real"].nunique()
-        meta    = n_v * META_VENDEDOR
+        # Meta total = soma das metas individuais dos vendedores
+        meta    = sum(_meta_vend(v, meta_dict) for v in df["vendedor_real"].unique()) if meta_dict else df["vendedor_real"].nunique() * META_VENDEDOR_PAD
         pct     = min(int(rec_g / meta * 100), 999) if meta > 0 else 0
         cor     = _cor(pct)
         sub_pip = f"<div class='gauge-sub' style='margin-top:2px'>⏳ +R$ {rec_pip:,.2f} pipeline</div>" if incluir_pipeline else "<div></div>"
@@ -150,7 +153,7 @@ def render_visual(df, lideres, lider_sel):
           <div style="margin:10px 0">{_bar(rec_g, meta, cor, 14)}</div>
           <div class="gauge-sub">R$ {rec_g:,.2f} de R$ {meta:,.2f}</div>
           {sub_pip}
-          <div class="gauge-sub" style="margin-top:4px">{n_v} vendedor(es) × R$ {META_VENDEDOR:,}</div>
+          <div class="gauge-sub" style="margin-top:4px">{df["vendedor_real"].nunique()} vendedor(es)</div>
         </div>""", unsafe_allow_html=True)
 
     # Ranking equipes
@@ -161,11 +164,13 @@ def render_visual(df, lideres, lider_sel):
         rows = []
         for l in lideres:
             dl   = df[df["lider"] == l]
-            nv   = dl["vendedor_real"].nunique()
             r    = _vend_rec(dl)
             ratv = dl[dl["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
             rpip = dl[dl["mes_ativacao"].isna()]["preco_oferta"].sum()
-            rows.append({"lider":l,"rec":r,"ratv":ratv,"rpip":rpip,"meta":nv*META_VENDEDOR,"nv":nv})
+            # Meta da equipe = soma das metas individuais
+            meta_eq = sum(_meta_vend(v, meta_dict) for v in dl["vendedor_real"].unique()) if meta_dict else dl["vendedor_real"].nunique() * META_VENDEDOR_PAD
+            nv = dl["vendedor_real"].nunique()
+            rows.append({"lider":l,"rec":r,"ratv":ratv,"rpip":rpip,"meta":meta_eq,"nv":nv})
         rows = sorted(rows, key=lambda x: x["rec"], reverse=True)
         mx   = max((r["rec"] for r in rows), default=1)
         html = ""
@@ -200,15 +205,16 @@ def render_visual(df, lideres, lider_sel):
         mx_v  = ser_tot.max() if not ser_tot.empty else 1
         html_v = ""
         for i, (vend, val) in enumerate(ser_tot.items()):
-            p  = min(int(val / META_VENDEDOR * 100), 100)
+            mv = _meta_vend(vend, meta_dict)
+            p  = min(int(val / mv * 100), 100) if mv > 0 else 0
             c  = _cor(p)
             m  = medals[i] if i < 3 else f"{i+1}º"
             if incluir_pipeline:
                 a = ser_atv.get(vend, 0)
                 p2= ser_pip.get(vend, 0)
-                sub = f"<div class='rank-meta'>✅ R$ {a:,.2f} · ⏳ R$ {p2:,.2f} · meta R$ {META_VENDEDOR:,}</div>"
+                sub = f"<div class='rank-meta'>✅ R$ {a:,.2f} · ⏳ R$ {p2:,.2f} · meta R$ {mv:,.2f}</div>"
             else:
-                sub = f"<div class='rank-meta'>meta individual R$ {META_VENDEDOR:,}</div>"
+                sub = f"<div class='rank-meta'>meta individual R$ {mv:,.2f}</div>"
             html_v += f"""<div class="rank-bar-wrap">
               <div class="rank-name"><span>{m} {vend}</span>
               <span style="color:{c};font-weight:700">R$ {val:,.2f} <span style="color:#64748b">({p}%)</span></span></div>
@@ -266,12 +272,12 @@ def render_visual(df, lideres, lider_sel):
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_equipe(df_eq, lider):
+def render_equipe(df_eq, lider, meta_dict):
     ac_ativ  = int(df_eq[df_eq["mes_ativacao"] == MES_ALVO]["acessos"].sum())
     rec_ativ = df_eq[df_eq["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
     pipeline = int(df_eq[df_eq["mes_ativacao"].isna()]["acessos"].sum())
     n_vend   = df_eq["vendedor_real"].nunique()
-    meta_eq  = n_vend * META_VENDEDOR
+    meta_eq  = sum(_meta_vend(v, meta_dict) for v in df_eq["vendedor_real"].unique()) if meta_dict else n_vend * META_VENDEDOR_PAD
     pct      = min(int(rec_ativ / meta_eq * 100), 100) if meta_eq > 0 else 0
     cor      = _cor(pct)
     icon     = "✅" if pct >= 100 else "⚠️" if pct >= 70 else "🔴"
@@ -312,7 +318,10 @@ def render_equipe(df_eq, lider):
                     Pipeline=("acessos", lambda x: int(x[df_eq.loc[x.index,"mes_ativacao"].isna()].sum())),
                     Receita=("preco_oferta","sum"),
                 ).sort_values("Receita", ascending=False))
-        rank["% Meta"] = rank["Receita"].apply(lambda r: f"{min(int(r/META_VENDEDOR*100),100)}%")
+        rank["% Meta"] = rank.apply(
+            lambda row: f"{min(int(row['Receita'] / _meta_vend(row['vendedor_real'], meta_dict) * 100), 100)}%"
+            if _meta_vend(row['vendedor_real'], meta_dict) > 0 else "—", axis=1
+        )
         st.dataframe(rank, use_container_width=True, hide_index=True,
             column_config={"vendedor_real":"Vendedor",
                 "Ativados":st.column_config.NumberColumn("✅ Ativados",format="%d"),
@@ -349,7 +358,7 @@ def main():
             st.rerun()
         st.markdown("---")
         st.markdown(f"**Mês:** `{MES_ALVO}`")
-        st.markdown(f"**Meta/Vendedor:** `R$ {META_VENDEDOR:,}`")
+        st.markdown(f"**Meta/Vendedor:** `R$ {META_VENDEDOR_PAD:,}`")
         st.caption("Dados via Google Sheets · cache 3 min")
 
     df = apply_filters(raw.copy(), MES_ALVO, ["NOVO","ADITIVO"], parceiro_sel)
@@ -376,6 +385,9 @@ def main():
     if "Sem Equipe" in df["lider"].unique():
         lideres += ["Sem Equipe"]
 
+    # Dicionário de metas individuais por vendedor (da aba Colaboradores)
+    meta_dict = dict(zip(colab["vendedor"], colab["meta"])) if not colab.empty else {}
+
     # KPIs globais
     st.markdown('<p class="section-title">📈 Visão Consolidada</p>', unsafe_allow_html=True)
     atv_g  = df[df["mes_ativacao"] == MES_ALVO]
@@ -383,7 +395,7 @@ def main():
     rec_g  = atv_g["preco_oferta"].sum()
     pip_g  = int(df[df["mes_ativacao"].isna()]["acessos"].sum())
     nv_g   = df["vendedor_real"].nunique()
-    meta_g = nv_g * META_VENDEDOR
+    meta_g = sum(_meta_vend(v, meta_dict) for v in df["vendedor_real"].unique()) if meta_dict else nv_g * META_VENDEDOR_PAD
     pct_g  = min(int(rec_g / meta_g * 100), 999) if meta_g > 0 else 0
 
     g1,g2,g3,g4,g5 = st.columns(5)
@@ -405,11 +417,11 @@ def main():
           <div class="kpi-value">{neq}</div><div class="kpi-sub">em exibição</div></div>""", unsafe_allow_html=True)
 
     st.markdown("")
-    render_visual(df, lideres, lider_sel)
+    render_visual(df, lideres, lider_sel, meta_dict)
 
     st.markdown('<p class="section-title">👤 Desempenho por Equipe — Kanban</p>', unsafe_allow_html=True)
     for lider in lideres:
-        render_equipe(df[df["lider"] == lider].copy(), lider)
+        render_equipe(df[df["lider"] == lider].copy(), lider, meta_dict)
 
     # ── Pendências de cadastro ──
     # ── Vendedores zerados ────────────────────────────────────────────────────
@@ -447,7 +459,7 @@ def main():
             st.markdown(f"""<div class="kpi-mini green">
               <div class="kpi-label">🟢 Bateram a Meta</div>
               <div class="kpi-value">{len(bateram)}</div>
-              <div class="kpi-sub">acima de R$ {META_VENDEDOR:,}</div>
+              <div class="kpi-sub">acima de R$ {META_VENDEDOR_PAD:,}</div>
             </div>""", unsafe_allow_html=True)
 
         st.markdown("")
