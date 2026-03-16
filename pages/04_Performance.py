@@ -518,27 +518,23 @@ def main():
                       <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
                     </body></html>"""
 
-                    # Mailgun HTTP API — funciona em qualquer ambiente cloud
-                    domain   = cfg["domain"]      # ex: allugo.net
-                    api_key  = cfg["api_key"]      # chave privada do Mailgun
-                    from_email = cfg.get("from", f"Connect Group BKO <contato@{domain}>")
+                    # Titan SMTP via SSL
+                    import smtplib
+                    from email.mime.multipart import MIMEMultipart as _MM
+                    from email.mime.text import MIMEText as _MT
 
-                    resp = _req.post(
-                        f"https://api.mailgun.net/v3/{domain}/messages",
-                        auth=("api", api_key),
-                        data={
-                            "from":    from_email,
-                            "to":      dest_lista,
-                            "subject": f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)",
-                            "html":    html,
-                        },
-                        timeout=15
-                    )
+                    cfg = st.secrets["email"]
+                    msg = _MM("alternative")
+                    msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)"
+                    msg["From"]    = cfg.get("from", cfg["user"])
+                    msg["To"]      = ", ".join(dest_lista)
+                    msg.attach(_MT(html, "html"))
 
-                    if resp.status_code == 200:
-                        st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
-                    else:
-                        st.error(f"❌ Mailgun retornou erro {resp.status_code}: {resp.text}")
+                    with smtplib.SMTP_SSL(cfg["host"], int(cfg["port"]), timeout=20) as sv:
+                        sv.login(cfg["user"], cfg["password"])
+                        sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+
+                    st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
 
                 except Exception as e:
                     st.error(f"❌ Erro ao enviar: {e}")
