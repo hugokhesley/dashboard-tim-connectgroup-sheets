@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from data_loader import (
     load_data, load_bko, apply_filters, get_parceiros,
-    STATUS_COLORS, _s, _norm_pedido
+    STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko
 )
 from auth import require_password
 
@@ -521,7 +521,14 @@ def main():
                       {_tab(df_nan_e,"❓ Pedidos sem Vendedor Real no BKO","#dc2626")}
                       {_tab(df_seq_e,"👤 Pedidos sem Líder definido","#d97706")}
                       <br>
-                      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 20px;margin:24px 0">
+                      <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:16px 20px;margin:16px 0">
+                        <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#92400e">❓ COMO RESOLVER?</p>
+                        <p style="margin:0;font-size:14px;color:#78350f">
+                          Basta apenas entrar na planilha e colocar o <strong>VENDEDOR REAL</strong> da venda —
+                          as informações do pedido já estão lá preenchidas automaticamente.
+                        </p>
+                      </div>
+                      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 20px;margin:16px 0">
                         <p style="margin:0;font-size:14px">
                           📋 <strong>Acesse a planilha BKO diretamente para preencher:</strong><br><br>
                           <a href="{BKO_URL}" style="color:#15803d;font-weight:bold;font-size:14px">
@@ -549,6 +556,19 @@ def main():
                         sv.sendmail(cfg["user"], dest_lista, msg.as_string())
 
                     st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
+
+                    # Insere automaticamente no BKO os pedidos pendentes
+                    if not df_nan_e.empty and "pedido" in df_nan_e.columns:
+                        cols_bko = [c for c in ["pedido", "razao_social"] if c in df_nan_e.columns]
+                        ok_bko, msg_bko = inserir_pendentes_bko(
+                            df_nan_e[cols_bko].copy(), MES_ALVO
+                        )
+                        # Limpa cache para o BKO recarregar com os novos dados
+                        st.cache_data.clear()
+                        if ok_bko:
+                            st.info(f"📋 {msg_bko}")
+                        else:
+                            st.warning(f"⚠️ {msg_bko}")
 
                 except Exception as e:
                     st.error(f"❌ Erro ao enviar: {e}")
