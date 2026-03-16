@@ -157,10 +157,10 @@ def _bool_icon(val):
 
 
 def _adim_icon(val):
-    v = _s(val).upper()
-    if v == "SIM":    return "🟢 SIM"
-    if v == "NÃO" or v == "NAO": return "🔴 NÃO"
-    if v == "GERADA": return "🟡 GERADA"
+    v = _s(val).upper().strip()
+    if v == "SIM":                          return "🟢 SIM"
+    if v in ("NÃO", "NAO"):                return "🔴 NÃO"
+    if v in ("GERADA", "FATURA GERADA"):   return "🟡 FATURA GERADA"
     return "—"
 
 
@@ -200,9 +200,16 @@ def _tabela(df):
 
 
 def _mask_inadim(df):
-    """Retorna máscara booleana: True = NÃO adimplente (vencido)."""
+    """Retorna máscara booleana: True = NÃO adimplente (fatura vencida)."""
     if "adimplente" in df.columns:
-        return df["adimplente"].apply(lambda x: _s(x).upper() in ["NÃO", "NAO"])
+        return df["adimplente"].apply(lambda x: _s(x).upper().strip() in ["NÃO", "NAO"])
+    return pd.Series([False] * len(df))
+
+
+def _mask_gerada(df):
+    """Retorna máscara booleana: True = fatura gerada ainda não vencida."""
+    if "adimplente" in df.columns:
+        return df["adimplente"].apply(lambda x: _s(x).upper().strip() in ["GERADA", "FATURA GERADA"])
     return pd.Series([False] * len(df))
 
 
@@ -221,7 +228,7 @@ def render_painel_geral(df: pd.DataFrame):
     for safra in safras:
         dfs         = df[df["safra"] == safra]
         mask_nao    = _mask_inadim(dfs)
-        mask_gerada = dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in dfs.columns else pd.Series([False]*len(dfs))
+        mask_gerada = _mask_gerada(dfs)
         mask_sim    = ~mask_nao & ~mask_gerada
         total  = _acessos(dfs)
         nao    = _acessos(dfs[mask_nao])
@@ -253,7 +260,7 @@ def render_painel_geral(df: pd.DataFrame):
     # KPIs consolidados
     st.markdown('<p class="section-title">📈 KPIs Consolidados</p>', unsafe_allow_html=True)
     mask_nao_g    = _mask_inadim(df)
-    mask_gerada_g = df["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in df.columns else pd.Series([False]*len(df))
+    mask_gerada_g = _mask_gerada(df)
     mask_sim_g    = ~mask_nao_g & ~mask_gerada_g
     total_g  = _acessos(df)
     nao_g    = _acessos(df[mask_nao_g])
@@ -293,7 +300,7 @@ def render_safra_detalhe(df: pd.DataFrame, safra: str):
     dfs = df[df["safra"] == safra].copy() if safra != "Todas" else df.copy()
 
     inadim_mask  = _mask_inadim(dfs)
-    gerada_mask  = dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in dfs.columns else pd.Series([False]*len(dfs))
+    gerada_mask  = _mask_gerada(dfs)
     sim_mask     = ~inadim_mask & ~gerada_mask
     total        = _acessos(dfs)
     nao          = _acessos(dfs[inadim_mask])
