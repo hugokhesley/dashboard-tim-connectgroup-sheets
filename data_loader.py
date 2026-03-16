@@ -388,3 +388,56 @@ def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
 
     except Exception as e:
         return False, f"Erro ao inserir no BKO: {e}"
+
+
+@st.cache_data(ttl=180)
+def load_colaboradores() -> pd.DataFrame:
+    """
+    Carrega aba Colaboradores e retorna vendedores ATIVOS (com META preenchida).
+    Colunas retornadas: vendedor, lider, meta
+    """
+    try:
+        client = get_gspread_client()
+        sheet_url = st.secrets['sheets']['url']
+        spreadsheet = client.open_by_url(sheet_url)
+        ws = spreadsheet.worksheet('Colaboradores')
+        all_values = ws.get_all_values()
+        if not all_values or len(all_values) < 3:
+            return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
+
+        # Header na linha 2 (índice 1)
+        headers = all_values[1]
+        rows    = all_values[2:]
+        df = pd.DataFrame(rows, columns=headers)
+        df = _dedup_columns(df)
+
+        # Normaliza nomes de colunas
+        rename = {}
+        for col in df.columns:
+            n = _normalize(col)
+            if 'vendedor' in n and 'real' not in n: rename[col] = 'vendedor'
+            elif n in ('lider', 'líder'):            rename[col] = 'lider'
+            elif n == 'meta':                        rename[col] = 'meta'
+            elif n == 'cargo':                       rename[col] = 'cargo'
+        df = df.rename(columns=rename)
+
+        for c in ['vendedor', 'lider', 'meta', 'cargo']:
+            if c not in df.columns:
+                df[c] = ''
+
+        df['vendedor'] = df['vendedor'].apply(_s)
+        df['lider']    = df['lider'].apply(_s)
+        df['meta']     = df['meta'].apply(_to_num)
+
+        # Apenas vendedores ativos (META > 0) e cargo VENDEDOR
+        df = df[
+            (df['meta'] > 0) &
+            (df['vendedor'] != '') &
+            (df['cargo'].apply(lambda x: _normalize(x) == 'vendedor'))
+        ].reset_index(drop=True)
+
+        return df[['vendedor', 'lider', 'meta']]
+
+    except Exception as e:
+        st.warning(f'Colaboradores não carregado: {e}')
+        return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
