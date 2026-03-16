@@ -203,44 +203,66 @@ def kanban_col(df_col, status, col_obj, label=None):
 def render_visual(df, lideres, lider_sel):
     st.markdown('<p class="section-title">📊 Painel de Performance</p>', unsafe_allow_html=True)
 
+    visao = st.radio("Visão do ranking:", ["🎯 Ativação", "🎯 + ⏳ Ativação + Pipeline"],
+                     horizontal=True, key="visao_ranking")
+    incluir_pipeline = visao == "🎯 + ⏳ Ativação + Pipeline"
+    st.markdown("")
+
+    medals = ["🥇","🥈","🥉"]
+    df_atv_all = df[df["mes_ativacao"] == MES_ALVO]
+    df_pip_all = df[df["mes_ativacao"].isna()]
+
+    def _vend_rec(d):
+        r = d[d["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
+        if incluir_pipeline:
+            r += d[d["mes_ativacao"].isna()]["preco_oferta"].sum()
+        return r
+
     c_gauge, c_eq, c_vend = st.columns([1, 2, 2])
 
     # Gauge
     with c_gauge:
-        rec = df[df["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
-        n_v = df["vendedor_real"].nunique()
-        meta = n_v * META_VENDEDOR
-        pct = min(int(rec / meta * 100), 999) if meta > 0 else 0
-        cor = _cor(pct)
+        rec_atv = df_atv_all["preco_oferta"].sum()
+        rec_pip = df_pip_all["preco_oferta"].sum()
+        rec_g   = rec_atv + rec_pip if incluir_pipeline else rec_atv
+        n_v     = df["vendedor_real"].nunique()
+        meta    = n_v * META_VENDEDOR
+        pct     = min(int(rec_g / meta * 100), 999) if meta > 0 else 0
+        cor     = _cor(pct)
+        sub_pip = f"<div class='gauge-sub' style='margin-top:2px'>⏳ +R$ {rec_pip:,.2f} pipeline</div>" if incluir_pipeline else ""
         st.markdown(f"""<div class="gauge-wrap">
-          <div class="vis-title">🎯 Atingimento Receita</div>
+          <div class="vis-title">🎯 {'Ativ. + Pipeline' if incluir_pipeline else 'Atingimento Receita'}</div>
           <div class="gauge-pct" style="color:{cor}">{pct}%</div>
-          <div style="margin:10px 0">{_bar(rec, meta, cor, 14)}</div>
-          <div class="gauge-sub">R$ {rec:,.2f} de R$ {meta:,.2f}</div>
+          <div style="margin:10px 0">{_bar(rec_g, meta, cor, 14)}</div>
+          <div class="gauge-sub">R$ {rec_g:,.2f} de R$ {meta:,.2f}</div>
+          {sub_pip}
           <div class="gauge-sub" style="margin-top:4px">{n_v} vendedor(es) × R$ {META_VENDEDOR:,}</div>
         </div>""", unsafe_allow_html=True)
 
     # Ranking equipes
     with c_eq:
         st.markdown('<div class="vis-card">', unsafe_allow_html=True)
-        st.markdown('<div class="vis-title">🏆 Ranking de Equipes — Receita Ativada</div>', unsafe_allow_html=True)
+        lbl_eq = "Ativ. + Pipeline" if incluir_pipeline else "Receita Ativada"
+        st.markdown(f'<div class="vis-title">🏆 Ranking de Equipes — {lbl_eq}</div>', unsafe_allow_html=True)
         rows = []
         for l in lideres:
-            dl = df[df["lider"] == l]
-            nv = dl["vendedor_real"].nunique()
-            r  = dl[dl["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
-            rows.append({"lider": l, "rec": r, "meta": nv * META_VENDEDOR, "nv": nv})
+            dl   = df[df["lider"] == l]
+            nv   = dl["vendedor_real"].nunique()
+            r    = _vend_rec(dl)
+            ratv = dl[dl["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
+            rpip = dl[dl["mes_ativacao"].isna()]["preco_oferta"].sum()
+            rows.append({"lider":l,"rec":r,"ratv":ratv,"rpip":rpip,"meta":nv*META_VENDEDOR,"nv":nv})
         rows = sorted(rows, key=lambda x: x["rec"], reverse=True)
-        mx = max((r["rec"] for r in rows), default=1)
-        medals = ["🥇","🥈","🥉"]
+        mx   = max((r["rec"] for r in rows), default=1)
         html = ""
         for i, r in enumerate(rows):
             p = min(int(r["rec"]/r["meta"]*100),100) if r["meta"] > 0 else 0
             c = _cor(p)
             m = medals[i] if i < 3 else f"{i+1}º"
+            pip_info = f" <span style='color:#f59e0b;font-size:0.7rem'>+R$ {r['rpip']:,.2f} pip.</span>" if incluir_pipeline else ""
             html += f"""<div class="rank-bar-wrap">
               <div class="rank-name"><span>{m} {r['lider']}</span>
-              <span style="color:{c};font-weight:700">R$ {r['rec']:,.2f} <span style="color:#64748b">({p}%)</span></span></div>
+              <span style="color:{c};font-weight:700">R$ {r['rec']:,.2f}{pip_info} <span style="color:#64748b">({p}%)</span></span></div>
               {_bar(r['rec'], mx, c)}
               <div class="rank-meta">{r['nv']} vendedor(es) · meta R$ {r['meta']:,.2f}</div>
             </div>"""
@@ -250,23 +272,35 @@ def render_visual(df, lideres, lider_sel):
     # Ranking vendedores
     with c_vend:
         st.markdown('<div class="vis-card">', unsafe_allow_html=True)
-        titulo = f"👤 Top Vendedores{' — '+lider_sel if lider_sel != 'Todos' else ''}"
-        st.markdown(f'<div class="vis-title">{titulo} — Receita Ativada</div>', unsafe_allow_html=True)
-        vr = (df[df["mes_ativacao"] == MES_ALVO]
-              .groupby("vendedor_real")["preco_oferta"].sum()
-              .reset_index().sort_values("preco_oferta", ascending=False).head(10))
-        mx_v = vr["preco_oferta"].max() if not vr.empty else 1
+        lbl_v = f"👤 Top Vendedores{' — '+lider_sel if lider_sel != 'Todos' else ''} — {'Ativ. + Pipeline' if incluir_pipeline else 'Ativação'}"
+        st.markdown(f'<div class="vis-title">{lbl_v}</div>', unsafe_allow_html=True)
+
+        ser_atv = df_atv_all.groupby("vendedor_real")["preco_oferta"].sum()
+        ser_pip = df_pip_all.groupby("vendedor_real")["preco_oferta"].sum()
+
+        if incluir_pipeline:
+            ser_tot = ser_atv.add(ser_pip, fill_value=0).sort_values(ascending=False).head(10)
+        else:
+            ser_tot = ser_atv.sort_values(ascending=False).head(10)
+
+        mx_v  = ser_tot.max() if not ser_tot.empty else 1
         html_v = ""
-        for i, row in enumerate(vr.itertuples()):
-            p = min(int(row.preco_oferta / META_VENDEDOR * 100), 100)
-            c = _cor(p)
-            m = medals[i] if i < 3 else f"{i+1}º"
+        for i, (vend, val) in enumerate(ser_tot.items()):
+            p  = min(int(val / META_VENDEDOR * 100), 100)
+            c  = _cor(p)
+            m  = medals[i] if i < 3 else f"{i+1}º"
+            if incluir_pipeline:
+                a = ser_atv.get(vend, 0)
+                p2= ser_pip.get(vend, 0)
+                sub = f"<div class='rank-meta'>✅ R$ {a:,.2f} · ⏳ R$ {p2:,.2f} · meta R$ {META_VENDEDOR:,}</div>"
+            else:
+                sub = f"<div class='rank-meta'>meta individual R$ {META_VENDEDOR:,}</div>"
             html_v += f"""<div class="rank-bar-wrap">
-              <div class="rank-name"><span>{m} {row.vendedor_real}</span>
-              <span style="color:{c};font-weight:700">R$ {row.preco_oferta:,.2f} <span style="color:#64748b">({p}%)</span></span></div>
-              {_bar(row.preco_oferta, mx_v, c)}
-              <div class="rank-meta">meta individual R$ {META_VENDEDOR:,}</div>
+              <div class="rank-name"><span>{m} {vend}</span>
+              <span style="color:{c};font-weight:700">R$ {val:,.2f} <span style="color:#64748b">({p}%)</span></span></div>
+              {_bar(val, mx_v, c)}{sub}
             </div>"""
+
         if not html_v:
             html_v = '<p style="color:#64748b;font-size:0.8rem">Nenhuma ativação no período.</p>'
         st.markdown(html_v, unsafe_allow_html=True)
