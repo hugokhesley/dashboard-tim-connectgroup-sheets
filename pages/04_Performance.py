@@ -1,11 +1,5 @@
 import streamlit as st
 import pandas as pd
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
-import io
 from data_loader import (
     load_data, load_bko, apply_filters, get_parceiros,
     STATUS_COLORS, _s, _norm_pedido
@@ -35,88 +29,7 @@ DESTINATARIOS_FULL = [
 ]
 
 
-def enviar_email_pendencias(df_nan: pd.DataFrame, df_seq: pd.DataFrame) -> tuple:
-    """Envia e-mail com pendências do BKO. Retorna (sucesso: bool, mensagem: str)."""
-    try:
-        cfg = st.secrets["email"]
-        host     = cfg["host"]
-        port     = int(cfg["port"])
-        user     = cfg["user"]
-        password = cfg["password"]
-    except Exception:
-        return False, "⚠️ Configuração de e-mail não encontrada nos secrets."
 
-    total_nan = len(df_nan)
-    total_seq = len(df_seq)
-
-    # Monta corpo HTML
-    def _tabela_html(df, titulo, cor):
-        if df.empty:
-            return f"<h3 style='color:{cor}'>{titulo}</h3><p>✅ Nenhuma pendência encontrada.</p>"
-        linhas = "".join(
-            f"<tr>{''.join(f'<td style=padding:6px 10px;border:1px solid #ddd>{v}</td>' for v in row)}</tr>"
-            for row in df.values
-        )
-        cabecalho = "".join(
-            f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>"
-            for c in df.columns
-        )
-        return f"""
-        <h3 style="color:{cor};margin-top:24px">{titulo} ({len(df)} registros)</h3>
-        <table style="border-collapse:collapse;width:100%;font-size:13px">
-          <tr>{cabecalho}</tr>{linhas}
-        </table>"""
-
-    html = f"""
-    <html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
-      <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
-        <h2 style="color:#fff;margin:0">⚠️ Pendências de Cadastro — BKO</h2>
-        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">Connect Group · {MES_ALVO} · Gerado automaticamente pelo dashboard</p>
-      </div>
-      <p>Olá, seguem as pendências de cadastro identificadas no BKO-VENDEDOR-REAL para o mês <strong>{MES_ALVO}</strong>:</p>
-      <ul>
-        <li><strong>{total_nan}</strong> pedido(s) no DadosRadar <strong>sem cadastro</strong> no BKO</li>
-        <li><strong>{total_seq}</strong> pedido(s) no BKO <strong>sem líder</strong> definido</li>
-      </ul>
-      {_tabela_html(df_nan, "❓ Pedidos não cadastrados no BKO", "#dc2626")}
-      {_tabela_html(df_seq, "👤 Pedidos sem Equipe (BKO sem Líder)", "#d97706")}
-      <br><hr>
-      <p style="font-size:11px;color:#999">Mensagem automática enviada pelo dashboard Connect Group · adm@connectgroup.solutions</p>
-    </body></html>"""
-
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_nan + total_seq} itens)"
-        msg["From"]    = user
-        msg["To"]      = ", ".join(DESTINATARIOS)
-        msg.attach(MIMEText(html, "html"))
-
-        # Anexa CSV se houver pendências
-        if not df_nan.empty:
-            csv_nan = df_nan.to_csv(index=False).encode("utf-8")
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(csv_nan)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="sem_bko_{MES_ALVO.replace("/","_")}.csv"')
-            msg.attach(part)
-
-        if not df_seq.empty:
-            csv_seq = df_seq.to_csv(index=False).encode("utf-8")
-            part2 = MIMEBase("application", "octet-stream")
-            part2.set_payload(csv_seq)
-            encoders.encode_base64(part2)
-            part2.add_header("Content-Disposition", f'attachment; filename="sem_equipe_{MES_ALVO.replace("/","_")}.csv"')
-            msg.attach(part2)
-
-        with smtplib.SMTP(host, port) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(user, password)
-            server.sendmail(user, DESTINATARIOS, msg.as_string())
-
-        return True, f"✅ E-mail enviado com sucesso para {', '.join(DESTINATARIOS)}"
-    except Exception as e:
-        return False, f"❌ Erro ao enviar e-mail: {e}"
 
 st.markdown("""
 <style>
@@ -570,15 +483,9 @@ def main():
             with st.spinner("Enviando e-mail..."):
                 df_nan_e = df_nan if not df_nan.empty else pd.DataFrame()
                 df_seq_e = df_seq if not df_seq.empty else pd.DataFrame()
-                # Usa destinatários conforme o toggle
-                import smtplib as _smtp
                 try:
+                    import requests as _req
                     cfg = st.secrets["email"]
-                    import smtplib
-                    from email.mime.multipart import MIMEMultipart as _MM
-                    from email.mime.text import MIMEText as _MT
-                    from email.mime.base import MIMEBase as _MB
-                    from email import encoders as _enc
 
                     def _tab(df, titulo, cor):
                         if df.empty:
@@ -608,36 +515,31 @@ def main():
                           </a>
                         </p>
                       </div>
-                      <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group · adm@connectgroup.solutions</p>
+                      <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
                     </body></html>"""
 
-                    msg = _MM("alternative")
-                    msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)"
-                    msg["From"]    = f"Connect Group BKO <{cfg['user']}>"
-                    msg["To"]      = ", ".join(dest_lista)
-                    msg.attach(_MT(html, "html"))
+                    # Mailgun HTTP API — funciona em qualquer ambiente cloud
+                    domain   = cfg["domain"]      # ex: allugo.net
+                    api_key  = cfg["api_key"]      # chave privada do Mailgun
+                    from_email = cfg.get("from", f"Connect Group BKO <contato@{domain}>")
 
-                    for df_att, fname in [(df_nan_e, f"sem_bko_{MES_ALVO.replace('/','_')}.csv"),
-                                          (df_seq_e, f"sem_equipe_{MES_ALVO.replace('/','_')}.csv")]:
-                        if not df_att.empty:
-                            p = _MB("application","octet-stream")
-                            p.set_payload(df_att.to_csv(index=False).encode("utf-8"))
-                            _enc.encode_base64(p)
-                            p.add_header("Content-Disposition", f'attachment; filename="{fname}"')
-                            msg.attach(p)
+                    resp = _req.post(
+                        f"https://api.mailgun.net/v3/{domain}/messages",
+                        auth=("api", api_key),
+                        data={
+                            "from":    from_email,
+                            "to":      dest_lista,
+                            "subject": f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)",
+                            "html":    html,
+                        },
+                        timeout=15
+                    )
 
-                    # Tenta SSL (465) primeiro, fallback para STARTTLS (587)
-                    try:
-                        with smtplib.SMTP_SSL(cfg["host"], 465, timeout=15) as sv:
-                            sv.login(cfg["user"], cfg["password"])
-                            sv.sendmail(cfg["user"], dest_lista, msg.as_string())
-                    except Exception:
-                        with smtplib.SMTP(cfg["host"], 587, timeout=15) as sv:
-                            sv.ehlo(); sv.starttls()
-                            sv.login(cfg["user"], cfg["password"])
-                            sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+                    if resp.status_code == 200:
+                        st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
+                    else:
+                        st.error(f"❌ Mailgun retornou erro {resp.status_code}: {resp.text}")
 
-                    st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
                 except Exception as e:
                     st.error(f"❌ Erro ao enviar: {e}")
     else:
