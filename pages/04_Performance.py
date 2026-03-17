@@ -30,7 +30,6 @@ DESTINATARIOS_FULL = [
     "hugo@connectgroup.solutions",
     "angelo@connectgroup.solutions",
     "andrey.albuquerque@connectgroup.solutions",
-    "nivandro.nascimento@connectbrasil.tech",
 ]
 
 
@@ -529,10 +528,15 @@ def main():
         "mes_ativacao": "Mês Ativação",
     }
 
+    # Deduplica pelo pedido antes de exibir — um pedido pode ter várias linhas no DadosRadar
+    df_nan = (df_full[df_full["vendedor_real"] == ""][COLS_SHOW]
+              .drop_duplicates(subset=["pedido"]).copy()) if "pedido" in df_full.columns else pd.DataFrame()
+    df_seq = (df_full[df_full["lider"] == "Sem Equipe"][COLS_SHOW + ["vendedor_real"]]
+              .drop_duplicates(subset=["pedido"]).copy()) if "Sem Equipe" in df_full["lider"].values and "pedido" in df_full.columns else pd.DataFrame()
+
     tab_nan, tab_seq = st.tabs(["❓ Não cadastrados no BKO", "👤 Sem Equipe (BKO sem Líder)"])
 
     with tab_nan:
-        df_nan = df_full[df_full["vendedor_real"] == ""][COLS_SHOW].copy()
         if df_nan.empty:
             st.success("✅ Todos os pedidos estão cadastrados no BKO!")
         else:
@@ -543,7 +547,6 @@ def main():
                 file_name=f"sem_bko_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
 
     with tab_seq:
-        df_seq = df_full[df_full["lider"] == "Sem Equipe"][COLS_SHOW + ["vendedor_real"]].copy() if "Sem Equipe" in df_full["lider"].values else pd.DataFrame()
         if df_seq.empty:
             st.success("✅ Todos os pedidos cadastrados no BKO têm equipe definida!")
         else:
