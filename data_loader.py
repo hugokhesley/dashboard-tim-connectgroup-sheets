@@ -237,8 +237,16 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _limpar_data(v):
+    """Remove hora de datas que vêm com timestamp: '22/02/2026 08:30' → '22/02/2026'."""
+    s = _s(v).strip()
+    if not s:
+        return s
+    return s.split(" ")[0] if " " in s else s
+
+
 def parse_month(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series.apply(_s), dayfirst=True, errors='coerce')
+    parsed = pd.to_datetime(series.apply(_limpar_data), dayfirst=True, errors='coerce')
     return parsed.dt.strftime('%m/%Y')
 
 
