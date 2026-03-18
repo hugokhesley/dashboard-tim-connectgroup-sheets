@@ -306,19 +306,105 @@ def main():
         st.markdown("")
 
         # Toggle de visualização
-        viz = st.radio("Visualização:", ["📊 Barras", "📋 Tabela"],
+        viz = st.radio("Visualização:", ["📊 Barras", "📋 Tabela", "📅 Calendário Semanal"],
                        horizontal=True, key=f"viz_{label}")
 
         max_ac = diario["acessos"].max()
 
-        if viz == "📊 Barras":
+        if viz == "📅 Calendário Semanal":
+            import calendar
+            # Monta dicionário dia -> acessos/receita
+            dia_ac  = dict(zip(diario["dia"].astype(int), diario["acessos"].astype(int)))
+            dia_rec = dict(zip(diario["dia"].astype(int), diario["receita"]))
+
+            # Calendário do mês
+            cal = calendar.monthcalendar(ano_num, mes_num)
+            dias_semana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"]
+
+            # Reordena para Dom-Sáb (calendar usa Seg=0 ... Dom=6)
+            # monthcalendar retorna Seg=0, precisamos Dom primeiro
+            # Converte: coloca domingo (índice 6 do calendar) na frente
+            cal_dom = []
+            for semana in cal:
+                # semana: [seg, ter, qua, qui, sex, sab, dom]
+                nova = [semana[6]] + semana[:6]
+                cal_dom.append(nova)
+
+            # Header
+            header_cells = "".join(
+                f"<th style='padding:8px 12px;text-align:center;font-size:0.72rem;"
+                f"text-transform:uppercase;letter-spacing:1px;color:#94a3b8;font-weight:600;"
+                f"border-bottom:2px solid #2d3748'>{d}</th>"
+                for d in dias_semana
+            )
+
+            rows_html = ""
+            for s_idx, semana in enumerate(cal_dom):
+                cells = ""
+                tem_dado = any(d > 0 and dia_ac.get(d, 0) > 0 for d in semana)
+                for d in semana:
+                    if d == 0:
+                        cells += "<td style='padding:10px 8px;background:#0f1117'></td>"
+                    else:
+                        ac  = dia_ac.get(d, 0)
+                        rec = dia_rec.get(d, 0.0)
+                        eh_hj = (eh_mes_atual and d == hoje.day)
+                        # Cor de fundo baseada no volume
+                        if ac == 0:
+                            bg = "#1a1f2e"
+                            cor_num = "#475569"
+                        elif ac >= media_ac * 1.2:
+                            bg = "#064e3b"
+                            cor_num = "#34d399"
+                        elif ac >= media_ac:
+                            bg = "#1e3a2e"
+                            cor_num = "#10b981"
+                        elif ac > 0:
+                            bg = "#2d1f1f"
+                            cor_num = "#f87171"
+                        borda = "2px solid #6366f1" if eh_hj else "1px solid #2d3748"
+                        hoje_lbl = f"<div style='font-size:0.6rem;color:#a78bfa;font-weight:700'>HOJE</div>" if eh_hj else ""
+                        ac_txt   = f"<div style='font-size:1.1rem;font-weight:800;color:{cor_num}'>{ac}</div>" if ac > 0 else "<div style='font-size:0.8rem;color:#475569'>—</div>"
+                        rec_txt  = f"<div style='font-size:0.62rem;color:#64748b'>R$ {rec:,.0f}</div>" if rec > 0 else ""
+                        cells += f"""<td style='padding:6px 4px;text-align:center;
+                          background:{bg};border:{borda};border-radius:8px;
+                          min-width:80px;vertical-align:top'>
+                          <div style='font-size:0.72rem;color:#94a3b8;margin-bottom:2px'>{d:02d}</div>
+                          {hoje_lbl}{ac_txt}{rec_txt}
+                        </td>"""
+
+                rows_html += f"""<tr>
+                  <td colspan="7" style="padding:4px 0 2px 0;font-size:0.65rem;
+                    color:#475569;text-transform:uppercase;letter-spacing:1px">
+                    Semana {s_idx + 1}
+                  </td></tr>
+                <tr style='border-bottom:4px solid #0f1117'>{cells}</tr>
+                <tr><td colspan='7' style='padding:4px 0'></td></tr>"""
+
+            legenda = f"""
+            <div style='display:flex;gap:16px;font-size:0.7rem;color:#94a3b8;margin-bottom:12px'>
+              <span>🟢 Acima da média ({media_ac:.1f} ac.)</span>
+              <span>🔴 Abaixo da média</span>
+              <span>⬛ Sem input</span>
+              <span style='color:#a78bfa'>🟣 Hoje</span>
+            </div>"""
+
+            st.markdown(legenda, unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style='overflow-x:auto'>
+              <table style='border-collapse:separate;border-spacing:4px;width:100%'>
+                <thead><tr>{header_cells}</tr></thead>
+                <tbody>{rows_html}</tbody>
+              </table>
+            </div>""", unsafe_allow_html=True)
+
+        elif viz == "📊 Barras":
             html_dias = ""
             for _, row in diario.iterrows():
                 dia     = int(row["dia"])
                 eh_hj   = (eh_mes_atual and dia == hoje.day)
                 badge   = '<span class="hoje-badge">HOJE</span>' if eh_hj else ""
                 cor     = cor_hoje if eh_hj else cor_bar
-                # Linha de média como referência visual
                 pct_med = min(int(media_ac / max_ac * 100), 100) if max_ac > 0 else 0
                 acima   = "▲" if row["acessos"] >= media_ac else "▼"
                 cor_cmp = "#10b981" if row["acessos"] >= media_ac else "#ef4444"
