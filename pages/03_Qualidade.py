@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from data_loader import _s, _to_num, _normalize, _dedup_columns, get_gspread_client
+from data_loader import _s, _to_num, _soma_valor, _normalize, _dedup_columns, get_gspread_client
 from auth import require_password
 
 st.set_page_config(
@@ -76,6 +76,7 @@ def load_qualidade() -> pd.DataFrame:
         return pd.DataFrame()
 
 
+
 def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
     df = _dedup_columns(df.copy())
     rename = {}
@@ -137,7 +138,7 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
     if "venda" in df.columns:
         df["venda"] = df["venda"].apply(_to_num)
     if "valor_rs" in df.columns:
-        df["valor_rs"] = df["valor_rs"].apply(_to_num)
+        df["valor_rs"] = df["valor_rs"].apply(_soma_valor)
 
     # ADIMPLENTE? é preenchida manualmente pela analista — lê direto da coluna
     # Se a coluna não existir ou estiver vazia, assume SIM (sem débito)
