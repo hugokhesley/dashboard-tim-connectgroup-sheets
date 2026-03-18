@@ -55,8 +55,19 @@ st.markdown("""
 
 
 def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
-    """Converte coluna de data para datetime."""
-    return pd.to_datetime(df[col].apply(_s), dayfirst=True, errors="coerce")
+    """
+    Converte coluna de data para datetime.
+    Trata datas com ou sem hora: '22/02/2026' e '22/02/2026 08:30'.
+    """
+    def _limpar_data(v):
+        s = _s(v).strip()
+        if not s:
+            return s
+        # Se tem hora junto (espaço + HH:MM ou HH:MM:SS), remove a parte da hora
+        if " " in s:
+            s = s.split(" ")[0]
+        return s
+    return pd.to_datetime(df[col].apply(_limpar_data), dayfirst=True, errors="coerce")
 
 
 def _bar(valor, maximo, cor="#6366f1", h=12):
