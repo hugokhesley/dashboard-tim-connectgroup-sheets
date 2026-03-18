@@ -97,6 +97,10 @@ def main():
         idx_mes = meses_disp.index(mes_atual) if mes_atual in meses_disp else 0
         mes_sel = st.selectbox("Mês", meses_disp, index=idx_mes)
 
+        # Filtro de líder — populado após o join com BKO
+        # placeholder, será substituído depois do join
+        lider_placeholder = st.empty()
+
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
             st.cache_data.clear()
@@ -164,6 +168,16 @@ def main():
         for d in [df_mes_input, df_mes_atv, df_base]:
             d["vendedor_real"] = d["vendedor_real"].apply(lambda x: _s(x) if _s(x) else "Sem Vendedor")
             d["lider"]         = d["lider"].apply(lambda x: _s(x) if _s(x) else "Sem Equipe")
+
+    # Popula filtro de líder com os valores disponíveis
+    lideres_disp = sorted([l for l in df_base["lider"].unique() if l and l != "Sem Equipe"])
+    lider_sel = lider_placeholder.selectbox("Líder / Equipe", ["Todos"] + lideres_disp)
+
+    # Aplica filtro de líder
+    if lider_sel != "Todos":
+        df_base      = df_base[df_base["lider"] == lider_sel]
+        df_mes_input = df_mes_input[df_mes_input["lider"] == lider_sel] if "lider" in df_mes_input.columns else df_mes_input
+        df_mes_atv   = df_mes_atv[df_mes_atv["lider"] == lider_sel] if "lider" in df_mes_atv.columns else df_mes_atv
 
     # ── KPIs do dia ───────────────────────────────────────────────────────────
     eh_mes_atual = (mes_num == hoje.month and ano_num == hoje.year)
