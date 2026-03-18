@@ -70,6 +70,19 @@ def _to_num(val):
     except Exception:
         return 0.0
 
+def _soma_valor(val):
+    """
+    Converte valor R$ que pode conter múltiplos valores separados por ' / '
+    ex: '139,97 / 7,70' → 147.67  |  '139,97' → 139.97  |  '' → 0.0
+    """
+    s = _s(val).strip()
+    if not s:
+        return 0.0
+    if " / " in s:
+        return sum(_to_num(p.strip()) for p in s.split(" / "))
+    return _to_num(s)
+
+
 def _lookup_status(val):
     if val in STATUS_MAP:
         return STATUS_MAP[val]
