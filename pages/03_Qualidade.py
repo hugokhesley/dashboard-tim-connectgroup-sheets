@@ -218,7 +218,7 @@ def _mask_gerada(df):
     return pd.Series([False] * len(df))
 
 
-def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, smtp_pass):
+def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, smtp_pass, smtp_from=None):
     hoje = _date.today().strftime("%d/%m/%Y")
     total = len(df_alerta)
     inadim = df_alerta[_mask_inadim(df_alerta)]
@@ -304,7 +304,7 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"🔍 Alerta Qualidade — {total} clientes | {hoje}"
-    msg["From"]    = smtp_user
+    msg["From"]    = smtp_from or smtp_user
     msg["To"]      = ", ".join(destinatarios)
     msg.attach(MIMEText(html, "html"))
 
@@ -557,11 +557,12 @@ def main():
                         st.info("Nenhum cliente com pendência nas safras selecionadas.")
                     else:
                         try:
-                            smtp_user = st.secrets["email"]["smtp_user"]
-                            smtp_pass = st.secrets["email"]["smtp_password"]
+                            smtp_user = st.secrets["email"]["user"]
+                            smtp_pass = st.secrets["email"]["password"]
+                            smtp_from = st.secrets["email"].get("from", smtp_user)
                             with st.spinner(f"Enviando para {len(destinatarios)} destinatário(s)..."):
                                 total = _enviar_alerta_qualidade(
-                                    df_alerta, safras_alerta, destinatarios, smtp_user, smtp_pass
+                                    df_alerta, safras_alerta, destinatarios, smtp_user, smtp_pass, smtp_from
                                 )
                             st.success(f"✅ Alerta enviado! {total} clientes incluídos.")
                         except Exception as e:
