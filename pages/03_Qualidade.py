@@ -222,16 +222,14 @@ def _mask_sem_contato(df):
     """True = tem débito E analista ainda não fez contato."""
     mask_debito = _mask_inadim(df) | _mask_gerada(df)
     if "contato_cliente" in df.columns:
-        mask_s_contato = df["contato_cliente"].apply(
-            lambda x: not _s(x).upper().startswith("SIM")
-        )
-        return mask_debito & mask_s_contato
+        mask_sc = df["contato_cliente"].apply(lambda x: not _s(x).upper().startswith("SIM"))
+        return mask_debito & mask_sc
     return mask_debito
 
 
-def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, smtp_pass, smtp_from=None):
+def _enviar_alerta_qualidade(df_alerta, safras_sel, parceiros_sel, destinatarios, smtp_user, smtp_pass, smtp_from=None):
     hoje = _date.today().strftime("%d/%m/%Y")
-    total = len(df_alerta)
+    total       = len(df_alerta)
     inadim      = df_alerta[_mask_inadim(df_alerta)]
     gerada      = df_alerta[_mask_gerada(df_alerta)]
     sem_contato = df_alerta[_mask_sem_contato(df_alerta)]
@@ -276,8 +274,9 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
             </tr>"""
         return rows
 
-    thead = lambda cor_header: f"""<table style="width:100%;border-collapse:collapse;font-size:0.83rem;font-family:Arial,sans-serif">
-      <thead><tr style="background:{cor_header};color:#fff">
+    def _thead(cor):
+        return f"""<table style="width:100%;border-collapse:collapse;font-size:0.83rem;font-family:Arial,sans-serif">
+      <thead><tr style="background:{cor};color:#fff">
         <th style="padding:9px 10px;text-align:left">Safra</th>
         <th style="padding:9px 10px;text-align:left">Parceiro</th>
         <th style="padding:9px 10px;text-align:left">Cliente</th>
@@ -290,18 +289,16 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
       </tr></thead><tbody>"""
 
     debito = sum(_val(r) for _, r in df_alerta.iterrows())
-    safras_str = ", ".join(safras_sel)
+    safras_str    = ", ".join(safras_sel)
+    parceiros_str = ", ".join(parceiros_sel) if parceiros_sel and parceiros_sel != ["Todos"] else "Todos"
 
     html = f"""<html><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px">
     <div style="max-width:1000px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
-
-      <!-- Header -->
       <div style="background:linear-gradient(135deg,#1a0533,#4a1272,#7c3aed);padding:24px 32px">
         <h1 style="color:#fff;margin:0;font-size:1.4rem">🔍 Alerta de Adimplência — Connect Group</h1>
-        <p style="color:rgba(255,255,255,0.7);margin:6px 0 0 0">TIM Corporate · Safras: {safras_str} · {hoje}</p>
+        <p style="color:rgba(255,255,255,0.7);margin:4px 0 0 0">TIM Corporate · Safras: {safras_str} · Parceiros: {parceiros_str}</p>
+        <p style="color:rgba(255,255,255,0.6);margin:2px 0 0 0;font-size:0.82rem">{hoje}</p>
       </div>
-
-      <!-- KPIs -->
       <div style="display:flex;gap:12px;padding:20px 32px;background:#faf5ff">
         <div style="flex:1;background:#fff;border-radius:8px;padding:14px;border:1px solid #e9d5ff;text-align:center">
           <div style="font-size:0.68rem;color:#7c3aed;text-transform:uppercase;font-weight:700">Clientes</div>
@@ -324,27 +321,23 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
           <div style="font-size:1.2rem;font-weight:800;color:#1e1b4b">R$ {debito:,.2f}</div>
         </div>
       </div>
-
       <div style="padding:0 32px 32px">"""
 
-    # Seção URGENTE - sem contato
     if len(sem_contato) > 0:
         html += f"""
         <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:16px 20px;margin:20px 0">
           <h2 style="color:#991b1b;font-size:1rem;margin:0 0 4px 0">⚠️ AÇÃO URGENTE — {len(sem_contato)} cliente(s) sem contato registrado</h2>
           <p style="color:#b91c1c;font-size:0.82rem;margin:0 0 14px 0">Estes clientes possuem débito em aberto e a analista ainda não realizou contato. Prioridade máxima!</p>
-          {thead("#991b1b")}{_linhas_urgente(sem_contato)}</tbody></table>
+          {_thead("#991b1b")}{_linhas_urgente(sem_contato)}</tbody></table>
         </div>"""
 
     if len(inadim) > 0:
-        html += f"""
-        <h2 style="color:#dc2626;font-size:0.95rem;margin:20px 0 10px">🔴 Faturas Vencidas ({len(inadim)})</h2>
-        {thead("#dc2626")}{_linhas(inadim, "#dc2626")}</tbody></table>"""
+        html += f"""<h2 style="color:#dc2626;font-size:0.95rem;margin:20px 0 10px">🔴 Faturas Vencidas ({len(inadim)})</h2>
+        {_thead("#dc2626")}{_linhas(inadim, "#dc2626")}</tbody></table>"""
 
     if len(gerada) > 0:
-        html += f"""
-        <h2 style="color:#d97706;font-size:0.95rem;margin:20px 0 10px">🟡 Fatura Gerada — A Vencer ({len(gerada)})</h2>
-        {thead("#d97706")}{_linhas(gerada, "#d97706")}</tbody></table>"""
+        html += f"""<h2 style="color:#d97706;font-size:0.95rem;margin:20px 0 10px">🟡 Fatura Gerada — A Vencer ({len(gerada)})</h2>
+        {_thead("#d97706")}{_linhas(gerada, "#d97706")}</tbody></table>"""
 
     html += """</div>
       <div style="background:#f1f5f9;padding:12px 32px;text-align:center;font-size:0.72rem;color:#94a3b8">
@@ -579,15 +572,27 @@ def main():
                 default=safras_disp[-1:] if safras_disp else [],
                 key="safras_alerta"
             )
+            parceiros_alerta = st.multiselect(
+                "Parceiros para incluir",
+                options=["Todos"] + parceiros_disp,
+                default=["Todos"],
+                key="parceiros_alerta"
+            )
             incluir_vencida = st.checkbox("Incluir 🔴 Vencidos", value=True, key="chk_vencida")
             incluir_gerada  = st.checkbox("Incluir 🟡 Fatura Gerada (a vencer)", value=True, key="chk_gerada")
         with col_b:
+            _emails_pad = [
+                "bko2@connectbrasil.tech",
+                "angelo.roncaly@connectgroup.solutions",
+                "hugo@connectgroup.solutions",
+                "maria.alice@connectgroup.solutions",
+            ]
             emails_input = st.text_area(
                 "Destinatários (um por linha)",
-                value="bko2@connectbrasil.tecc; angelo.roncaly@connectgroup.solutions; hugo@connectgroup.solutions; maria.alice@connectgroup.solutions",
-                height=100, key="emails_alerta"
+                value="\n".join(_emails_pad),
+                height=130, key="emails_alerta"
             )
-        st.caption("⚠️ Clientes sem contato registrado serão destacados automaticamente no topo do email.")
+        st.caption("⚠️ Clientes sem contato registrado serão destacados automaticamente como urgentes no topo do email.")
         if st.button("📧 Enviar Alerta", type="primary", key="btn_alerta_qualidade"):
             if not safras_alerta:
                 st.warning("Selecione pelo menos uma safra.")
@@ -597,6 +602,9 @@ def main():
                     st.warning("Informe pelo menos um email válido.")
                 else:
                     df_alerta = df[df["safra"].isin(safras_alerta)].copy()
+                    # Filtra parceiros se não for "Todos"
+                    if "Todos" not in parceiros_alerta and parceiros_alerta and "parceiro" in df_alerta.columns:
+                        df_alerta = df_alerta[df_alerta["parceiro"].isin(parceiros_alerta)]
                     masks = []
                     if incluir_vencida: masks.append(_mask_inadim(df_alerta))
                     if incluir_gerada:  masks.append(_mask_gerada(df_alerta))
@@ -605,7 +613,7 @@ def main():
                         for m in masks[1:]: mask_final = mask_final | m
                         df_alerta = df_alerta[mask_final]
                     if df_alerta.empty:
-                        st.info("Nenhum cliente com pendência nas safras selecionadas.")
+                        st.info("Nenhum cliente com pendência para o filtro selecionado.")
                     else:
                         try:
                             smtp_user = st.secrets["email"]["user"]
@@ -613,7 +621,8 @@ def main():
                             smtp_from = st.secrets["email"].get("from", smtp_user)
                             with st.spinner(f"Enviando para {len(destinatarios)} destinatário(s)..."):
                                 total, sem_ct = _enviar_alerta_qualidade(
-                                    df_alerta, safras_alerta, destinatarios, smtp_user, smtp_pass, smtp_from
+                                    df_alerta, safras_alerta, parceiros_alerta,
+                                    destinatarios, smtp_user, smtp_pass, smtp_from
                                 )
                             msg_ok = f"✅ Alerta enviado! {total} clientes incluídos."
                             if sem_ct > 0:
