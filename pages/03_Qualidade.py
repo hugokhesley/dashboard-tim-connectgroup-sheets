@@ -218,20 +218,33 @@ def _mask_gerada(df):
     return pd.Series([False] * len(df))
 
 
+def _mask_sem_contato(df):
+    """True = tem débito E analista ainda não fez contato."""
+    mask_debito = _mask_inadim(df) | _mask_gerada(df)
+    if "contato_cliente" in df.columns:
+        mask_s_contato = df["contato_cliente"].apply(
+            lambda x: not _s(x).upper().startswith("SIM")
+        )
+        return mask_debito & mask_s_contato
+    return mask_debito
+
+
 def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, smtp_pass, smtp_from=None):
     hoje = _date.today().strftime("%d/%m/%Y")
     total = len(df_alerta)
-    inadim = df_alerta[_mask_inadim(df_alerta)]
-    gerada = df_alerta[_mask_gerada(df_alerta)]
+    inadim      = df_alerta[_mask_inadim(df_alerta)]
+    gerada      = df_alerta[_mask_gerada(df_alerta)]
+    sem_contato = df_alerta[_mask_sem_contato(df_alerta)]
+
+    def _val(r):
+        try: return float(r.get("valor_rs", 0))
+        except: return 0.0
 
     def _linhas(df_sub, cor):
         rows = ""
         for _, r in df_sub.iterrows():
             v = _s(r.get("adimplente","")).upper()
             icon = "🔴 NÃO" if "NÃO" in v or "NAO" in v else "🟡 FATURA GERADA"
-            val = r.get("valor_rs", 0)
-            try: val = float(val)
-            except: val = 0.0
             rows += f"""<tr>
               <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0">{_s(r.get("safra",""))}</td>
               <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0">{_s(r.get("parceiro",""))}</td>
@@ -240,13 +253,31 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
               <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0">{_s(r.get("custcode",""))}</td>
               <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0">{_s(r.get("n_fatura",""))}</td>
               <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0">{_s(r.get("vencimento",""))}</td>
-              <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">R$ {val:,.2f}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">R$ {_val(r):,.2f}</td>
               <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;color:{cor};font-weight:700">{icon}</td>
             </tr>"""
         return rows
 
-    thead = """<table style="width:100%;border-collapse:collapse;font-size:0.83rem;font-family:Arial,sans-serif">
-      <thead><tr style="background:#4a1272;color:#fff">
+    def _linhas_urgente(df_sub):
+        rows = ""
+        for _, r in df_sub.iterrows():
+            v = _s(r.get("adimplente","")).upper()
+            icon = "🔴 NÃO" if "NÃO" in v or "NAO" in v else "🟡 GERADA"
+            rows += f"""<tr style="background:#fff8f8">
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca;font-weight:700;color:#991b1b">{_s(r.get("safra",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca">{_s(r.get("parceiro",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca;font-weight:700">{_s(r.get("cliente",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca">{_s(r.get("cnpj",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca">{_s(r.get("custcode",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca">{_s(r.get("n_fatura",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca">{_s(r.get("vencimento",""))}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca;font-weight:700;color:#991b1b">R$ {_val(r):,.2f}</td>
+              <td style="padding:7px 10px;border-bottom:1px solid #fecaca;font-weight:700">{icon}</td>
+            </tr>"""
+        return rows
+
+    thead = lambda cor_header: f"""<table style="width:100%;border-collapse:collapse;font-size:0.83rem;font-family:Arial,sans-serif">
+      <thead><tr style="background:{cor_header};color:#fff">
         <th style="padding:9px 10px;text-align:left">Safra</th>
         <th style="padding:9px 10px;text-align:left">Parceiro</th>
         <th style="padding:9px 10px;text-align:left">Cliente</th>
@@ -258,17 +289,19 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
         <th style="padding:9px 10px;text-align:left">Status</th>
       </tr></thead><tbody>"""
 
-    debito = df_alerta["valor_rs"].sum() if "valor_rs" in df_alerta.columns else 0
-    try: debito = float(debito)
-    except: debito = 0.0
-
+    debito = sum(_val(r) for _, r in df_alerta.iterrows())
     safras_str = ", ".join(safras_sel)
+
     html = f"""<html><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px">
     <div style="max-width:1000px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+
+      <!-- Header -->
       <div style="background:linear-gradient(135deg,#1a0533,#4a1272,#7c3aed);padding:24px 32px">
         <h1 style="color:#fff;margin:0;font-size:1.4rem">🔍 Alerta de Adimplência — Connect Group</h1>
         <p style="color:rgba(255,255,255,0.7);margin:6px 0 0 0">TIM Corporate · Safras: {safras_str} · {hoje}</p>
       </div>
+
+      <!-- KPIs -->
       <div style="display:flex;gap:12px;padding:20px 32px;background:#faf5ff">
         <div style="flex:1;background:#fff;border-radius:8px;padding:14px;border:1px solid #e9d5ff;text-align:center">
           <div style="font-size:0.68rem;color:#7c3aed;text-transform:uppercase;font-weight:700">Clientes</div>
@@ -282,19 +315,36 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
           <div style="font-size:0.68rem;color:#d97706;text-transform:uppercase;font-weight:700">🟡 Gerados</div>
           <div style="font-size:1.8rem;font-weight:800;color:#d97706">{len(gerada)}</div>
         </div>
+        <div style="flex:1;background:#fff;border-radius:8px;padding:14px;border:1px solid #fecaca;text-align:center">
+          <div style="font-size:0.68rem;color:#b91c1c;text-transform:uppercase;font-weight:700">⚠️ Sem Contato</div>
+          <div style="font-size:1.8rem;font-weight:800;color:#b91c1c">{len(sem_contato)}</div>
+        </div>
         <div style="flex:1;background:#fff;border-radius:8px;padding:14px;border:1px solid #e9d5ff;text-align:center">
           <div style="font-size:0.68rem;color:#7c3aed;text-transform:uppercase;font-weight:700">💸 Débito</div>
           <div style="font-size:1.2rem;font-weight:800;color:#1e1b4b">R$ {debito:,.2f}</div>
         </div>
       </div>
+
       <div style="padding:0 32px 32px">"""
 
+    # Seção URGENTE - sem contato
+    if len(sem_contato) > 0:
+        html += f"""
+        <div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:10px;padding:16px 20px;margin:20px 0">
+          <h2 style="color:#991b1b;font-size:1rem;margin:0 0 4px 0">⚠️ AÇÃO URGENTE — {len(sem_contato)} cliente(s) sem contato registrado</h2>
+          <p style="color:#b91c1c;font-size:0.82rem;margin:0 0 14px 0">Estes clientes possuem débito em aberto e a analista ainda não realizou contato. Prioridade máxima!</p>
+          {thead("#991b1b")}{_linhas_urgente(sem_contato)}</tbody></table>
+        </div>"""
+
     if len(inadim) > 0:
-        html += f"<h2 style='color:#dc2626;font-size:0.95rem;margin:20px 0 10px'>🔴 Faturas Vencidas ({len(inadim)})</h2>"
-        html += thead + _linhas(inadim, "#dc2626") + "</tbody></table>"
+        html += f"""
+        <h2 style="color:#dc2626;font-size:0.95rem;margin:20px 0 10px">🔴 Faturas Vencidas ({len(inadim)})</h2>
+        {thead("#dc2626")}{_linhas(inadim, "#dc2626")}</tbody></table>"""
+
     if len(gerada) > 0:
-        html += f"<h2 style='color:#d97706;font-size:0.95rem;margin:20px 0 10px'>🟡 Fatura Gerada — A Vencer ({len(gerada)})</h2>"
-        html += thead + _linhas(gerada, "#d97706") + "</tbody></table>"
+        html += f"""
+        <h2 style="color:#d97706;font-size:0.95rem;margin:20px 0 10px">🟡 Fatura Gerada — A Vencer ({len(gerada)})</h2>
+        {thead("#d97706")}{_linhas(gerada, "#d97706")}</tbody></table>"""
 
     html += """</div>
       <div style="background:#f1f5f9;padding:12px 32px;text-align:center;font-size:0.72rem;color:#94a3b8">
@@ -303,7 +353,7 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
     </div></body></html>"""
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"🔍 Alerta Qualidade — {total} clientes | {hoje}"
+    msg["Subject"] = f"🔍 Alerta Qualidade — {total} clientes ({len(sem_contato)} sem contato) | {hoje}"
     msg["From"]    = smtp_from or smtp_user
     msg["To"]      = ", ".join(destinatarios)
     msg.attach(MIMEText(html, "html"))
@@ -312,7 +362,7 @@ def _enviar_alerta_qualidade(df_alerta, safras_sel, destinatarios, smtp_user, sm
     with smtplib.SMTP_SSL("smtp.titan.email", 465, context=ctx) as srv:
         srv.login(smtp_user, smtp_pass)
         srv.sendmail(smtp_user, destinatarios, msg.as_string())
-    return total
+    return total, len(sem_contato)
 
 
 def _acessos(d: pd.DataFrame) -> int:
@@ -537,6 +587,7 @@ def main():
                 value="bko@connectbrasil.tech",
                 height=100, key="emails_alerta"
             )
+        st.caption("⚠️ Clientes sem contato registrado serão destacados automaticamente no topo do email.")
         if st.button("📧 Enviar Alerta", type="primary", key="btn_alerta_qualidade"):
             if not safras_alerta:
                 st.warning("Selecione pelo menos uma safra.")
@@ -561,10 +612,13 @@ def main():
                             smtp_pass = st.secrets["email"]["password"]
                             smtp_from = st.secrets["email"].get("from", smtp_user)
                             with st.spinner(f"Enviando para {len(destinatarios)} destinatário(s)..."):
-                                total = _enviar_alerta_qualidade(
+                                total, sem_ct = _enviar_alerta_qualidade(
                                     df_alerta, safras_alerta, destinatarios, smtp_user, smtp_pass, smtp_from
                                 )
-                            st.success(f"✅ Alerta enviado! {total} clientes incluídos.")
+                            msg_ok = f"✅ Alerta enviado! {total} clientes incluídos."
+                            if sem_ct > 0:
+                                msg_ok += f" ⚠️ {sem_ct} sem contato destacados como urgentes."
+                            st.success(msg_ok)
                         except Exception as e:
                             st.error(f"❌ Erro ao enviar: {e}")
 
