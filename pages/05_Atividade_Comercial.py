@@ -146,11 +146,12 @@ def main():
     else:
         df_raw["dt_ativacao"] = pd.NaT
 
-    # DEBUG
-    st.info(f"col_input_orig: {col_input_orig}")
-    st.info(f"dt_input nao nulos: {df_raw['dt_input'].notna().sum()} / {len(df_raw)}")
-    st.info(f"Amostra dt_input: {df_raw['dt_input'].dropna().head(5).tolist()}")
-    st.info(f"mes_sel: {mes_sel} | mes_num: {int(mes_sel[:2])} | ano_num: {int(mes_sel[3:])}")
+    # DEBUG PROFUNDO
+    if col_input_orig:
+        amostra_raw = df_raw[col_input_orig].head(10).tolist()
+        tipos = [type(v).__name__ for v in amostra_raw]
+        st.info(f"Valores RAW: {amostra_raw}")
+        st.info(f"Tipos: {tipos}")
 
     df_base = normalize_columns(df_raw)
     df_base = _dedup_columns(df_base)
