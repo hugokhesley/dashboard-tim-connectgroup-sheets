@@ -127,10 +127,23 @@ def main():
     # ── Prepara dados ─────────────────────────────────────────────────────────
     from data_loader import normalize_columns, _dedup_columns
 
+    # DEBUG temporário — remove após confirmar
+    if "_aba" in raw.columns:
+        st.info(f"Abas disponíveis: {raw['_aba'].unique().tolist()}")
+    else:
+        st.warning("Coluna _aba não encontrada no raw!")
+
     # Filtra apenas a aba DadosRadar ANTES de normalizar
     df_raw = raw.copy()
     if "_aba" in df_raw.columns:
         df_raw = df_raw[df_raw["_aba"] == "DadosRadar"].copy()
+        st.info(f"Linhas após filtro DadosRadar: {len(df_raw)}")
+
+    # Mostra amostra da coluna de data
+    cols_raw = [c for c in df_raw.columns if "input" in c.lower() or "data" in c.lower()]
+    st.info(f"Colunas de data encontradas: {cols_raw}")
+    if cols_raw:
+        st.info(f"Amostra data_input: {df_raw[cols_raw[0]].dropna().head(3).tolist()}")
 
     df_base = normalize_columns(df_raw)
     df_base = _dedup_columns(df_base)
