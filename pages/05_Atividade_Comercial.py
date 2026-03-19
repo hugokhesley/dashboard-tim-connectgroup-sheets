@@ -55,24 +55,22 @@ st.markdown("""
 
 
 def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
-    """
-    Converte coluna de data para datetime.
-    Aceita: '22/02/2026', '22/02/26', '22/02/2026 08:30', etc.
-    """
+    """Converte coluna de data para datetime. Aceita YYYY-MM-DD HH:MM:SS ou DD/MM/YYYY."""
     def _normalizar(v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
         s = str(v).strip()
         if not s:
             return None
-        if " " in s:
-            s = s.split(" ")[0]
-        partes = s.replace("-", "/").split("/")
-        if len(partes) == 3 and len(partes[2]) == 2:
-            partes[2] = "20" + partes[2]
-            s = "/".join(partes)
         return s
-    return pd.to_datetime(df[col].apply(_normalizar), dayfirst=True, errors="coerce")
+    series = df[col].apply(_normalizar)
+    # Tenta formato ISO primeiro (YYYY-MM-DD ...), depois DD/MM/YYYY
+    parsed = pd.to_datetime(series, errors="coerce", dayfirst=False)
+    # Para os que falharam, tenta dayfirst=True
+    mask_nat = parsed.isna() & series.notna()
+    if mask_nat.any():
+        parsed[mask_nat] = pd.to_datetime(series[mask_nat], errors="coerce", dayfirst=True)
+    return parsed
 
 
 def _bar(valor, maximo, cor="#6366f1", h=12):
@@ -145,13 +143,6 @@ def main():
         df_raw["dt_ativacao"] = _parse_dates(df_raw, col_atv_orig)
     else:
         df_raw["dt_ativacao"] = pd.NaT
-
-    # DEBUG PROFUNDO
-    if col_input_orig:
-        amostra_raw = df_raw[col_input_orig].head(10).tolist()
-        tipos = [type(v).__name__ for v in amostra_raw]
-        st.info(f"Valores RAW: {amostra_raw}")
-        st.info(f"Tipos: {tipos}")
 
     df_base = normalize_columns(df_raw)
     df_base = _dedup_columns(df_base)
