@@ -1,6 +1,11 @@
 import streamlit as st
 import pandas as pd
-from data_loader import _s, _to_num, _soma_valor, _normalize, _dedup_columns, get_gspread_client
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from datetime import date
+from data_loader import _s, _to_num, _normalize, _dedup_columns, get_gspread_client
 from auth import require_password
 
 st.set_page_config(
@@ -76,7 +81,6 @@ def load_qualidade() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-
 def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
     df = _dedup_columns(df.copy())
     rename = {}
@@ -138,7 +142,7 @@ def normalize_qual(df: pd.DataFrame) -> pd.DataFrame:
     if "venda" in df.columns:
         df["venda"] = df["venda"].apply(_to_num)
     if "valor_rs" in df.columns:
-        df["valor_rs"] = df["valor_rs"].apply(_soma_valor)
+        df["valor_rs"] = df["valor_rs"].apply(_to_num)
 
     # ADIMPLENTE? é preenchida manualmente pela analista — lê direto da coluna
     # Se a coluna não existir ou estiver vazia, assume SIM (sem débito)
@@ -158,10 +162,10 @@ def _bool_icon(val):
 
 
 def _adim_icon(val):
-    v = _s(val).upper().strip()
-    if v == "SIM":                          return "🟢 SIM"
-    if v in ("NÃO", "NAO"):                return "🔴 NÃO"
-    if v in ("GERADA", "FATURA GERADA"):   return "🟡 FATURA GERADA"
+    v = _s(val).upper()
+    if v == "SIM":    return "🟢 SIM"
+    if v == "NÃO" or v == "NAO": return "🔴 NÃO"
+    if v == "GERADA": return "🟡 GERADA"
     return "—"
 
 
@@ -201,18 +205,133 @@ def _tabela(df):
 
 
 def _mask_inadim(df):
-    """Retorna máscara booleana: True = NÃO adimplente (fatura vencida)."""
+    """Retorna máscara booleana: True = NÃO adimplente (vencido)."""
     if "adimplente" in df.columns:
-        return df["adimplente"].apply(lambda x: _s(x).upper().strip() in ["NÃO", "NAO"])
+        return df["adimplente"].apply(lambda x: _s(x).upper() in ["NÃO", "NAO"])
     return pd.Series([False] * len(df))
 
 
-def _mask_gerada(df):
-    """Retorna máscara booleana: True = fatura gerada ainda não vencida."""
-    if "adimplente" in df.columns:
-        return df["adimplente"].apply(lambda x: _s(x).upper().strip() in ["GERADA", "FATURA GERADA"])
-    return pd.Series([False] * len(df))
 
+
+def _enviar_alerta_qualidade(df_alerta: pd.DataFrame, safras_sel: list, destinatarios: list, smtp_user: str, smtp_pass: str):
+    """
+    Envia email HTML com tabela de clientes inadimplentes e com fatura gerada
+    para os destinatários informados via Titan SMTP.
+    """
+    hoje = date.today().strftime("%d/%m/%Y")
+    total = len(df_alerta)
+
+    inadim = df_alerta[_mask_inadim(df_alerta)]
+    gerada = df_alerta[_mask_gerada(df_alerta)]
+
+    def _linhas_tabela(df_sub, cor_status):
+        rows = ""
+        for _, r in df_sub.iterrows():
+            status_val = _s(r.get("adimplente",""))
+            icon = "🔴 NÃO" if "NÃO" in status_val.upper() or "NAO" in status_val.upper() else "🟡 FATURA GERADA"
+            rows += f"""
+            <tr>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{_s(r.get("safra",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{_s(r.get("parceiro",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">{_s(r.get("cliente",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{_s(r.get("cnpj",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{_s(r.get("custcode",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{_s(r.get("n_fatura",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">{_s(r.get("vencimento",""))}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">R$ {r.get("valor_rs",0):,.2f}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;color:{cor_status};font-weight:700">{icon}</td>
+            </tr>"""
+        return rows
+
+    cabecalho_tabela = """
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;font-family:Arial,sans-serif">
+      <thead>
+        <tr style="background:#4a1272;color:#fff">
+          <th style="padding:10px 12px;text-align:left">Safra</th>
+          <th style="padding:10px 12px;text-align:left">Parceiro</th>
+          <th style="padding:10px 12px;text-align:left">Cliente</th>
+          <th style="padding:10px 12px;text-align:left">CNPJ</th>
+          <th style="padding:10px 12px;text-align:left">CustCode</th>
+          <th style="padding:10px 12px;text-align:left">Nº Fatura</th>
+          <th style="padding:10px 12px;text-align:left">Vencimento</th>
+          <th style="padding:10px 12px;text-align:left">Valor R$</th>
+          <th style="padding:10px 12px;text-align:left">Status</th>
+        </tr>
+      </thead>
+      <tbody>"""
+
+    linhas_inadim = _linhas_tabela(inadim, "#dc2626")
+    linhas_gerada = _linhas_tabela(gerada, "#d97706")
+
+    safras_str = ", ".join(safras_sel)
+    debito_total = df_alerta["valor_rs"].sum() if "valor_rs" in df_alerta.columns else 0
+
+    html = f"""
+    <html><body style="font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:20px">
+      <div style="max-width:1000px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+        
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#1a0533,#4a1272,#7c3aed);padding:28px 36px">
+          <h1 style="color:#fff;margin:0;font-size:1.5rem">🔍 Alerta de Adimplência — Connect Group</h1>
+          <p style="color:rgba(255,255,255,0.75);margin:6px 0 0 0">TIM Corporate · Safras: {safras_str} · Gerado em {hoje}</p>
+        </div>
+
+        <!-- KPIs -->
+        <div style="display:flex;gap:16px;padding:24px 36px;background:#faf5ff">
+          <div style="flex:1;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e9d5ff;text-align:center">
+            <div style="font-size:0.7rem;color:#7c3aed;text-transform:uppercase;font-weight:700">Total de Clientes</div>
+            <div style="font-size:2rem;font-weight:800;color:#1e1b4b">{total}</div>
+          </div>
+          <div style="flex:1;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #fecaca;text-align:center">
+            <div style="font-size:0.7rem;color:#dc2626;text-transform:uppercase;font-weight:700">🔴 Vencidos</div>
+            <div style="font-size:2rem;font-weight:800;color:#dc2626">{len(inadim)}</div>
+          </div>
+          <div style="flex:1;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #fde68a;text-align:center">
+            <div style="font-size:0.7rem;color:#d97706;text-transform:uppercase;font-weight:700">🟡 Fatura Gerada</div>
+            <div style="font-size:2rem;font-weight:800;color:#d97706">{len(gerada)}</div>
+          </div>
+          <div style="flex:1;background:#fff;border-radius:10px;padding:16px 20px;border:1px solid #e9d5ff;text-align:center">
+            <div style="font-size:0.7rem;color:#7c3aed;text-transform:uppercase;font-weight:700">💸 Débito Total</div>
+            <div style="font-size:1.3rem;font-weight:800;color:#1e1b4b">R$ {debito_total:,.2f}</div>
+          </div>
+        </div>
+
+        <div style="padding:0 36px 36px">
+    """
+
+    if len(inadim) > 0:
+        html += f"""
+          <h2 style="color:#dc2626;font-size:1rem;margin:24px 0 12px 0">🔴 Faturas Vencidas ({len(inadim)} clientes)</h2>
+          {cabecalho_tabela}{linhas_inadim}</tbody></table>
+        """
+
+    if len(gerada) > 0:
+        html += f"""
+          <h2 style="color:#d97706;font-size:1rem;margin:24px 0 12px 0">🟡 Fatura Gerada — A Vencer ({len(gerada)} clientes)</h2>
+          {cabecalho_tabela}{linhas_gerada}</tbody></table>
+        """
+
+    html += """
+        </div>
+        <div style="background:#f1f5f9;padding:16px 36px;text-align:center;font-size:0.75rem;color:#94a3b8">
+          Enviado automaticamente pelo Dashboard Connect Group · TIM Corporate
+        </div>
+      </div>
+    </body></html>
+    """
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"🔍 Alerta Qualidade Connect Group — {total} clientes | {hoje}"
+    msg["From"]    = smtp_user
+    msg["To"]      = ", ".join(destinatarios)
+    msg.attach(MIMEText(html, "html"))
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.titan.email", 465, context=context) as server:
+        server.login(smtp_user, smtp_pass)
+        server.sendmail(smtp_user, destinatarios, msg.as_string())
+
+    return total
 
 def _acessos(d: pd.DataFrame) -> int:
     """Soma a coluna VENDA (acessos/linhas). Fallback para contagem de linhas."""
@@ -229,7 +348,7 @@ def render_painel_geral(df: pd.DataFrame):
     for safra in safras:
         dfs         = df[df["safra"] == safra]
         mask_nao    = _mask_inadim(dfs)
-        mask_gerada = _mask_gerada(dfs)
+        mask_gerada = dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in dfs.columns else pd.Series([False]*len(dfs))
         mask_sim    = ~mask_nao & ~mask_gerada
         total  = _acessos(dfs)
         nao    = _acessos(dfs[mask_nao])
@@ -261,7 +380,7 @@ def render_painel_geral(df: pd.DataFrame):
     # KPIs consolidados
     st.markdown('<p class="section-title">📈 KPIs Consolidados</p>', unsafe_allow_html=True)
     mask_nao_g    = _mask_inadim(df)
-    mask_gerada_g = _mask_gerada(df)
+    mask_gerada_g = df["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in df.columns else pd.Series([False]*len(df))
     mask_sim_g    = ~mask_nao_g & ~mask_gerada_g
     total_g  = _acessos(df)
     nao_g    = _acessos(df[mask_nao_g])
@@ -301,7 +420,7 @@ def render_safra_detalhe(df: pd.DataFrame, safra: str):
     dfs = df[df["safra"] == safra].copy() if safra != "Todas" else df.copy()
 
     inadim_mask  = _mask_inadim(dfs)
-    gerada_mask  = _mask_gerada(dfs)
+    gerada_mask  = dfs["adimplente"].apply(lambda x: _s(x).upper() == "GERADA") if "adimplente" in dfs.columns else pd.Series([False]*len(dfs))
     sim_mask     = ~inadim_mask & ~gerada_mask
     total        = _acessos(dfs)
     nao          = _acessos(dfs[inadim_mask])
@@ -415,6 +534,65 @@ def main():
     if df.empty:
         st.warning("Nenhum dado para o filtro selecionado.")
         st.stop()
+
+    # ── Seção de Alerta por Email ───────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('<p class="section-title">📧 Enviar Alerta por Email</p>', unsafe_allow_html=True)
+
+    with st.expander("📨 Configurar e enviar alerta de inadimplência", expanded=False):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            safras_alerta = st.multiselect(
+                "Safras para incluir no alerta",
+                options=safras_disp,
+                default=safras_disp[-1:] if safras_disp else [],
+                key="safras_alerta"
+            )
+            incluir_gerada = st.checkbox("Incluir 🟡 Fatura Gerada (a vencer)", value=True)
+            incluir_vencida = st.checkbox("Incluir 🔴 Vencidos", value=True)
+        with col_b:
+            emails_input = st.text_area(
+                "Destinatários (um por linha)",
+                value="bko@connectbrasil.tech",
+                height=100,
+                key="emails_alerta"
+            )
+
+        if st.button("📧 Enviar Alerta", type="primary", key="btn_alerta_qualidade"):
+            if not safras_alerta:
+                st.warning("Selecione pelo menos uma safra.")
+            else:
+                destinatarios = [e.strip() for e in emails_input.split("\n") if e.strip() and "@" in e]
+                if not destinatarios:
+                    st.warning("Informe pelo menos um email válido.")
+                else:
+                    # Filtra dados conforme seleção
+                    df_alerta = df[df["safra"].isin(safras_alerta)].copy()
+                    masks = []
+                    if incluir_vencida:
+                        masks.append(_mask_inadim(df_alerta))
+                    if incluir_gerada:
+                        masks.append(_mask_gerada(df_alerta))
+                    if masks:
+                        mask_final = masks[0]
+                        for m in masks[1:]:
+                            mask_final = mask_final | m
+                        df_alerta = df_alerta[mask_final]
+
+                    if df_alerta.empty:
+                        st.info("Nenhum cliente com pendência para as safras selecionadas.")
+                    else:
+                        try:
+                            smtp_user = st.secrets["email"]["smtp_user"]
+                            smtp_pass = st.secrets["email"]["smtp_password"]
+                            with st.spinner(f"Enviando para {len(destinatarios)} destinatário(s)..."):
+                                total = _enviar_alerta_qualidade(
+                                    df_alerta, safras_alerta, destinatarios,
+                                    smtp_user, smtp_pass
+                                )
+                            st.success(f"✅ Alerta enviado com sucesso! {total} clientes incluídos no email.")
+                        except Exception as e:
+                            st.error(f"❌ Erro ao enviar: {e}")
 
     if visao == "Painel Geral":
         render_painel_geral(df)
