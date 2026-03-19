@@ -60,13 +60,13 @@ def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
     Aceita: '22/02/2026', '22/02/26', '22/02/2026 08:30', etc.
     """
     def _normalizar(v):
-        s = _s(v).strip()
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        s = str(v).strip()
         if not s:
-            return s
-        # Remove hora se presente
+            return None
         if " " in s:
             s = s.split(" ")[0]
-        # Trata ano com 2 dígitos: DD/MM/YY -> DD/MM/20YY
         partes = s.replace("-", "/").split("/")
         if len(partes) == 3 and len(partes[2]) == 2:
             partes[2] = "20" + partes[2]
