@@ -57,17 +57,9 @@ st.markdown("""
 def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
     """
     Converte coluna de data para datetime.
-    Trata datas com ou sem hora: '22/02/2026' e '22/02/2026 08:30'.
+    Aceita: '22/02/2026', '22/02/2026 08:30', '2026-02-22', etc.
     """
-    def _limpar_data(v):
-        s = _s(v).strip()
-        if not s:
-            return s
-        # Se tem hora junto (espaço + HH:MM ou HH:MM:SS), remove a parte da hora
-        if " " in s:
-            s = s.split(" ")[0]
-        return s
-    return pd.to_datetime(df[col].apply(_limpar_data), dayfirst=True, errors="coerce")
+    return pd.to_datetime(df[col].apply(_s), dayfirst=True, errors="coerce")
 
 
 def _bar(valor, maximo, cor="#6366f1", h=12):
@@ -291,8 +283,10 @@ def main():
         diario = (df_d.groupby(df_d[col_data].dt.day)
                   .agg(acessos=("acessos","sum"), receita=("preco_oferta","sum"),
                        pedidos=("pedido","nunique") if "pedido" in df_d.columns else ("acessos","count"))
-                  .reset_index().rename(columns={col_data:"dia"}))
-        diario = diario.sort_values("dia")
+                  .reset_index())
+        diario = diario.rename(columns={col_data: "dia"})
+        diario["dia"] = diario["dia"].astype(int)
+        diario = diario.sort_values("dia").reset_index(drop=True)
         diario["acumulado"] = diario["acessos"].cumsum()
 
         n_dias     = len(diario)
