@@ -584,7 +584,7 @@ def main():
         with col_b:
             emails_input = st.text_area(
                 "Destinatários (um por linha)",
-                value="bko2@connectbrasil.tech", "angelo.roncaly@connectgroup.solutions", "hugo@connectgroup.solutions","maria.alice@connectgroup.solutions",
+                value="bko2@connectbrasil.tecc; angelo.roncaly@connectgroup.solutions; hugo@connectgroup.solutions; maria.alice@connectgroup.solutions",
                 height=100, key="emails_alerta"
             )
         st.caption("⚠️ Clientes sem contato registrado serão destacados automaticamente no topo do email.")
