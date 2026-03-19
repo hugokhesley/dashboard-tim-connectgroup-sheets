@@ -125,11 +125,13 @@ def main():
         st.caption("Dados via Google Sheets · cache 3 min")
 
     # ── Prepara dados ─────────────────────────────────────────────────────────
-    # Filtra NOVO e ADITIVO sem filtro de mês (apply_filters filtra por ativação,
-    # aqui precisamos também dos sem ativação para o input)
     from data_loader import normalize_columns, _dedup_columns
     df_base = normalize_columns(raw.copy())
     df_base = _dedup_columns(df_base)
+
+    # Filtra apenas a aba DadosRadar — evita mistura com BKO, Colaboradores, etc.
+    if "_aba" in df_base.columns:
+        df_base = df_base[df_base["_aba"].apply(lambda x: _s(x).upper() == "DADOSRADAR")].copy()
 
     # Filtra parceiro
     if parceiro_sel != "Todos" and "parceiro" in df_base.columns:
