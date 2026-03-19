@@ -127,23 +127,24 @@ def main():
     # ── Prepara dados ─────────────────────────────────────────────────────────
     from data_loader import normalize_columns, _dedup_columns
 
-    # DEBUG temporário — remove após confirmar
-    if "_aba" in raw.columns:
-        st.info(f"Abas disponíveis: {raw['_aba'].unique().tolist()}")
-    else:
-        st.warning("Coluna _aba não encontrada no raw!")
-
     # Filtra apenas a aba DadosRadar ANTES de normalizar
     df_raw = raw.copy()
     if "_aba" in df_raw.columns:
         df_raw = df_raw[df_raw["_aba"] == "DadosRadar"].copy()
-        st.info(f"Linhas após filtro DadosRadar: {len(df_raw)}")
 
-    # Mostra amostra da coluna de data
-    cols_raw = [c for c in df_raw.columns if "input" in c.lower() or "data" in c.lower()]
-    st.info(f"Colunas de data encontradas: {cols_raw}")
-    if cols_raw:
-        st.info(f"Amostra data_input: {df_raw[cols_raw[0]].dropna().head(3).tolist()}")
+    # Parse das datas ANTES do normalize_columns (usa nome original da coluna)
+    col_input_orig  = next((c for c in df_raw.columns if "data de input" in c.lower()), None)
+    col_atv_orig    = next((c for c in df_raw.columns if "data de ativa" in c.lower()), None)
+
+    if col_input_orig:
+        df_raw["dt_input"] = _parse_dates(df_raw, col_input_orig)
+    else:
+        df_raw["dt_input"] = pd.NaT
+
+    if col_atv_orig:
+        df_raw["dt_ativacao"] = _parse_dates(df_raw, col_atv_orig)
+    else:
+        df_raw["dt_ativacao"] = pd.NaT
 
     df_base = normalize_columns(df_raw)
     df_base = _dedup_columns(df_base)
@@ -164,19 +165,9 @@ def main():
         if col in df_base.columns:
             df_base[col] = df_base[col].apply(_to_num)
 
-    # Parse datas
+    # dt_input e dt_ativacao já foram parseados antes do normalize
     mes_num, ano_num = int(mes_sel[:2]), int(mes_sel[3:])
     hoje_dt = pd.Timestamp(hoje)
-
-    if "data_input" in df_base.columns:
-        df_base["dt_input"] = _parse_dates(df_base, "data_input")
-    else:
-        df_base["dt_input"] = pd.NaT
-
-    if "data_ativacao" in df_base.columns:
-        df_base["dt_ativacao"] = _parse_dates(df_base, "data_ativacao")
-    else:
-        df_base["dt_ativacao"] = pd.NaT
 
     # Filtra pelo mês selecionado para input
     df_mes_input = df_base[
