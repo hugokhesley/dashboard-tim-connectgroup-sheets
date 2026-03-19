@@ -16,42 +16,82 @@ st.set_page_config(
 
 require_password("atividade", "Atividade Comercial — Connect Group")
 
-st.markdown("""
+# ── Temas ────────────────────────────────────────────────────────────────────
+TEMAS = {
+    "🌙 Escuro": {
+        "app_bg":       "#0f1117",
+        "app_color":    "#e2e8f0",
+        "card_bg":      "#1a1f2e",
+        "card_border":  "#2d3748",
+        "sidebar_bg":   "#0d0e1f",
+        "label_color":  "#94a3b8",
+        "value_color":  "#f1f5f9",
+        "sub_color":    "#64748b",
+        "bar_bg":       "#2d3748",
+        "day_label":    "#e2e8f0",
+        "details_bg":   "#1a1f2e",
+        "details_brd":  "#2d3748",
+        "details_clr":  "#e2e8f0",
+        "section_clr":  "#6366f1",
+        "mini_bg":      "#1a1f2e",
+        "mini_border":  "#2d3748",
+    },
+    "☀️ Claro": {
+        "app_bg":       "#f8fafc",
+        "app_color":    "#1e293b",
+        "card_bg":      "#ffffff",
+        "card_border":  "#e2e8f0",
+        "sidebar_bg":   "#f1f5f9",
+        "label_color":  "#64748b",
+        "value_color":  "#0f172a",
+        "sub_color":    "#94a3b8",
+        "bar_bg":       "#e2e8f0",
+        "day_label":    "#334155",
+        "details_bg":   "#ffffff",
+        "details_brd":  "#e2e8f0",
+        "details_clr":  "#1e293b",
+        "section_clr":  "#4f46e5",
+        "mini_bg":      "#f8fafc",
+        "mini_border":  "#e2e8f0",
+    },
+}
+
+def _aplicar_tema(t: dict):
+    st.markdown(f"""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
-  .header-atv {
+  html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
+  .stApp {{ background-color: {t['app_bg']}; color: {t['app_color']}; }}
+  .header-atv {{
     background: linear-gradient(135deg, #1e1b4b 0%, #3730a3 50%, #6366f1 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;
     box-shadow: 0 8px 32px rgba(99,102,241,0.3);
     border: 1px solid rgba(255,255,255,0.08);
     display: flex; align-items: center; justify-content: space-between;
-  }
-  .header-title { font-size: 1.9rem; font-weight: 800; color: #fff; letter-spacing: -0.5px; margin: 0; }
-  .header-sub   { font-size: 0.85rem; color: rgba(255,255,255,0.65); margin: 4px 0 0 0; }
-  .header-badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 20px; padding: 6px 16px; font-size: 0.8rem; color: #fff; font-weight: 600; }
-  .kpi-card { background: #1a1f2e; border-radius: 14px; padding: 22px 24px; border: 1px solid #2d3748; position: relative; overflow: hidden; margin-bottom: 4px; }
-  .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
-  .kpi-card.indigo::before { background: linear-gradient(90deg, #6366f1, #4f46e5); }
-  .kpi-card.green::before  { background: linear-gradient(90deg, #10b981, #059669); }
-  .kpi-card.amber::before  { background: linear-gradient(90deg, #f59e0b, #d97706); }
-  .kpi-card.blue::before   { background: linear-gradient(90deg, #3b82f6, #1d4ed8); }
-  .kpi-card.red::before    { background: linear-gradient(90deg, #ef4444, #dc2626); }
-  .kpi-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; font-weight: 600; margin-bottom: 8px; }
-  .kpi-value { font-size: 2.1rem; font-weight: 800; color: #f1f5f9; line-height: 1; }
-  .kpi-sub   { font-size: 0.78rem; color: #64748b; margin-top: 6px; }
-  .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#6366f1; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid #6366f1; padding-left: 10px; }
-  .day-bar-wrap { margin: 3px 0 8px 0; }
-  .day-label { font-size: 0.78rem; color: #e2e8f0; margin-bottom: 3px; display:flex; justify-content:space-between; }
-  .day-bg    { background: #2d3748; border-radius: 99px; height: 12px; }
-  .day-fill  { height: 12px; border-radius: 99px; }
-  .hoje-badge { background: #6366f1; color: #fff; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
-  section[data-testid="stSidebar"] { background: #0d0e1f !important; }
-  details { background:#1a1f2e !important; border:1px solid #2d3748 !important; border-radius:0 0 10px 10px !important; }
-  details summary { color:#e2e8f0 !important; font-weight:600 !important; }
-</style>
-""", unsafe_allow_html=True)
+  }}
+  .header-title {{ font-size: 1.9rem; font-weight: 800; color: #fff; letter-spacing: -0.5px; margin: 0; }}
+  .header-sub   {{ font-size: 0.85rem; color: rgba(255,255,255,0.65); margin: 4px 0 0 0; }}
+  .header-badge {{ background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 20px; padding: 6px 16px; font-size: 0.8rem; color: #fff; font-weight: 600; }}
+  .kpi-card {{ background: {t['card_bg']}; border-radius: 14px; padding: 22px 24px; border: 1px solid {t['card_border']}; position: relative; overflow: hidden; margin-bottom: 4px; }}
+  .kpi-card::before {{ content:''; position:absolute; top:0; left:0; right:0; height:3px; }}
+  .kpi-card.indigo::before {{ background: linear-gradient(90deg, #6366f1, #4f46e5); }}
+  .kpi-card.green::before  {{ background: linear-gradient(90deg, #10b981, #059669); }}
+  .kpi-card.amber::before  {{ background: linear-gradient(90deg, #f59e0b, #d97706); }}
+  .kpi-card.blue::before   {{ background: linear-gradient(90deg, #3b82f6, #1d4ed8); }}
+  .kpi-card.red::before    {{ background: linear-gradient(90deg, #ef4444, #dc2626); }}
+  .kpi-label {{ font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: {t['label_color']}; font-weight: 600; margin-bottom: 8px; }}
+  .kpi-value {{ font-size: 2.1rem; font-weight: 800; color: {t['value_color']}; line-height: 1; }}
+  .kpi-sub   {{ font-size: 0.78rem; color: {t['sub_color']}; margin-top: 6px; }}
+  .section-title {{ font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:{t['section_clr']}; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid {t['section_clr']}; padding-left: 10px; }}
+  .day-bar-wrap {{ margin: 3px 0 8px 0; }}
+  .day-label {{ font-size: 0.78rem; color: {t['day_label']}; margin-bottom: 3px; display:flex; justify-content:space-between; }}
+  .day-bg    {{ background: {t['bar_bg']}; border-radius: 99px; height: 12px; }}
+  .day-fill  {{ height: 12px; border-radius: 99px; }}
+  .hoje-badge {{ background: #6366f1; color: #fff; font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 6px; }}
+  section[data-testid="stSidebar"] {{ background: {t['sidebar_bg']} !important; }}
+  details {{ background:{t['details_bg']} !important; border:1px solid {t['details_brd']} !important; border-radius:0 0 10px 10px !important; }}
+  details summary {{ color:{t['details_clr']} !important; font-weight:600 !important; }}
+</style>""", unsafe_allow_html=True)
 
 
 def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
@@ -99,6 +139,13 @@ def main():
     # ── Sidebar ──────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
+
+        # Toggle de tema
+        tema_sel = st.radio("Tema:", list(TEMAS.keys()), horizontal=True,
+                            key="tema_atividade",
+                            index=0 if st.session_state.get("tema_atividade", "🌙 Escuro") == "🌙 Escuro" else 1)
+
+        st.markdown("---")
         parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
 
         # Seletor de mês
@@ -121,6 +168,9 @@ def main():
             st.rerun()
         st.markdown("---")
         st.caption("Dados via Google Sheets · cache 3 min")
+
+    # Aplica tema selecionado
+    _aplicar_tema(TEMAS[tema_sel])
 
     # ── Prepara dados ─────────────────────────────────────────────────────────
     from data_loader import normalize_columns, _dedup_columns
@@ -295,6 +345,7 @@ def main():
 
     def _render_diario(df_d, col_data, cor_bar, cor_hoje, label):
         """Renderiza visão diária com toggle barras/tabela e linha de média."""
+        t = TEMAS[tema_sel]
         if df_d.empty:
             st.info(f"Nenhum {label} encontrado para o período.")
             return
@@ -317,27 +368,27 @@ def main():
         # Médias em destaque
         m1, m2, m3, m4 = st.columns(4)
         with m1:
-            st.markdown(f"""<div style="background:#1a1f2e;border-radius:10px;padding:12px 16px;border:1px solid #2d3748">
-              <div style="font-size:0.68rem;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">📊 Média/dia — Acessos</div>
+            st.markdown(f"""<div style="background:{t['mini_bg']};border-radius:10px;padding:12px 16px;border:1px solid {t['mini_border']}">
+              <div style="font-size:0.68rem;color:{t['label_color']};text-transform:uppercase;margin-bottom:4px">📊 Média/dia — Acessos</div>
               <div style="font-size:1.4rem;font-weight:800;color:{cor_bar}">{media_ac:.1f}</div>
-              <div style="font-size:0.7rem;color:#64748b">{n_dias} dia(s) com {label}</div>
+              <div style="font-size:0.7rem;color:{t['sub_color']}">{n_dias} dia(s) com {label}</div>
             </div>""", unsafe_allow_html=True)
         with m2:
-            st.markdown(f"""<div style="background:#1a1f2e;border-radius:10px;padding:12px 16px;border:1px solid #2d3748">
-              <div style="font-size:0.68rem;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">💰 Média/dia — Receita</div>
+            st.markdown(f"""<div style="background:{t['mini_bg']};border-radius:10px;padding:12px 16px;border:1px solid {t['mini_border']}">
+              <div style="font-size:0.68rem;color:{t['label_color']};text-transform:uppercase;margin-bottom:4px">💰 Média/dia — Receita</div>
               <div style="font-size:1.4rem;font-weight:800;color:{cor_bar}">R$ {media_rec:,.2f}</div>
-              <div style="font-size:0.7rem;color:#64748b">por dia útil</div>
+              <div style="font-size:0.7rem;color:{t['sub_color']}">por dia útil</div>
             </div>""", unsafe_allow_html=True)
         with m3:
-            st.markdown(f"""<div style="background:#1a1f2e;border-radius:10px;padding:12px 16px;border:1px solid #2d3748">
-              <div style="font-size:0.68rem;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">📈 Total Acessos</div>
-              <div style="font-size:1.4rem;font-weight:800;color:#e2e8f0">{total_ac:,}</div>
-              <div style="font-size:0.7rem;color:#64748b">no período</div>
+            st.markdown(f"""<div style="background:{t['mini_bg']};border-radius:10px;padding:12px 16px;border:1px solid {t['mini_border']}">
+              <div style="font-size:0.68rem;color:{t['label_color']};text-transform:uppercase;margin-bottom:4px">📈 Total Acessos</div>
+              <div style="font-size:1.4rem;font-weight:800;color:{t['value_color']}">{total_ac:,}</div>
+              <div style="font-size:0.7rem;color:{t['sub_color']}">no período</div>
             </div>""", unsafe_allow_html=True)
         with m4:
-            st.markdown(f"""<div style="background:#1a1f2e;border-radius:10px;padding:12px 16px;border:1px solid #2d3748">
-              <div style="font-size:0.68rem;color:#94a3b8;text-transform:uppercase;margin-bottom:4px">💰 Total Receita</div>
-              <div style="font-size:1.4rem;font-weight:800;color:#e2e8f0">R$ {total_rec:,.2f}</div>
+            st.markdown(f"""<div style="background:{t['mini_bg']};border-radius:10px;padding:12px 16px;border:1px solid {t['mini_border']}">
+              <div style="font-size:0.68rem;color:{t['label_color']};text-transform:uppercase;margin-bottom:4px">💰 Total Receita</div>
+              <div style="font-size:1.4rem;font-weight:800;color:{t['value_color']}">R$ {total_rec:,.2f}</div>
               <div style="font-size:0.7rem;color:#64748b">no período</div>
             </div>""", unsafe_allow_html=True)
 
