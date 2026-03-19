@@ -126,12 +126,14 @@ def main():
 
     # ── Prepara dados ─────────────────────────────────────────────────────────
     from data_loader import normalize_columns, _dedup_columns
-    df_base = normalize_columns(raw.copy())
-    df_base = _dedup_columns(df_base)
 
-    # Filtra apenas a aba DadosRadar — evita mistura com BKO, Colaboradores, etc.
-    if "_aba" in df_base.columns:
-        df_base = df_base[df_base["_aba"].apply(lambda x: _s(x).upper() == "DADOSRADAR")].copy()
+    # Filtra apenas a aba DadosRadar ANTES de normalizar
+    df_raw = raw.copy()
+    if "_aba" in df_raw.columns:
+        df_raw = df_raw[df_raw["_aba"] == "DadosRadar"].copy()
+
+    df_base = normalize_columns(df_raw)
+    df_base = _dedup_columns(df_base)
 
     # Filtra parceiro
     if parceiro_sel != "Todos" and "parceiro" in df_base.columns:
