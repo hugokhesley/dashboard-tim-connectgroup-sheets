@@ -57,9 +57,22 @@ st.markdown("""
 def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
     """
     Converte coluna de data para datetime.
-    Aceita: '22/02/2026', '22/02/2026 08:30', '2026-02-22', etc.
+    Aceita: '22/02/2026', '22/02/26', '22/02/2026 08:30', etc.
     """
-    return pd.to_datetime(df[col].apply(_s), dayfirst=True, errors="coerce")
+    def _normalizar(v):
+        s = _s(v).strip()
+        if not s:
+            return s
+        # Remove hora se presente
+        if " " in s:
+            s = s.split(" ")[0]
+        # Trata ano com 2 dígitos: DD/MM/YY -> DD/MM/20YY
+        partes = s.replace("-", "/").split("/")
+        if len(partes) == 3 and len(partes[2]) == 2:
+            partes[2] = "20" + partes[2]
+            s = "/".join(partes)
+        return s
+    return pd.to_datetime(df[col].apply(_normalizar), dayfirst=True, errors="coerce")
 
 
 def _bar(valor, maximo, cor="#6366f1", h=12):
