@@ -142,15 +142,27 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         st.info("Nenhum pedido em tramitação no momento.")
         return
 
-    # Tenta trazer phoenix do raw pelo índice original
-    if phoenix_col and phoenix_col in raw.columns:
-        # Junta pelo pedido
-        raw_phoenix = raw[[phoenix_col, "pedido"]].copy() if "pedido" in raw.columns else pd.DataFrame()
-        if not raw_phoenix.empty:
-            raw_phoenix.columns = ["phoenix", "pedido"]
-            raw_phoenix["pedido"] = raw_phoenix["pedido"].apply(_norm_pedido)
-            df_tram["pedido"] = df_tram["pedido"].apply(_norm_pedido) if "pedido" in df_tram.columns else ""
-            df_tram = df_tram.merge(raw_phoenix.drop_duplicates("pedido"), on="pedido", how="left")
+    # Busca coluna pedido no raw (nome em lowercase após load_data)
+    pedido_col_raw = None
+    for c in raw.columns:
+        if _s(c).lower().strip() == "pedido":
+            pedido_col_raw = c
+            break
+
+    # Traz phoenix do raw fazendo merge pelo pedido
+    if phoenix_col and pedido_col_raw and phoenix_col != pedido_col_raw:
+        raw_phoenix = raw[[pedido_col_raw, phoenix_col]].copy()
+        raw_phoenix.columns = ["pedido", "phoenix"]
+        raw_phoenix["pedido"] = raw_phoenix["pedido"].apply(_norm_pedido)
+        raw_phoenix["phoenix"] = raw_phoenix["phoenix"].apply(_s)
+        raw_phoenix = raw_phoenix[raw_phoenix["pedido"] != ""].drop_duplicates("pedido")
+        if "pedido" in df_tram.columns:
+            df_tram["pedido"] = df_tram["pedido"].apply(_norm_pedido)
+        # Remove coluna phoenix se já existir para evitar _x/_y no merge
+        if "phoenix" in df_tram.columns:
+            df_tram = df_tram.drop(columns=["phoenix"])
+        df_tram = df_tram.merge(raw_phoenix, on="pedido", how="left")
+        df_tram["phoenix"] = df_tram["phoenix"].fillna("—").apply(_s)
     elif "phoenix" in df_tram.columns:
         pass  # já veio pelo apply_filters
     else:
@@ -189,15 +201,14 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
 
     # Agrupa por pedido — soma acessos, mantém status/cliente/phoenix do primeiro registro
     df_grouped = (
-        df_show.sort_values("status_dash")
-        .groupby("pedido", as_index=False)
+        df_show.groupby("pedido", as_index=False)
         .agg(
             status_dash  = ("status_dash",  "first"),
             razao_social = ("razao_social", "first"),
             phoenix      = ("phoenix",      "first") if "phoenix" in df_show.columns else ("pedido", "first"),
             acessos      = ("acessos",      "sum"),
         )
-        .sort_values("status_dash")
+        .sort_values("acessos", ascending=False)
     )
 
     # Monta tabela HTML
