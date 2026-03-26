@@ -129,7 +129,7 @@ def main():
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
         parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
-        vendedor_sel = st.selectbox("Vendedor", get_vendedores(raw))
+        vendedor_sel = st.selectbox("Vendedor", st.session_state.get("vendedores_disp", ["Todos"]))
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
             st.cache_data.clear()
@@ -140,8 +140,18 @@ def main():
         st.caption("Dados via Google Sheets · cache 3 min")
 
     df = apply_filters(raw.copy(), MES_ALVO, ["RENEGOCIAÇÃO", "RENEGOCIACAO"], parceiro_sel)
+
+    # Lista de vendedores apenas com renegociações no mês (exclui zerados)
+    from data_loader import _s
+    if "vendedor" in df.columns:
+        vendedores_disp = ["Todos"] + sorted([
+            v for v in df["vendedor"].dropna().unique() if _s(v)
+        ])
+    else:
+        vendedores_disp = ["Todos"]
+    st.session_state["vendedores_disp"] = vendedores_disp
+
     if vendedor_sel != "Todos" and "vendedor" in df.columns:
-        from data_loader import _s
         df = df[df["vendedor"].apply(lambda x: _s(x).upper()) == vendedor_sel.upper()]
 
     ativados    = df[df["mes_ativacao"] == MES_ALVO]
