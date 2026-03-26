@@ -224,19 +224,22 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         cliente = _s(row.get("razao_social", "—"))
         pedido  = _s(row.get("pedido", "—"))
         phoenix = _s(row.get("phoenix", "—"))
-        cnpj    = _s(row.get("cnpj", "—"))
+        # Remove .0 de CNPJ (vem como float do Sheets)
+        cnpj_raw = _s(row.get("cnpj", ""))
+        cnpj = cnpj_raw[:-2] if cnpj_raw.endswith(".0") else cnpj_raw
+        cnpj = cnpj if cnpj else "—"
         acessos = int(row.get("acessos", 0))
-        # Texto que vai para a área de transferência
-        texto_copia = (
-            f"📋 STATUS: {status}\n"
-            f"🏢 RAZÃO SOCIAL: {cliente}\n"
-            f"📄 CNPJ: {cnpj}\n"
-            f"🔢 Nº PEDIDO: {pedido}\n"
-            f"🔷 PHOENIX: {phoenix}\n"
-            f"📶 ACESSOS: {acessos}"
-        )
-        # Escapa aspas para uso no JS
-        texto_js = texto_copia.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+
+        # Texto para cópia — sem emojis para evitar problema no JS
+        linha1 = f"STATUS: {status}"
+        linha2 = f"RAZAO SOCIAL: {cliente}"
+        linha3 = f"CNPJ: {cnpj}"
+        linha4 = f"No PEDIDO: {pedido}"
+        linha5 = f"PHOENIX: {phoenix}"
+        linha6 = f"ACESSOS: {acessos}"
+        # Monta como atributo data- para evitar problemas de escaping no JS
+        texto_data = f"{linha1}|{linha2}|{linha3}|{linha4}|{linha5}|{linha6}"
+
         linhas += f"""<tr>
           <td><span class="status-pill" style="background:{pill["bg"]};border:1px solid {pill["border"]};color:{pill["color"]}">{pill["icon"]} {status}</span></td>
           <td style="font-weight:600">{cliente}</td>
@@ -245,8 +248,8 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
           <td style="font-family:monospace;color:#a78bfa">{phoenix}</td>
           <td style="text-align:center;color:#94a3b8">{acessos}</td>
           <td style="text-align:center">
-            <button onclick="navigator.clipboard.writeText(`{texto_js}`).then(()=>{{this.textContent='✅';setTimeout(()=>this.textContent='📋',1500)}})"
-              style="background:none;border:1px solid #334155;border-radius:6px;color:#64748b;cursor:pointer;padding:4px 8px;font-size:0.8rem;transition:all 0.2s"
+            <button class="btn-copiar" data-info="{texto_data}"
+              style="background:none;border:1px solid #334155;border-radius:6px;color:#64748b;cursor:pointer;padding:4px 8px;font-size:0.8rem"
               title="Copiar informações">📋</button>
           </td>
         </tr>"""
@@ -265,7 +268,21 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
       <tbody>{linhas}</tbody>
     </table></div>"""
 
-    st.markdown(html, unsafe_allow_html=True)
+    # Script JS separado — lê data-info e converte | em quebra de linha
+    js = """<script>
+    document.querySelectorAll('.btn-copiar').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var info = this.getAttribute('data-info');
+            var texto = info.split('|').join('\\n');
+            navigator.clipboard.writeText(texto).then(() => {
+                this.textContent = '✅';
+                var self = this;
+                setTimeout(function(){ self.textContent = '📋'; }, 1500);
+            });
+        });
+    });
+    </script>"""
+    st.markdown(html + js, unsafe_allow_html=True)
 
 def main():
     st.markdown("""
