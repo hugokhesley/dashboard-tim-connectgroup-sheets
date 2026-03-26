@@ -224,10 +224,13 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         cliente = _s(row.get("razao_social", "—"))
         pedido  = _s(row.get("pedido", "—"))
         phoenix = _s(row.get("phoenix", "—"))
-        # Remove .0 de CNPJ (vem como float do Sheets)
+        # CNPJ: remove .0 de float e faz zero-padding para 14 dígitos
         cnpj_raw = _s(row.get("cnpj", ""))
-        cnpj = cnpj_raw[:-2] if cnpj_raw.endswith(".0") else cnpj_raw
-        cnpj = cnpj if cnpj else "—"
+        cnpj_raw = cnpj_raw[:-2] if cnpj_raw.endswith(".0") else cnpj_raw
+        cnpj_raw = cnpj_raw.strip()
+        if cnpj_raw and cnpj_raw.isdigit():
+            cnpj_raw = cnpj_raw.zfill(14)
+        cnpj = cnpj_raw if cnpj_raw else "—"
         acessos = int(row.get("acessos", 0))
 
         # Texto para cópia — sem emojis para evitar problema no JS
@@ -268,21 +271,34 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
       <tbody>{linhas}</tbody>
     </table></div>"""
 
-    # Script JS separado — lê data-info e converte | em quebra de linha
+    # Renderiza via components para permitir execução de JS (st.markdown bloqueia scripts)
+    import streamlit.components.v1 as components
+    css_inject = """
+    <style>
+      .pedidos-table { width:100%; border-collapse:collapse; font-size:0.83rem; font-family:Inter,sans-serif; }
+      .pedidos-table th { background:#1e293b; color:#94a3b8; font-weight:600;
+        font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;
+        padding:10px 14px; text-align:left; border-bottom:2px solid #2d3748; }
+      .pedidos-table td { padding:9px 14px; border-bottom:1px solid #1e293b;
+        color:#e2e8f0; vertical-align:middle; }
+      .pedidos-table tr:hover td { background:#1a1f2e33; }
+      .status-pill { display:inline-block; border-radius:99px; padding:3px 10px;
+        font-size:0.7rem; font-weight:700; letter-spacing:0.5px; }
+    </style>"""
     js = """<script>
     document.querySelectorAll('.btn-copiar').forEach(function(btn) {
         btn.addEventListener('click', function() {
             var info = this.getAttribute('data-info');
-            var texto = info.split('|').join('\\n');
-            navigator.clipboard.writeText(texto).then(() => {
-                this.textContent = '✅';
-                var self = this;
-                setTimeout(function(){ self.textContent = '📋'; }, 1500);
+            var texto = info.split('|').join('\n');
+            navigator.clipboard.writeText(texto).then(function() {
+                btn.textContent = '\u2705';
+                setTimeout(function(){ btn.textContent = '\uD83D\uDCCB'; }, 1500);
             });
         });
     });
     </script>"""
-    st.markdown(html + js, unsafe_allow_html=True)
+    altura = max(120, 44 + len(df_grouped) * 44)
+    components.html(css_inject + html + js, height=altura, scrolling=True)
 
 def main():
     st.markdown("""
