@@ -464,15 +464,14 @@ def load_colaboradores() -> pd.DataFrame:
         return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
 
 
-def registrar_acesso(pagina: str) -> None:
+def registrar_acesso(pagina: str, username: str = "") -> None:
     """
     Registra acesso na aba 'Logs' da planilha principal.
-    Colunas: timestamp | pagina | session_id
+    Colunas: timestamp | pagina | username
     Cria a aba automaticamente se não existir.
     Falhas silenciosas — nunca interrompe o fluxo da página.
     """
     import datetime
-    import uuid
     try:
         client = get_gspread_client()
         sheet_url = st.secrets['sheets']['url']
@@ -483,19 +482,16 @@ def registrar_acesso(pagina: str) -> None:
             ws = spreadsheet.worksheet('Logs')
         except Exception:
             ws = spreadsheet.add_worksheet(title='Logs', rows=5000, cols=4)
-            ws.update('A1:C1', [['timestamp', 'pagina', 'session_id']])
+            ws.update('A1:C1', [['timestamp', 'pagina', 'username']])
 
         # Timestamp no fuso de Brasília (UTC-3)
         agora = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
         ts = agora.strftime('%d/%m/%Y %H:%M:%S')
 
-        # Session ID anônimo — identifica sessão sem expor dados pessoais
-        if 'session_id' not in st.session_state:
-            st.session_state['session_id'] = str(uuid.uuid4())[:8]
-        session_id = st.session_state['session_id']
+        user = username if username else "desconhecido"
 
         # Append na próxima linha disponível
-        ws.append_row([ts, pagina, session_id], value_input_option='USER_ENTERED')
+        ws.append_row([ts, pagina, user], value_input_option='USER_ENTERED')
 
     except Exception:
         pass  # Falha silenciosa — log não deve quebrar a página
