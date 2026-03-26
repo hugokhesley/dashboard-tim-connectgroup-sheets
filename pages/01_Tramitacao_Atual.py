@@ -181,15 +181,28 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         df_show = df_show[mask]
 
     total_show = len(df_show)
-    st.caption(f"{total_show} pedido(s) em tramitação")
+    st.caption(f"{df_show["pedido"].nunique() if "pedido" in df_show.columns else total_show} pedido(s) único(s) em tramitação · {total_show} linha(s) na base")
 
     if df_show.empty:
         st.info("Nenhum pedido para o filtro selecionado.")
         return
 
+    # Agrupa por pedido — soma acessos, mantém status/cliente/phoenix do primeiro registro
+    df_grouped = (
+        df_show.sort_values("status_dash")
+        .groupby("pedido", as_index=False)
+        .agg(
+            status_dash  = ("status_dash",  "first"),
+            razao_social = ("razao_social", "first"),
+            phoenix      = ("phoenix",      "first") if "phoenix" in df_show.columns else ("pedido", "first"),
+            acessos      = ("acessos",      "sum"),
+        )
+        .sort_values("status_dash")
+    )
+
     # Monta tabela HTML
     linhas = ""
-    for _, row in df_show.sort_values("status_dash").iterrows():
+    for _, row in df_grouped.iterrows():
         status  = _s(row.get("status_dash", ""))
         pill    = STATUS_PILL.get(status, {"bg":"#1e293b","border":"#64748b","color":"#94a3b8","icon":"•"})
         cliente = _s(row.get("razao_social", "—"))
