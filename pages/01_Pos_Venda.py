@@ -65,6 +65,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+
+def get_vendedores(df: pd.DataFrame) -> list:
+    """Retorna lista de vendedores únicos do DadosRadar."""
+    from data_loader import normalize_columns, _s
+    df_n = normalize_columns(df[df["_aba"] == "DadosRadar"].copy()) if "_aba" in df.columns else normalize_columns(df.copy())
+    if "vendedor" in df_n.columns:
+        vals = sorted([v for v in df_n["vendedor"].dropna().unique() if _s(v)])
+        return ["Todos"] + vals
+    return ["Todos"]
+
 def progress_html(value, total, color="#10b981"):
     pct = min(int(value / total * 100), 100) if total > 0 else 0
     return f"""<div class="progress-wrap">
@@ -119,6 +129,7 @@ def main():
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
         parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
+        vendedor_sel = st.selectbox("Vendedor", get_vendedores(raw))
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
             st.cache_data.clear()
@@ -129,6 +140,9 @@ def main():
         st.caption("Dados via Google Sheets · cache 3 min")
 
     df = apply_filters(raw.copy(), MES_ALVO, ["RENEGOCIAÇÃO", "RENEGOCIACAO"], parceiro_sel)
+    if vendedor_sel != "Todos" and "vendedor" in df.columns:
+        from data_loader import _s
+        df = df[df["vendedor"].apply(lambda x: _s(x).upper()) == vendedor_sel.upper()]
 
     ativados    = df[df["mes_ativacao"] == MES_ALVO]
     vol_ativado = int(ativados["acessos"].sum())
