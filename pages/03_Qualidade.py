@@ -508,6 +508,85 @@ def render_safra_detalhe(df: pd.DataFrame, safra: str):
             )
 
 
+
+def render_busca_cliente(df: pd.DataFrame):
+    """Busca reativa por CNPJ ou Razao Social em toda a base."""
+
+    busca = st.text_input(
+        "Digite o CNPJ ou Razao Social",
+        placeholder="Ex: 37491403000190  ou  CONSIGBOT LTDA",
+        key="busca_cliente"
+    )
+
+    if not busca or len(busca.strip()) < 2:
+        total_base  = len(df)
+        safras_base = df["safra"].nunique() if "safra" in df.columns else 0
+        st.info(f"Base carregada: **{total_base} clientes** em **{safras_base} safras**. "
+                "Digite pelo menos 2 caracteres para buscar.")
+        return
+
+    termo = busca.strip().lower()
+
+    # Busca em CNPJ (ignora pontuacao) e Razao Social
+    mask = pd.Series([False] * len(df), index=df.index)
+    if "cnpj" in df.columns:
+        mask |= df["cnpj"].apply(
+            lambda x: termo.replace(".", "").replace("/", "").replace("-", "")
+                      in _s(x).lower().replace(".", "").replace("/", "").replace("-", "")
+        )
+    if "cliente" in df.columns:
+        mask |= df["cliente"].apply(lambda x: termo in _s(x).lower())
+
+    resultado = df[mask].copy()
+
+    if resultado.empty:
+        st.warning(f"Nenhum cliente encontrado para **{busca}**.")
+        return
+
+    # Resumo do resultado
+    n     = len(resultado)
+    nomes = resultado["cliente"].unique().tolist() if "cliente" in resultado.columns else []
+    if len(nomes) == 1:
+        st.success(f"**{n} registro(s)** encontrado(s) — {nomes[0]}")
+    else:
+        st.success(f"**{n} registro(s)** encontrado(s) para {len(nomes)} cliente(s)")
+
+    # KPIs rapidos
+    inadim_mask = _mask_inadim(resultado)
+    gerada_mask = _mask_gerada(resultado)
+    debito      = resultado["valor_rs"].sum() if "valor_rs" in resultado.columns else 0
+    n_safras    = resultado["safra"].nunique() if "safra" in resultado.columns else 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f'''<div class="kpi-card purple">
+          <div class="kpi-label">\U0001f4cb Registros</div>
+          <div class="kpi-value">{n}</div>
+          <div class="kpi-sub">em {n_safras} safra(s)</div>
+        </div>''', unsafe_allow_html=True)
+    with k2:
+        st.markdown(f'''<div class="kpi-card red">
+          <div class="kpi-label">\U0001f534 Vencidos</div>
+          <div class="kpi-value">{inadim_mask.sum()}</div>
+          <div class="kpi-sub">fatura(s) em atraso</div>
+        </div>''', unsafe_allow_html=True)
+    with k3:
+        st.markdown(f'''<div class="kpi-card amber">
+          <div class="kpi-label">\U0001f7e1 Geradas</div>
+          <div class="kpi-value">{gerada_mask.sum()}</div>
+          <div class="kpi-sub">a vencer</div>
+        </div>''', unsafe_allow_html=True)
+    with k4:
+        st.markdown(f'''<div class="kpi-card purple">
+          <div class="kpi-label">\U0001f4b8 Debito Total</div>
+          <div class="kpi-value">R$ {debito:,.2f}</div>
+          <div class="kpi-sub">todas as safras</div>
+        </div>''', unsafe_allow_html=True)
+
+    st.markdown("")
+    _tabela(resultado)
+
+
 def main():
     st.markdown("""
     <div class="header-qual">
@@ -533,7 +612,7 @@ def main():
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
 
-        visao = st.radio("Visão", ["Painel Geral", "Safra Específica"])
+        visao = st.radio("Visão", ["Painel Geral", "Safra Específica", "🔎 Busca por Cliente"])
 
         safra_sel = "Todas"
         if visao == "Safra Específica":
@@ -554,6 +633,7 @@ def main():
             st.markdown(f'<span class="safra-badge">{s}</span>', unsafe_allow_html=True)
         st.caption("Dados via Google Sheets · cache 3 min")
 
+    df_full = df.copy()  # base completa para busca (sem filtro de parceiro)
     if parceiro_sel != "Todos" and "parceiro" in df.columns:
         df = df[df["parceiro"] == parceiro_sel]
 
@@ -634,6 +714,9 @@ def main():
 
     if visao == "Painel Geral":
         render_painel_geral(df)
+    elif visao == "🔎 Busca por Cliente":
+        st.markdown('<p class="section-title">🔎 Busca por Cliente</p>', unsafe_allow_html=True)
+        render_busca_cliente(df_full)
     else:
         st.markdown(f'<p class="section-title">🗓️ Safra: {safra_sel}</p>', unsafe_allow_html=True)
         render_safra_detalhe(df, safra_sel)
