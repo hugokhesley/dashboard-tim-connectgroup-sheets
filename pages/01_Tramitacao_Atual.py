@@ -60,6 +60,17 @@ st.markdown("""
   details { background:#1a1f2e !important; border:1px solid #2d3748 !important; border-radius:0 0 10px 10px !important; }
   details summary { color:#e2e8f0 !important; font-weight:600 !important; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#64748b; font-weight:600; margin:24px 0 12px 0; }
+
+  .pedidos-table { width:100%; border-collapse:collapse; font-size:0.83rem; }
+  .pedidos-table th { background:#1e293b; color:#94a3b8; font-weight:600;
+    font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;
+    padding:10px 14px; text-align:left; border-bottom:2px solid #2d3748; }
+  .pedidos-table td { padding:9px 14px; border-bottom:1px solid #1e293b;
+    color:#e2e8f0; vertical-align:middle; }
+  .pedidos-table tr:hover td { background:#1a1f2e; }
+  .status-pill { display:inline-block; border-radius:99px; padding:3px 10px;
+    font-size:0.7rem; font-weight:700; letter-spacing:0.5px; }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -97,6 +108,115 @@ def kanban_column(df_col, status, col_obj, label=None):
                         "R$":    st.column_config.NumberColumn("R$",    format="R$ %.2f"),
                     })
 
+
+
+STATUS_PILL = {
+    "PRE-VENDA":  {"bg": "#78350f22", "border": "#f59e0b", "color": "#f59e0b", "icon": "⏳"},
+    "EM ANALISE": {"bg": "#1e3a5f22", "border": "#3b82f6", "color": "#60a5fa", "icon": "🔍"},
+    "CREDITO":    {"bg": "#2e1065aa", "border": "#8b5cf6", "color": "#a78bfa", "icon": "💳"},
+    "DEVOLVIDOS": {"bg": "#7f1d1d22", "border": "#ef4444", "color": "#f87171", "icon": "↩️"},
+    "ENTRANTE":   {"bg": "#05472a22", "border": "#10b981", "color": "#34d399", "icon": "✅"},
+}
+
+def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
+    """Tabela de pedidos em tramitação com Razão Social, Pedido e Phoenix."""
+    st.markdown('<p class="section-title">📌 Pedidos em Tramitação</p>', unsafe_allow_html=True)
+
+    # Pega colunas necessárias direto do raw (antes do apply_filters)
+    # para ter acesso à coluna phoenix que pode ter nome variado
+    from data_loader import normalize_columns, _dedup_columns, _s, _norm_pedido
+
+    # Busca coluna phoenix no raw (nome pode variar em case)
+    raw_norm = raw.copy()
+    phoenix_col = None
+    for c in raw_norm.columns:
+        if _s(c).lower().strip() == "phoenix":
+            phoenix_col = c
+            break
+
+    # Usa o df já filtrado por apply_filters
+    df_tram = df[df["status_dash"].isin(["PRE-VENDA", "EM ANALISE", "CREDITO", "DEVOLVIDOS"])].copy()
+    df_tram = df_tram[df_tram["mes_ativacao"].isna()].copy()
+
+    if df_tram.empty:
+        st.info("Nenhum pedido em tramitação no momento.")
+        return
+
+    # Tenta trazer phoenix do raw pelo índice original
+    if phoenix_col and phoenix_col in raw.columns:
+        # Junta pelo pedido
+        raw_phoenix = raw[[phoenix_col, "pedido"]].copy() if "pedido" in raw.columns else pd.DataFrame()
+        if not raw_phoenix.empty:
+            raw_phoenix.columns = ["phoenix", "pedido"]
+            raw_phoenix["pedido"] = raw_phoenix["pedido"].apply(_norm_pedido)
+            df_tram["pedido"] = df_tram["pedido"].apply(_norm_pedido) if "pedido" in df_tram.columns else ""
+            df_tram = df_tram.merge(raw_phoenix.drop_duplicates("pedido"), on="pedido", how="left")
+    elif "phoenix" in df_tram.columns:
+        pass  # já veio pelo apply_filters
+    else:
+        df_tram["phoenix"] = ""
+
+    # Filtro por status
+    status_disp = [s for s in ["PRE-VENDA", "EM ANALISE", "CREDITO", "DEVOLVIDOS"]
+                   if s in df_tram["status_dash"].values]
+    col_f1, col_f2 = st.columns([3, 1])
+    with col_f1:
+        busca = st.text_input("🔎 Buscar por cliente ou pedido",
+                              placeholder="Ex: CONSIGBOT ou 123456",
+                              key="busca_tramitacao", label_visibility="collapsed")
+    with col_f2:
+        status_sel = st.multiselect("Status", status_disp, default=status_disp,
+                                    key="status_tram", label_visibility="collapsed",
+                                    placeholder="Filtrar status...")
+
+    df_show = df_tram[df_tram["status_dash"].isin(status_sel)].copy() if status_sel else df_tram.copy()
+
+    if busca and len(busca.strip()) >= 2:
+        termo = busca.strip().lower()
+        mask = pd.Series([False] * len(df_show), index=df_show.index)
+        if "razao_social" in df_show.columns:
+            mask |= df_show["razao_social"].apply(lambda x: termo in _s(x).lower())
+        if "pedido" in df_show.columns:
+            mask |= df_show["pedido"].apply(lambda x: termo in _s(x).lower())
+        df_show = df_show[mask]
+
+    total_show = len(df_show)
+    st.caption(f"{total_show} pedido(s) em tramitação")
+
+    if df_show.empty:
+        st.info("Nenhum pedido para o filtro selecionado.")
+        return
+
+    # Monta tabela HTML
+    linhas = ""
+    for _, row in df_show.sort_values("status_dash").iterrows():
+        status  = _s(row.get("status_dash", ""))
+        pill    = STATUS_PILL.get(status, {"bg":"#1e293b","border":"#64748b","color":"#94a3b8","icon":"•"})
+        cliente = _s(row.get("razao_social", "—"))
+        pedido  = _s(row.get("pedido", "—"))
+        phoenix = _s(row.get("phoenix", "—"))
+        acessos = int(row.get("acessos", 0))
+        linhas += f"""<tr>
+          <td><span class="status-pill" style="background:{pill["bg"]};border:1px solid {pill["border"]};color:{pill["color"]}">{pill["icon"]} {status}</span></td>
+          <td style="font-weight:600">{cliente}</td>
+          <td style="font-family:monospace;color:#60a5fa">{pedido}</td>
+          <td style="font-family:monospace;color:#a78bfa">{phoenix}</td>
+          <td style="text-align:center;color:#94a3b8">{acessos}</td>
+        </tr>"""
+
+    html = f"""<div style="background:#1a1f2e;border-radius:12px;border:1px solid #2d3748;overflow:hidden;margin-top:8px">
+    <table class="pedidos-table">
+      <thead><tr>
+        <th style="width:140px">Status</th>
+        <th>Razão Social</th>
+        <th>Nº Pedido</th>
+        <th>Phoenix</th>
+        <th style="text-align:center">Acessos</th>
+      </tr></thead>
+      <tbody>{linhas}</tbody>
+    </table></div>"""
+
+    st.markdown(html, unsafe_allow_html=True)
 
 def main():
     st.markdown("""
@@ -183,6 +303,8 @@ def main():
         df[(df["status_dash"] == "ENTRANTE") & df["mes_ativacao"].isna()],
         "ENTRANTE", k5, label="ENTRANTE NÃO ATIVO"
     )
+
+    render_pedidos_tramitacao(df, raw)
 
     st.markdown('<p class="section-title">📋 Dados Completos</p>', unsafe_allow_html=True)
     with st.expander("Ver todos os registros filtrados"):
