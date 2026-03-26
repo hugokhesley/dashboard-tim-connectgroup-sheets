@@ -154,7 +154,7 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         raw_phoenix = raw[[pedido_col_raw, phoenix_col]].copy()
         raw_phoenix.columns = ["pedido", "phoenix"]
         raw_phoenix["pedido"] = raw_phoenix["pedido"].apply(_norm_pedido)
-        raw_phoenix["phoenix"] = raw_phoenix["phoenix"].apply(_s)
+        raw_phoenix["phoenix"] = raw_phoenix["phoenix"].apply(lambda x: _s(x).split(".")[0] if _s(x).endswith(".0") else _s(x))
         raw_phoenix = raw_phoenix[raw_phoenix["pedido"] != ""].drop_duplicates("pedido")
         if "pedido" in df_tram.columns:
             df_tram["pedido"] = df_tram["pedido"].apply(_norm_pedido)
