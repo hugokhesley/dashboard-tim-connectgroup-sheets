@@ -216,96 +216,29 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         .sort_values("acessos", ascending=False)
     )
 
-    # Monta tabela HTML com botão de cópia por linha
-    linhas = ""
+    # Monta lista de expanders com st.code — cópia nativa do Streamlit
     for _, row in df_grouped.iterrows():
         status  = _s(row.get("status_dash", ""))
-        pill    = STATUS_PILL.get(status, {"bg":"#1e293b","border":"#64748b","color":"#94a3b8","icon":"•"})
         cliente = _s(row.get("razao_social", "—"))
         pedido  = _s(row.get("pedido", "—"))
         phoenix = _s(row.get("phoenix", "—"))
-        # CNPJ: remove .0 de float e faz zero-padding para 14 dígitos
         cnpj_raw = _s(row.get("cnpj", ""))
-        cnpj_raw = cnpj_raw[:-2] if cnpj_raw.endswith(".0") else cnpj_raw
-        cnpj_raw = cnpj_raw.strip()
-        if cnpj_raw and cnpj_raw.isdigit():
-            cnpj_raw = cnpj_raw.zfill(14)
-        cnpj = cnpj_raw if cnpj_raw else "—"
+        cnpj_raw = cnpj_raw[:-2] if cnpj_raw.endswith(".0") else cnpj_raw.strip()
+        cnpj = cnpj_raw.zfill(14) if cnpj_raw.isdigit() else (cnpj_raw or "—")
         acessos = int(row.get("acessos", 0))
+        pill = STATUS_PILL.get(status, {"icon": "•"})
 
-        # Texto para cópia — sem emojis para evitar problema no JS
-        linha1 = f"STATUS: {status}"
-        linha2 = f"RAZAO SOCIAL: {cliente}"
-        linha3 = f"CNPJ: {cnpj}"
-        linha4 = f"No PEDIDO: {pedido}"
-        linha5 = f"PHOENIX: {phoenix}"
-        linha6 = f"ACESSOS: {acessos}"
-        # Monta como atributo data- para evitar problemas de escaping no JS
-        texto_data = f"{linha1}||{linha2}||{linha3}||{linha4}||{linha5}||{linha6}"
+        texto = (
+            f"STATUS: {status}\n"
+            f"RAZAO SOCIAL: {cliente}\n"
+            f"CNPJ: {cnpj}\n"
+            f"No PEDIDO: {pedido}\n"
+            f"PHOENIX: {phoenix}\n"
+            f"ACESSOS: {acessos}"
+        )
+        with st.expander(f"{pill['icon']} {status}  ·  {cliente}  ·  {acessos} acessos"):
+            st.code(texto, language=None)
 
-        linhas += f"""<tr>
-          <td><span class="status-pill" style="background:{pill["bg"]};border:1px solid {pill["border"]};color:{pill["color"]}">{pill["icon"]} {status}</span></td>
-          <td style="font-weight:600">{cliente}</td>
-          <td style="color:#94a3b8;font-size:0.8rem">{cnpj}</td>
-          <td style="font-family:monospace;color:#60a5fa">{pedido}</td>
-          <td style="font-family:monospace;color:#a78bfa">{phoenix}</td>
-          <td style="text-align:center;color:#94a3b8">{acessos}</td>
-          <td style="text-align:center">
-            <button class="btn" data-info="{texto_data}" onclick="copiar(this)" title="Copiar">copiar</button>
-          </td>
-        </tr>"""
-
-    html = f"""<div style="background:#1a1f2e;border-radius:12px;border:1px solid #2d3748;overflow:hidden;margin-top:8px">
-    <table class="pedidos-table">
-      <thead><tr>
-        <th style="width:140px">Status</th>
-        <th>Razão Social</th>
-        <th>CNPJ</th>
-        <th>Nº Pedido</th>
-        <th>Phoenix</th>
-        <th style="text-align:center">Acessos</th>
-        <th style="text-align:center;width:50px">Copiar</th>
-      </tr></thead>
-      <tbody>{linhas}</tbody>
-    </table></div>"""
-
-    # Renderiza via components.html com HTML encodado em latin-1 para evitar UnicodeEncodeError
-    import streamlit.components.v1 as components
-    css_inject = """<style>
-      body { margin:0; padding:0; background:#0f1117; }
-      table { width:100%; border-collapse:collapse; font-size:13px; font-family:Arial,sans-serif; }
-      th { background:#1e293b; color:#94a3b8; font-weight:600; font-size:11px;
-           text-transform:uppercase; letter-spacing:1px; padding:10px 14px;
-           text-align:left; border-bottom:2px solid #2d3748; }
-      td { padding:9px 14px; border-bottom:1px solid #1e293b; color:#e2e8f0; vertical-align:middle; }
-      .pill { display:inline-block; border-radius:99px; padding:3px 10px; font-size:11px; font-weight:700; }
-      .btn { background:none; border:1px solid #334155; border-radius:6px;
-             color:#64748b; cursor:pointer; padding:4px 10px; font-size:12px; }
-      .btn:hover { border-color:#60a5fa; color:#60a5fa; }
-    </style>"""
-    js = """<script>
-    function copiar(btn) {
-        var info = btn.getAttribute('data-info');
-        var texto = info.split('||').join('\n');
-        var ta = document.createElement('textarea');
-        ta.value = texto;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        try {
-            document.execCommand('copy');
-            btn.innerText = 'OK!';
-            btn.style.color = '#10b981';
-            setTimeout(function(){ btn.innerText = 'copiar'; btn.style.color = ''; }, 1500);
-        } catch(e) {}
-        document.body.removeChild(ta);
-    }
-    </script>"""
-    altura = max(150, 54 + len(df_grouped) * 46)
-    full = (css_inject + html + js).encode("ascii", errors="xmlcharrefreplace").decode("ascii")
-    components.html(full, height=altura, scrolling=True)
 
 def main():
     st.markdown("""
