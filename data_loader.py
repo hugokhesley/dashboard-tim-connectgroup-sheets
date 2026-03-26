@@ -462,3 +462,40 @@ def load_colaboradores() -> pd.DataFrame:
     except Exception as e:
         st.warning(f'Colaboradores não carregado: {e}')
         return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
+
+
+def registrar_acesso(pagina: str) -> None:
+    """
+    Registra acesso na aba 'Logs' da planilha principal.
+    Colunas: timestamp | pagina | session_id
+    Cria a aba automaticamente se não existir.
+    Falhas silenciosas — nunca interrompe o fluxo da página.
+    """
+    import datetime
+    import uuid
+    try:
+        client = get_gspread_client()
+        sheet_url = st.secrets['sheets']['url']
+        spreadsheet = client.open_by_url(sheet_url)
+
+        # Tenta abrir aba Logs; cria se não existir
+        try:
+            ws = spreadsheet.worksheet('Logs')
+        except Exception:
+            ws = spreadsheet.add_worksheet(title='Logs', rows=5000, cols=4)
+            ws.update('A1:C1', [['timestamp', 'pagina', 'session_id']])
+
+        # Timestamp no fuso de Brasília (UTC-3)
+        agora = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
+        ts = agora.strftime('%d/%m/%Y %H:%M:%S')
+
+        # Session ID anônimo — identifica sessão sem expor dados pessoais
+        if 'session_id' not in st.session_state:
+            st.session_state['session_id'] = str(uuid.uuid4())[:8]
+        session_id = st.session_state['session_id']
+
+        # Append na próxima linha disponível
+        ws.append_row([ts, pagina, session_id], value_input_option='USER_ENTERED')
+
+    except Exception:
+        pass  # Falha silenciosa — log não deve quebrar a página
