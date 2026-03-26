@@ -62,18 +62,27 @@ def _sup(val):
 
 def _to_num(val):
     try:
-        s = _s(val).replace(' ', '')
+        s = _s(val).strip()
         if not s:
             return 0.0
-        s = s.replace(',', '.')
+        # Remove prefixo R$, espacos e non-breaking spaces
+        s = s.replace("R$", "").replace("r$", "").strip()
+        s = s.replace(" ", "").replace(" ", "")
+        # Trata separador de milhar BR: 1.234,56 -> 1234.56
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", ".")
         return float(s)
     except Exception:
         return 0.0
 
 def _soma_valor(val):
     """
-    Converte valor R$ que pode conter múltiplos valores separados por ' / '
-    ex: '139,97 / 7,70' → 147.67  |  '139,97' → 139.97  |  '' → 0.0
+    Converte valor R$ com multiplos valores separados por ' / '
+    ex: '139,97 / 7,70'  -> 147.67
+    ex: 'R$ 219,95'      -> 219.95
+    ex: '1.234,56'       -> 1234.56
     """
     s = _s(val).strip()
     if not s:
