@@ -200,18 +200,23 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         return
 
     # Agrupa por pedido — soma acessos, mantém status/cliente/phoenix do primeiro registro
+    agg_dict = {
+        "status_dash":  ("status_dash",  "first"),
+        "razao_social": ("razao_social", "first"),
+        "acessos":      ("acessos",      "sum"),
+    }
+    if "phoenix" in df_show.columns:
+        agg_dict["phoenix"] = ("phoenix", "first")
+    if "cnpj" in df_show.columns:
+        agg_dict["cnpj"] = ("cnpj", "first")
+
     df_grouped = (
         df_show.groupby("pedido", as_index=False)
-        .agg(
-            status_dash  = ("status_dash",  "first"),
-            razao_social = ("razao_social", "first"),
-            phoenix      = ("phoenix",      "first") if "phoenix" in df_show.columns else ("pedido", "first"),
-            acessos      = ("acessos",      "sum"),
-        )
+        .agg(**agg_dict)
         .sort_values("acessos", ascending=False)
     )
 
-    # Monta tabela HTML
+    # Monta tabela HTML com botão de cópia por linha
     linhas = ""
     for _, row in df_grouped.iterrows():
         status  = _s(row.get("status_dash", ""))
@@ -219,13 +224,31 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         cliente = _s(row.get("razao_social", "—"))
         pedido  = _s(row.get("pedido", "—"))
         phoenix = _s(row.get("phoenix", "—"))
+        cnpj    = _s(row.get("cnpj", "—"))
         acessos = int(row.get("acessos", 0))
+        # Texto que vai para a área de transferência
+        texto_copia = (
+            f"📋 STATUS: {status}\n"
+            f"🏢 RAZÃO SOCIAL: {cliente}\n"
+            f"📄 CNPJ: {cnpj}\n"
+            f"🔢 Nº PEDIDO: {pedido}\n"
+            f"🔷 PHOENIX: {phoenix}\n"
+            f"📶 ACESSOS: {acessos}"
+        )
+        # Escapa aspas para uso no JS
+        texto_js = texto_copia.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
         linhas += f"""<tr>
           <td><span class="status-pill" style="background:{pill["bg"]};border:1px solid {pill["border"]};color:{pill["color"]}">{pill["icon"]} {status}</span></td>
           <td style="font-weight:600">{cliente}</td>
+          <td style="color:#94a3b8;font-size:0.8rem">{cnpj}</td>
           <td style="font-family:monospace;color:#60a5fa">{pedido}</td>
           <td style="font-family:monospace;color:#a78bfa">{phoenix}</td>
           <td style="text-align:center;color:#94a3b8">{acessos}</td>
+          <td style="text-align:center">
+            <button onclick="navigator.clipboard.writeText(`{texto_js}`).then(()=>{{this.textContent='✅';setTimeout(()=>this.textContent='📋',1500)}})"
+              style="background:none;border:1px solid #334155;border-radius:6px;color:#64748b;cursor:pointer;padding:4px 8px;font-size:0.8rem;transition:all 0.2s"
+              title="Copiar informações">📋</button>
+          </td>
         </tr>"""
 
     html = f"""<div style="background:#1a1f2e;border-radius:12px;border:1px solid #2d3748;overflow:hidden;margin-top:8px">
@@ -233,9 +256,11 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
       <thead><tr>
         <th style="width:140px">Status</th>
         <th>Razão Social</th>
+        <th>CNPJ</th>
         <th>Nº Pedido</th>
         <th>Phoenix</th>
         <th style="text-align:center">Acessos</th>
+        <th style="text-align:center;width:50px">Copiar</th>
       </tr></thead>
       <tbody>{linhas}</tbody>
     </table></div>"""
