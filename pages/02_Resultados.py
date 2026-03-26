@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns, get_meta_mes, registrar_acesso
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Resultados",
@@ -11,8 +11,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("resultados", "Resultados — Connect Group")
-registrar_acesso("resultados")
+username = require_login("resultados")
+registrar_acesso("resultados", username=username)
 
 st.markdown("""
 <style>

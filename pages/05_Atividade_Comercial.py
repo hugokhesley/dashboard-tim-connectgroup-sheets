@@ -6,7 +6,7 @@ from data_loader import (
     load_bko, _s, _to_num, _norm_pedido,
     registrar_acesso
 )
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Atividade Comercial",
@@ -15,8 +15,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("atividade", "Atividade Comercial — Connect Group")
-registrar_acesso("atividade")
+username = require_login("atividade")
+registrar_acesso("atividade", username=username)
 
 # ── Temas ────────────────────────────────────────────────────────────────────
 TEMAS = {

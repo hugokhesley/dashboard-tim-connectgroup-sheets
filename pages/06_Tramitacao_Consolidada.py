@@ -5,7 +5,7 @@ from data_loader import (
     apply_filters, get_parceiros, _s, _to_num, _norm_pedido,
     registrar_acesso
 )
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Tramitação Consolidada",
@@ -14,8 +14,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("consolidada", "Tramitação Consolidada — Connect Group")
-registrar_acesso("consolidada")
+username = require_login("consolidada")
+registrar_acesso("consolidada", username=username)
 
 MES_ALVO = "03/2026"
 

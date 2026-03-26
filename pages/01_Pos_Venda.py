@@ -5,7 +5,7 @@ from data_loader import (
     STATUS_COLORS,
     registrar_acesso
 )
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Pós Venda",
@@ -14,8 +14,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("pos_venda", "Pós Venda — Connect Group")
-registrar_acesso("pos_venda")
+username = require_login("pos_venda")
+registrar_acesso("pos_venda", username=username)
 
 MES_ALVO   = "03/2026"
 META_RENEG = 751

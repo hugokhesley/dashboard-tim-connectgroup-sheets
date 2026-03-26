@@ -5,7 +5,7 @@ from data_loader import (
     STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko,
     registrar_acesso
 )
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Performance",
@@ -14,8 +14,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("performance", "Performance — Connect Group")
-registrar_acesso("performance")
+username = require_login("performance")
+registrar_acesso("performance", username=username)
 
 MES_ALVO          = "03/2026"
 META_VENDEDOR_PAD = 850  # fallback se não encontrar na planilha

@@ -5,7 +5,7 @@ from data_loader import (load_metas,
     STATUS_COLORS,
     registrar_acesso
 )
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Tramitação Atual",
@@ -14,8 +14,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("tramitacao", "Tramitação Atual — Connect Group")
-registrar_acesso("tramitacao")
+username = require_login("tramitacao")
+registrar_acesso("tramitacao", username=username)
 
 MES_ALVO = "03/2026"
 
