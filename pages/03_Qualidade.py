@@ -5,7 +5,7 @@ import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import date as _date
-from data_loader import _s, _to_num, _soma_valor, _normalize, _dedup_columns, get_gspread_client
+from data_loader import _s, _to_num, _soma_valor, _normalize, _dedup_columns, get_gspread_client, registrar_acesso
 from auth import require_password
 
 st.set_page_config(
@@ -16,6 +16,7 @@ st.set_page_config(
 )
 
 require_password("qualidade", "Qualidade — Connect Group")
+registrar_acesso("qualidade")
 
 st.markdown("""
 <style>

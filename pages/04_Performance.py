@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from data_loader import (
     load_data, load_bko, load_colaboradores, apply_filters, get_parceiros,
-    STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko
+    STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko,
+    registrar_acesso
 )
 from auth import require_password
 
@@ -14,6 +15,7 @@ st.set_page_config(
 )
 
 require_password("performance", "Performance — Connect Group")
+registrar_acesso("performance")
 
 MES_ALVO          = "03/2026"
 META_VENDEDOR_PAD = 850  # fallback se não encontrar na planilha

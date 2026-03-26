@@ -3,7 +3,8 @@ import pandas as pd
 from datetime import datetime, date
 from data_loader import (
     load_data, apply_filters, get_parceiros,
-    load_bko, _s, _to_num, _norm_pedido
+    load_bko, _s, _to_num, _norm_pedido,
+    registrar_acesso
 )
 from auth import require_password
 
@@ -15,6 +16,7 @@ st.set_page_config(
 )
 
 require_password("atividade", "Atividade Comercial — Connect Group")
+registrar_acesso("atividade")
 
 # ── Temas ────────────────────────────────────────────────────────────────────
 TEMAS = {

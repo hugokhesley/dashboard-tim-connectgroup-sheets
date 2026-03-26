@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from data_loader import (
     load_data, apply_filters, get_parceiros,
-    STATUS_COLORS
+    STATUS_COLORS,
+    registrar_acesso
 )
 from auth import require_password
 
@@ -14,6 +15,7 @@ st.set_page_config(
 )
 
 require_password("pos_venda", "Pós Venda — Connect Group")
+registrar_acesso("pos_venda")
 
 MES_ALVO   = "03/2026"
 META_RENEG = 751

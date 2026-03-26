@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from data_loader import (load_metas,
     load_data, apply_filters, get_parceiros,
-    STATUS_COLORS
+    STATUS_COLORS,
+    registrar_acesso
 )
 from auth import require_password
 
@@ -14,6 +15,7 @@ st.set_page_config(
 )
 
 require_password("tramitacao", "Tramitação Atual — Connect Group")
+registrar_acesso("tramitacao")
 
 MES_ALVO = "03/2026"
 

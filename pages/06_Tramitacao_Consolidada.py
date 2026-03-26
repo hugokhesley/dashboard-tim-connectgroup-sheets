@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from data_loader import (
     load_data, load_bko, load_metas, load_colaboradores,
-    apply_filters, get_parceiros, _s, _to_num, _norm_pedido
+    apply_filters, get_parceiros, _s, _to_num, _norm_pedido,
+    registrar_acesso
 )
 from auth import require_password
 
@@ -14,6 +15,7 @@ st.set_page_config(
 )
 
 require_password("consolidada", "Tramitação Consolidada — Connect Group")
+registrar_acesso("consolidada")
 
 MES_ALVO = "03/2026"
 
