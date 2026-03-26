@@ -287,11 +287,20 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
     function copiar(btn) {
         var info = btn.getAttribute('data-info');
         var texto = info.split('||').join('\n');
-        navigator.clipboard.writeText(texto).then(function() {
+        var ta = document.createElement('textarea');
+        ta.value = texto;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+            document.execCommand('copy');
             btn.innerText = 'OK!';
             btn.style.color = '#10b981';
             setTimeout(function(){ btn.innerText = 'copiar'; btn.style.color = ''; }, 1500);
-        });
+        } catch(e) {}
+        document.body.removeChild(ta);
     }
     </script>"""
     altura = max(150, 54 + len(df_grouped) * 46)
