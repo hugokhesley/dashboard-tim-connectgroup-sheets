@@ -215,6 +215,8 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         "razao_social": ("razao_social", "first"),
         "acessos":      ("acessos",      "sum"),
     }
+    if "fila_atual" in df_show.columns:
+        agg_dict["fila_atual"] = ("fila_atual", "first")
     if "phoenix" in df_show.columns:
         agg_dict["phoenix"] = ("phoenix", "first")
     if "cnpj" in df_show.columns:
@@ -238,8 +240,9 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
         acessos = int(row.get("acessos", 0))
         pill = STATUS_PILL.get(status, {"icon": "•"})
 
+        fila = _s(row.get("fila_atual", status)).upper()
         texto = (
-            f"STATUS: {status}\n"
+            f"STATUS: {fila}\n"
             f"RAZAO SOCIAL: {cliente}\n"
             f"CNPJ: {cnpj}\n"
             f"No PEDIDO: {pedido}\n"
