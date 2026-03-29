@@ -90,8 +90,8 @@ def _aplicar_tema(t: dict):
   .kpi-label {{ font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: {t['label_color']}; font-weight: 600; margin-bottom: 8px; }}
   .kpi-value {{ font-size: 2.1rem; font-weight: 800; color: {t['value_color']}; line-height: 1; }}
   .kpi-sub   {{ font-size: 0.78rem; color: {t['sub_color']}; margin-top: 6px; }}
-  .header-logo { height:44px;width:auto;object-fit:contain;mix-blend-mode:multiply;border-radius:6px; }
-  .header-right { display:flex;align-items:center;gap:14px; }
+  .header-logo {{ height:44px;width:auto;object-fit:contain;mix-blend-mode:multiply;border-radius:6px; }}
+  .header-right {{ display:flex;align-items:center;gap:14px; }}
   .section-title {{ font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:{t['section_clr']}; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid {t['section_clr']}; padding-left: 10px; }}
   .day-bar-wrap {{ margin: 3px 0 8px 0; }}
   .day-label {{ font-size: 0.78rem; color: {t['day_label']}; margin-bottom: 3px; display:flex; justify-content:space-between; }}
