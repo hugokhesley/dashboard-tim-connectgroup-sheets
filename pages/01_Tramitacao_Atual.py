@@ -1,4 +1,11 @@
 import streamlit as st
+from datetime import datetime
+
+MESES_PT = {
+    '01':'Janeiro','02':'Fevereiro','03':'Março','04':'Abril',
+    '05':'Maio','06':'Junho','07':'Julho','08':'Agosto',
+    '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'
+}
 import pandas as pd
 from data_loader import (load_metas,
     load_data, apply_filters, get_parceiros,
@@ -17,7 +24,7 @@ st.set_page_config(
 username = require_login("tramitacao")
 registrar_acesso("tramitacao", username=username)
 
-MES_ALVO = "03/2026"
+MES_ALVO = datetime.now().strftime("%m/%Y")
 
 st.markdown("""
 <style>
@@ -59,6 +66,8 @@ st.markdown("""
   section[data-testid="stSidebar"] { background: #111827 !important; }
   details { background:#1a1f2e !important; border:1px solid #2d3748 !important; border-radius:0 0 10px 10px !important; }
   details summary { color:#e2e8f0 !important; font-weight:600 !important; }
+  .header-logo { height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:0.92; }
+  .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#64748b; font-weight:600; margin:24px 0 12px 0; }
 
   .pedidos-table { width:100%; border-collapse:collapse; font-size:0.83rem; }
@@ -254,12 +263,18 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
 
 
 def main():
+    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
     st.markdown("""
     <div class="header-vendas">
       <div>
         <p class="header-title">📋 TRAMITAÇÃO ATUAL — CONNECT GROUP</p>
-        <p class="header-sub">TIM Corporate · Novos e Aditivos · Março/2026</p>
+        <p class="header-sub">TIM Corporate · Novos e Aditivos · {mes_str}</p>
       </div>
+      <div class="header-right">
+        <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
+        <span class="header-badge">🔵 TRAMITAÇÃO</span>
+      </div>
+    </div>
       <div class="header-badge">🔵 TRAMITAÇÃO</div>
     </div>""", unsafe_allow_html=True)
 

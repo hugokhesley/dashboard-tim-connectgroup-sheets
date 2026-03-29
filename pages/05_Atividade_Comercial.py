@@ -1,6 +1,12 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime
+
+MESES_PT = {
+    '01':'Janeiro','02':'Fevereiro','03':'Março','04':'Abril',
+    '05':'Maio','06':'Junho','07':'Julho','08':'Agosto',
+    '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'
+}, date
 from data_loader import (
     load_data, apply_filters, get_parceiros,
     load_bko, _s, _to_num, _norm_pedido,
@@ -84,6 +90,8 @@ def _aplicar_tema(t: dict):
   .kpi-label {{ font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: {t['label_color']}; font-weight: 600; margin-bottom: 8px; }}
   .kpi-value {{ font-size: 2.1rem; font-weight: 800; color: {t['value_color']}; line-height: 1; }}
   .kpi-sub   {{ font-size: 0.78rem; color: {t['sub_color']}; margin-top: 6px; }}
+  .header-logo { height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:0.92; }
+  .header-right { display:flex;align-items:center;gap:14px; }
   .section-title {{ font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:{t['section_clr']}; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid {t['section_clr']}; padding-left: 10px; }}
   .day-bar-wrap {{ margin: 3px 0 8px 0; }}
   .day-label {{ font-size: 0.78rem; color: {t['day_label']}; margin-bottom: 3px; display:flex; justify-content:space-between; }}
@@ -124,9 +132,14 @@ def main():
     st.markdown("""
     <div class="header-atv">
       <div>
-        <p class="header-title">📅 ATIVIDADE COMERCIAL DIÁRIA</p>
-        <p class="header-sub">TIM Corporate · Input e Ativação · Novos e Aditivos</p>
+        <p class="header-title">📅 ATIVIDADE COMERCIAL — CONNECT GROUP</p>
+        <p class="header-sub">TIM Corporate · Input e Ativação Diária</p>
       </div>
+      <div class="header-right">
+        <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
+        <span class="header-badge">📅 ATIVIDADE</span>
+      </div>
+    </div>
       <div class="header-badge">🟣 ATIVIDADE</div>
     </div>""", unsafe_allow_html=True)
 

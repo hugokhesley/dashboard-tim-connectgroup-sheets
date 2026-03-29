@@ -48,6 +48,8 @@ st.markdown("""
   .kpi-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: #a78bfa; font-weight: 600; margin-bottom: 8px; }
   .kpi-value { font-size: 2.1rem; font-weight: 800; color: #f1f5f9; line-height: 1; }
   .kpi-sub   { font-size: 0.78rem; color: #64748b; margin-top: 6px; }
+  .header-logo { height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:0.92; }
+  .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#7c3aed; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid #7c3aed; padding-left: 10px; }
   .safra-badge {
     display:inline-block; background:#2d1f4e; border:1px solid #7c3aed;
@@ -592,8 +594,13 @@ def main():
     <div class="header-qual">
       <div>
         <p class="header-title">🔍 QUALIDADE — CONNECT GROUP</p>
-        <p class="header-sub">TIM Corporate · Acompanhamento de Adimplência · 6 Meses por Safra</p>
+        <p class="header-sub">TIM Corporate · Adimplência por Safra</p>
       </div>
+      <div class="header-right">
+        <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
+        <span class="header-badge">🟣 QUALIDADE</span>
+      </div>
+    </div>
       <div class="header-badge">🟣 QUALIDADE</div>
     </div>""", unsafe_allow_html=True)
 

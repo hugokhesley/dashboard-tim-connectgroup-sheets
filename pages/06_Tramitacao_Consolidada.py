@@ -1,4 +1,11 @@
 import streamlit as st
+from datetime import datetime
+
+MESES_PT = {
+    '01':'Janeiro','02':'Fevereiro','03':'Março','04':'Abril',
+    '05':'Maio','06':'Junho','07':'Julho','08':'Agosto',
+    '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'
+}
 import pandas as pd
 from data_loader import (
     load_data, load_bko, load_metas, load_colaboradores,
@@ -17,7 +24,7 @@ st.set_page_config(
 username = require_login("consolidada")
 registrar_acesso("consolidada", username=username)
 
-MES_ALVO = "03/2026"
+MES_ALVO = datetime.now().strftime("%m/%Y")
 
 st.markdown("""
 <style>
@@ -34,6 +41,8 @@ st.markdown("""
   .header-title { font-size: 1.7rem; font-weight: 800; color: #fff; letter-spacing: -0.5px; margin: 0; }
   .header-sub   { font-size: 0.82rem; color: rgba(255,255,255,0.65); margin: 4px 0 0 0; }
   .header-badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 20px; padding: 6px 16px; font-size: 0.8rem; color: #fff; font-weight: 600; }
+  .header-logo { height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:0.92; }
+  .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.72rem; text-transform:uppercase; letter-spacing:1.5px; color:#10b981; font-weight:700; margin:20px 0 10px 0; border-left: 3px solid #10b981; padding-left: 10px; }
   section[data-testid="stSidebar"] { background: #0d1a0f !important; }
   .col-header { font-size:0.65rem; text-transform:uppercase; letter-spacing:1px; color:#64748b; font-weight:600; text-align:right; }
@@ -73,12 +82,18 @@ def _bar(val, maximo, cor, h=12):
 
 
 def main():
+    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
     st.markdown("""
     <div class="header-cons">
       <div>
-        <p class="header-title">📊 TRAMITAÇÃO CONSOLIDADA</p>
-        <p class="header-sub">TIM Corporate · Visão por Etapa · Meta vs Realizado</p>
+        <p class="header-title">📊 TRAMITAÇÃO CONSOLIDADA — CONNECT GROUP</p>
+        <p class="header-sub">TIM Corporate · Meta vs Realizado por Etapa · {mes_str}</p>
       </div>
+      <div class="header-right">
+        <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
+        <span class="header-badge">📊 CONSOLIDADA</span>
+      </div>
+    </div>
       <div class="header-badge">🟢 CONSOLIDADO</div>
     </div>""", unsafe_allow_html=True)
 
