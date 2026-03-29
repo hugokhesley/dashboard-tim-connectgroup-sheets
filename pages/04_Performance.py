@@ -1,10 +1,18 @@
 import streamlit as st
+from datetime import datetime
+
+MESES_PT = {
+    "01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril",
+    "05":"Maio","06":"Junho","07":"Julho","08":"Agosto",
+    "09":"Setembro","10":"Outubro","11":"Novembro","12":"Dezembro"
+}
 import pandas as pd
 from data_loader import (
     load_data, load_bko, load_colaboradores, apply_filters, get_parceiros,
-    STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko
+    STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko,
+    registrar_acesso
 )
-from auth import require_password
+from auth import require_login
 
 st.set_page_config(
     page_title="Connect Group | Performance",
@@ -13,9 +21,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-require_password("performance", "Performance — Connect Group")
+username = require_login("performance")
+registrar_acesso("performance", username=username)
 
-MES_ALVO          = "03/2026"
+MES_ALVO = datetime.now().strftime("%m/%Y")
 META_VENDEDOR_PAD = 850  # fallback se não encontrar na planilha
 
 def _meta_vend(nome: str, meta_dict: dict) -> float:
@@ -74,6 +83,8 @@ st.markdown("""
   .kanban-header { border-radius: 10px 10px 0 0; padding: 10px 14px; display:flex; align-items:center; justify-content:space-between; }
   .kanban-title  { font-weight: 700; font-size: 0.82rem; color: #fff; }
   .kanban-count  { font-size: 0.72rem; font-weight: 600; color: rgba(255,255,255,0.8); }
+  .header-logo { height:44px;width:auto;object-fit:contain;mix-blend-mode:multiply;border-radius:6px; }
+  .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#22c55e; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid #22c55e; padding-left: 10px; }
   section[data-testid="stSidebar"] { background: #0d1a0f !important; }
   details { background:#1a1f2e !important; border:1px solid #2d3748 !important; border-radius:0 0 10px 10px !important; }
@@ -333,10 +344,17 @@ def render_equipe(df_eq, lider, meta_dict):
 
 
 def main():
-    st.markdown("""<div class="header-perf">
-      <div><p class="header-title">🏆 PERFORMANCE — CONNECT GROUP</p>
-      <p class="header-sub">TIM Corporate · Visão por Equipe · Março/2026</p></div>
-      <div class="header-badge">🟢 PERFORMANCE</div></div>""", unsafe_allow_html=True)
+    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
+    st.markdown(f"""<div class="header-perf">
+      <div>
+        <p class="header-title">🏆 PERFORMANCE — CONNECT GROUP</p>
+        <p class="header-sub">TIM Corporate · Ranking de Vendedores · {mes_str}</p>
+      </div>
+      <div class="header-right">
+        <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
+        <span class="header-badge">🏆 PERFORMANCE</span>
+      </div>
+    </div></div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando dados..."):
         raw   = load_data()

@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 
 MESES_PT = {
     '01':'Janeiro','02':'Fevereiro','03':'Março','04':'Abril',
