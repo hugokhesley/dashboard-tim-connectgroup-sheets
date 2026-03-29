@@ -260,7 +260,7 @@ def require_login(pagina: str) -> str:
         <div style="display:flex;flex-direction:column;align-items:center;
                     padding:40px 20px 8px 20px">
           <img src="{LOGO_URL}"
-               style="width:200px;height:auto;margin-bottom:32px"
+               style="width:200px;height:auto;margin-bottom:32px;mix-blend-mode:screen;border-radius:8px"
                onerror="this.style.display='none'">
           <div style="height:1px;width:320px;background:linear-gradient(90deg,transparent,#1e3a5f,transparent);margin-bottom:24px"></div>
           <p style="font-size:1.3rem;font-weight:700;color:#f1f5f9;margin:0 0 6px 0">
