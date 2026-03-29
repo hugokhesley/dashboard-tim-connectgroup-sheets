@@ -131,7 +131,6 @@ def main():
         <span class="header-badge">🟢 RENEGOCIAÇÃO</span>
       </div>
     </div>
-      <div class="header-badge">🟢 RENEGOCIAÇÃO</div>
     </div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando dados do Google Sheets..."):

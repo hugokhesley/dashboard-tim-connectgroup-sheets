@@ -275,7 +275,6 @@ def main():
         <span class="header-badge">🔵 TRAMITAÇÃO</span>
       </div>
     </div>
-      <div class="header-badge">🔵 TRAMITAÇÃO</div>
     </div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando dados do Google Sheets..."):

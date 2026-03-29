@@ -344,7 +344,7 @@ def render_equipe(df_eq, lider, meta_dict):
 
 def main():
     mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
-    st.markdown("""<div class="header-perf">
+    st.markdown(f"""<div class="header-perf">
       <div>
         <p class="header-title">🏆 PERFORMANCE — CONNECT GROUP</p>
         <p class="header-sub">TIM Corporate · Ranking de Vendedores · {mes_str}</p>
@@ -353,8 +353,7 @@ def main():
         <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
         <span class="header-badge">🏆 PERFORMANCE</span>
       </div>
-    </div>
-      <div class="header-badge">🟢 PERFORMANCE</div></div>""", unsafe_allow_html=True)
+    </div></div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando dados..."):
         raw   = load_data()

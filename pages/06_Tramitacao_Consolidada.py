@@ -83,7 +83,7 @@ def _bar(val, maximo, cor, h=12):
 
 def main():
     mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
-    st.markdown("""
+    st.markdown(f"""
     <div class="header-cons">
       <div>
         <p class="header-title">📊 TRAMITAÇÃO CONSOLIDADA — CONNECT GROUP</p>
@@ -94,7 +94,6 @@ def main():
         <span class="header-badge">📊 CONSOLIDADA</span>
       </div>
     </div>
-      <div class="header-badge">🟢 CONSOLIDADO</div>
     </div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando..."):
