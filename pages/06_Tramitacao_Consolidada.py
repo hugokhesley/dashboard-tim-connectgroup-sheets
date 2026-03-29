@@ -41,7 +41,7 @@ st.markdown("""
   .header-title { font-size: 1.7rem; font-weight: 800; color: #fff; letter-spacing: -0.5px; margin: 0; }
   .header-sub   { font-size: 0.82rem; color: rgba(255,255,255,0.65); margin: 4px 0 0 0; }
   .header-badge { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 20px; padding: 6px 16px; font-size: 0.8rem; color: #fff; font-weight: 600; }
-  .header-logo { height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:0.92; }
+  .header-logo { height:44px;width:auto;object-fit:contain;mix-blend-mode:multiply;border-radius:6px; }
   .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.72rem; text-transform:uppercase; letter-spacing:1.5px; color:#10b981; font-weight:700; margin:20px 0 10px 0; border-left: 3px solid #10b981; padding-left: 10px; }
   section[data-testid="stSidebar"] { background: #0d1a0f !important; }

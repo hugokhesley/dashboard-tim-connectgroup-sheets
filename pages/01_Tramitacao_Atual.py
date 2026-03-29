@@ -66,7 +66,7 @@ st.markdown("""
   section[data-testid="stSidebar"] { background: #111827 !important; }
   details { background:#1a1f2e !important; border:1px solid #2d3748 !important; border-radius:0 0 10px 10px !important; }
   details summary { color:#e2e8f0 !important; font-weight:600 !important; }
-  .header-logo { height:44px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:0.92; }
+  .header-logo { height:44px;width:auto;object-fit:contain;mix-blend-mode:multiply;border-radius:6px; }
   .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#64748b; font-weight:600; margin:24px 0 12px 0; }
 
