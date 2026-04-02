@@ -153,7 +153,7 @@ def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
 
     max_rec = rank_v["Receita"].max() if not rank_v.empty else 1
     html_v = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
-    for i, r in rank_v.iterrows():
+    for i, (_, r) in enumerate(rank_v.iterrows()):
         meta = _meta_vend(r["vendedor_real"], meta_dict)
         pct  = min(int(r["Receita"] / meta * 100), 100) if meta > 0 else 0
         cor  = _cor(pct)
