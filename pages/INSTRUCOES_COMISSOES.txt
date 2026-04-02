@@ -1,0 +1,43 @@
+# ─── ADICIONAR ESTA LINHA no PAGE_ACCESS do seu auth.py ───────────────────
+#
+# Abre o auth.py e localize o dict PAGE_ACCESS.
+# Adicione a linha abaixo junto às demais:
+#
+#     "comissoes": ["hugo", "angelo"],
+#
+# Resultado final do PAGE_ACCESS:
+#
+# PAGE_ACCESS = {
+#     "tramitacao":  ["hugo", "angelo", "roberta", "erivan", "alice", "andrey", "bertulio", "nivandro", "welligton"],
+#     "pos_venda":   ["hugo", "angelo"],
+#     "resultados":  ["hugo", "angelo"],
+#     "qualidade":   ["hugo", "angelo", "roberta", "erivan", "alice", "andrey", "bertulio", "nivandro", "welligton"],
+#     "performance": ["hugo", "angelo"],
+#     "atividade":   ["hugo", "angelo", "roberta", "erivan", "alice", "andrey", "bertulio", "nivandro", "welligton"],
+#     "consolidada": ["hugo", "angelo"],
+#     "comissoes":   ["hugo", "angelo"],   # ← ADICIONAR ESTA LINHA
+# }
+#
+# ─── CRIAR DUAS ABAS NA PLANILHA DadosRadar ────────────────────────────────
+#
+# O sistema cria as abas automaticamente se não existirem,
+# mas se quiser criar manualmente:
+#
+# Aba "Parceiros" — colunas (linha 1):
+#   id | nome | cnpj_cpf | email | telefone | pix_chave | pix_tipo | ativo
+#
+# Aba "Comissoes" — colunas (linha 1):
+#   timestamp | emitido_por | parceiro | cnpj_cpf | competencia | vencimento |
+#   fator | aliquota_simples | base_vendas | comissao_bruta | desconto_imposto |
+#   comissao_liquida | pix_tipo | pix_chave | canal_envio
+#
+# ─── NENHUMA ALTERAÇÃO NECESSÁRIA em data_loader.py ───────────────────────
+#
+# A página 07_Comissoes.py importa as funções existentes:
+#   get_gspread_client(), registrar_acesso(), _s(), _to_num()
+#
+# ─── REQUIREMENTS.TXT — sem alteração necessária ──────────────────────────
+#
+# Todas as dependências já estão no requirements.txt atual.
+# (gspread, google-auth, pandas, streamlit, streamlit-authenticator)
+#
