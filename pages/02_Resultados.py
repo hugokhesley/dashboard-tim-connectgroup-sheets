@@ -151,46 +151,39 @@ def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
               .agg(Acessos=("acessos","sum"), Receita=("preco_oferta","sum"))
               .sort_values("Receita", ascending=False))
 
-    max_rec = rank_v["Receita"].max() if not rank_v.empty else 1
-    html_v = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    # Renderiza ranking em grid 2 colunas com expander nativo para clientes
+    cols_rank = st.columns(2)
     for i, (_, r) in enumerate(rank_v.iterrows()):
-        meta = _meta_vend(r["vendedor_real"], meta_dict)
-        pct  = min(int(r["Receita"] / meta * 100), 100) if meta > 0 else 0
-        cor  = _cor(pct)
+        meta  = _meta_vend(r["vendedor_real"], meta_dict)
+        pct   = min(int(r["Receita"] / meta * 100), 100) if meta > 0 else 0
+        cor   = _cor(pct)
         medal = ["🥇","🥈","🥉"][i] if i < 3 else f"{i+1}º"
-        # Clientes ativados por esse vendedor
-        clientes_v = df_atv[df_atv["vendedor_real"] == r["vendedor_real"]]
-        clientes_html = ""
-        if "razao_social" in clientes_v.columns:
-            top_cli = (clientes_v.groupby("razao_social")["acessos"]
-                       .sum().sort_values(ascending=False).head(10))
-            clientes_html = "".join(
-                f'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #2d3748">' +
-                f'<span style="color:#e2e8f0;font-size:0.78rem">{cli}</span>' +
-                f'<span style="color:#60a5fa;font-weight:600;font-size:0.78rem">{int(ac)} lin.</span></div>'
-                for cli, ac in top_cli.items()
-            )
-        tooltip_id = f"tip_{i}"
-        html_v += f'''<div class="rank-bar-wrap" style="position:relative"
-          onmouseenter="document.getElementById(\'{tooltip_id}\').style.display=\'block\'"
-          onmouseleave="document.getElementById(\'{tooltip_id}\').style.display=\'none\'">
-          <div id="{tooltip_id}" style="display:none;position:absolute;top:0;right:110%;width:280px;
-            background:#1a2234;border:1px solid #3b82f6;border-radius:10px;padding:12px;
-            z-index:999;box-shadow:0 8px 24px rgba(0,0,0,0.5)">
-            <div style="font-size:0.75rem;font-weight:700;color:#60a5fa;margin-bottom:6px;text-transform:uppercase">
-              Clientes Ativados
-            </div>
-            {clientes_html}
-          </div>
-          <div class="rank-name">
-            <span>{medal} {r["vendedor_real"]}</span>
-            <span style="color:{cor};font-weight:700">{pct}%</span>
-          </div>
-          {_bar(r["Receita"], meta, cor)}
-          <div class="rank-val">R$ {r["Receita"]:,.2f} · {int(r["Acessos"])} acessos · meta R$ {meta:,.2f}</div>
-        </div>'''
-    html_v += '</div>'
-    st.markdown(html_v, unsafe_allow_html=True)
+
+        with cols_rank[i % 2]:
+            # Card do vendedor
+            st.markdown(f'''<div class="rank-bar-wrap">
+              <div class="rank-name">
+                <span>{medal} {r["vendedor_real"]}</span>
+                <span style="color:{cor};font-weight:700">{pct}%</span>
+              </div>
+              {_bar(r["Receita"], meta, cor)}
+              <div class="rank-val">R$ {r["Receita"]:,.2f} · {int(r["Acessos"])} acessos · meta R$ {meta:,.2f}</div>
+            </div>''', unsafe_allow_html=True)
+
+            # Expander com clientes ativados
+            clientes_v = df_atv[df_atv["vendedor_real"] == r["vendedor_real"]]
+            if "razao_social" in clientes_v.columns and not clientes_v.empty:
+                with st.expander("👁 Ver clientes ativados"):
+                    top_cli = (clientes_v.groupby("razao_social")["acessos"]
+                               .sum().sort_values(ascending=False)
+                               .reset_index())
+                    top_cli.columns = ["Cliente", "Linhas"]
+                    top_cli["Linhas"] = top_cli["Linhas"].astype(int)
+                    st.dataframe(top_cli, use_container_width=True, hide_index=True,
+                        column_config={
+                            "Cliente": st.column_config.TextColumn("Cliente"),
+                            "Linhas":  st.column_config.NumberColumn("Linhas", format="%d"),
+                        })
 
     # ── Ranking por Equipe ────────────────────────────────────────────────
     if "lider" in df_atv.columns and df_atv["lider"].nunique() > 1:
@@ -283,11 +276,6 @@ def main():
             meses_validos = sorted([m for m in df["mes_ativacao"].dropna().unique() if m and m != "NaT"])
             meses += meses_validos
         mes_sel = st.selectbox("Mês de Ativação", meses, index=len(meses)-1 if len(meses) > 1 else 0)
-
-        # Filtro de equipe — populado após carregar BKO/Colaboradores
-        colab_side = load_colaboradores()
-        lideres_side = ["Todas"] + sorted(colab_side["lider"].dropna().unique().tolist()) if not colab_side.empty else ["Todas"]
-        equipe_sel = st.selectbox("Equipe (Líder)", lideres_side)
 
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
@@ -438,9 +426,6 @@ def main():
     if not bko.empty and "pedido" in dff.columns:
         dff_bko = dff.merge(bko[["pedido","vendedor_real","lider"]], on="pedido", how="left")
         df_atv_rank = dff_bko[dff_bko["mes_ativacao"] == mes_sel].copy()
-        # Aplica filtro de equipe
-        if equipe_sel != "Todas" and "lider" in df_atv_rank.columns:
-            df_atv_rank = df_atv_rank[df_atv_rank["lider"] == equipe_sel]
         if not df_atv_rank.empty and "vendedor_real" in df_atv_rank.columns:
             render_ranking_resultados(df_atv_rank, mes_sel, meta_dict, lideres)
         else:
