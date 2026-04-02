@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns, get_meta_mes, registrar_acesso
+from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
 from auth import require_login
 
 st.set_page_config(
@@ -48,6 +48,14 @@ st.markdown("""
   .header-logo { height:44px;width:auto;object-fit:contain;mix-blend-mode:multiply;border-radius:6px; }
   .header-right { display:flex;align-items:center;gap:14px; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#64748b; font-weight:600; margin:24px 0 12px 0; }
+  .rank-bar-wrap { background:#1a1f2e; border-radius:10px; padding:12px 16px; margin-bottom:8px; border:1px solid #2d3748; }
+  .rank-name     { display:flex; justify-content:space-between; font-size:0.82rem; font-weight:600; color:#e2e8f0; margin-bottom:6px; }
+  .rank-bar-bg   { background:#2d3748; border-radius:99px; height:8px; }
+  .rank-bar-fill { height:8px; border-radius:99px; }
+  .rank-val      { font-size:0.75rem; color:#64748b; margin-top:4px; }
+  .equipe-header { background:linear-gradient(90deg,#1a2e1a,#1e3a2e); border-left:4px solid #22c55e; border-radius:10px; padding:14px 20px; margin:20px 0 12px 0; display:flex; align-items:center; justify-content:space-between; }
+  .equipe-nome   { font-size:1rem; font-weight:800; color:#86efac; }
+  .equipe-total  { font-size:0.82rem; color:#64748b; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -113,6 +121,98 @@ def _prog(v, t, color):
         '</div></div>'
     )
 
+
+
+
+META_VENDEDOR_PAD = 850
+
+def _meta_vend(nome, meta_dict):
+    return meta_dict.get(nome, META_VENDEDOR_PAD)
+
+def _cor(pct):
+    if pct >= 100: return "#22c55e"
+    if pct >= 70:  return "#f59e0b"
+    return "#ef4444"
+
+def _bar(valor, maximo, cor="#22c55e", h=8):
+    pct = min(int(valor / maximo * 100), 100) if maximo > 0 else 0
+    return f'''<div class="rank-bar-bg"><div class="rank-bar-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'''
+
+def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
+    """Ranking de vendedores e equipes com base nos ativados do mês."""
+    st.markdown('<p class="section-title">🏆 Ranking por Vendedor Real</p>', unsafe_allow_html=True)
+
+    if "vendedor_real" not in df_atv.columns or df_atv.empty:
+        st.info("BKO não carregado ou sem dados de vendedor para este mês.")
+        return
+
+    # ── Ranking Geral de Vendedores ───────────────────────────────────────
+    rank_v = (df_atv.groupby("vendedor_real", as_index=False)
+              .agg(Acessos=("acessos","sum"), Receita=("preco_oferta","sum"))
+              .sort_values("Receita", ascending=False))
+
+    max_rec = rank_v["Receita"].max() if not rank_v.empty else 1
+    html_v = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+    for i, r in rank_v.iterrows():
+        meta = _meta_vend(r["vendedor_real"], meta_dict)
+        pct  = min(int(r["Receita"] / meta * 100), 100) if meta > 0 else 0
+        cor  = _cor(pct)
+        medal = ["🥇","🥈","🥉"][i] if i < 3 else f"{i+1}º"
+        html_v += f'''<div class="rank-bar-wrap">
+          <div class="rank-name">
+            <span>{medal} {r["vendedor_real"]}</span>
+            <span style="color:{cor};font-weight:700">{pct}%</span>
+          </div>
+          {_bar(r["Receita"], meta, cor)}
+          <div class="rank-val">R$ {r["Receita"]:,.2f} · {int(r["Acessos"])} acessos · meta R$ {meta:,.2f}</div>
+        </div>'''
+    html_v += '</div>'
+    st.markdown(html_v, unsafe_allow_html=True)
+
+    # ── Ranking por Equipe ────────────────────────────────────────────────
+    if "lider" in df_atv.columns and df_atv["lider"].nunique() > 1:
+        st.markdown('<p class="section-title">👥 Ranking por Equipe</p>', unsafe_allow_html=True)
+
+        rows = []
+        for lider in lideres:
+            dl = df_atv[df_atv["lider"] == lider]
+            if dl.empty: continue
+            rec    = dl["preco_oferta"].sum()
+            ac     = int(dl["acessos"].sum())
+            meta_e = sum(_meta_vend(v, meta_dict) for v in dl["vendedor_real"].unique())
+            pct_e  = min(int(rec / meta_e * 100), 100) if meta_e > 0 else 0
+            rows.append({"lider": lider, "rec": rec, "ac": ac, "meta": meta_e, "pct": pct_e})
+
+        rows = sorted(rows, key=lambda x: x["rec"], reverse=True)
+        html_e = ""
+        for r in rows:
+            cor_e = _cor(r["pct"])
+            icon  = "✅" if r["pct"] >= 100 else "⚠️" if r["pct"] >= 70 else "🔴"
+            html_e += f'''<div class="equipe-header">
+              <span class="equipe-nome">👤 {r["lider"]}</span>
+              <span class="equipe-total">{icon} {r["pct"]}% da meta · R$ {r["rec"]:,.2f} · {r["ac"]} acessos</span>
+            </div>'''
+
+            dl_eq = df_atv[df_atv["lider"] == r["lider"]]
+            rank_eq = (dl_eq.groupby("vendedor_real", as_index=False)
+                       .agg(Acessos=("acessos","sum"), Receita=("preco_oferta","sum"))
+                       .sort_values("Receita", ascending=False))
+            html_eq = ''
+            for j, rv in rank_eq.iterrows():
+                meta_v = _meta_vend(rv["vendedor_real"], meta_dict)
+                pct_v  = min(int(rv["Receita"] / meta_v * 100), 100) if meta_v > 0 else 0
+                cor_v  = _cor(pct_v)
+                html_eq += f'''<div class="rank-bar-wrap" style="margin-left:16px">
+                  <div class="rank-name">
+                    <span>{rv["vendedor_real"]}</span>
+                    <span style="color:{cor_v}">{pct_v}%</span>
+                  </div>
+                  {_bar(rv["Receita"], meta_v, cor_v)}
+                  <div class="rank-val">R$ {rv["Receita"]:,.2f} · {int(rv["Acessos"])} acessos</div>
+                </div>'''
+            html_e += html_eq
+
+        st.markdown(html_e, unsafe_allow_html=True)
 
 def main():
     st.markdown("""
@@ -300,6 +400,24 @@ def main():
         else:
             st.info("Sem dados para exibir no gráfico.")
 
+    # ── Ranking por Vendedor e Equipe ────────────────────────────────────
+    st.markdown("---")
+    bko      = load_bko()
+    colab    = load_colaboradores()
+    meta_dict = dict(zip(colab["vendedor"], colab["meta"])) if not colab.empty else {}
+    lideres   = sorted(colab["lider"].dropna().unique().tolist()) if not colab.empty else []
+
+    if not bko.empty and "pedido" in dff.columns:
+        dff_bko = dff.merge(bko[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+        df_atv_rank = dff_bko[dff_bko["mes_ativacao"] == mes_sel].copy()
+        if not df_atv_rank.empty and "vendedor_real" in df_atv_rank.columns:
+            render_ranking_resultados(df_atv_rank, mes_sel, meta_dict, lideres)
+        else:
+            st.info("Nenhum registro ativado com BKO para este mês.")
+    else:
+        st.info("BKO não disponível — cadastre os vendedores na planilha BKO-VENDEDOR-REAL.")
+
+    st.markdown("---")
     # ── Tabela detalhada ──────────────────────────────────────────────────
     st.markdown('<p class="section-title">📋 Registros Ativados</p>', unsafe_allow_html=True)
 
