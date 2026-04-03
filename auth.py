@@ -34,6 +34,7 @@ PAGE_ACCESS = {
     "atividade":   ["hugo", "angelo", "roberta", "erivan", "alice", "andrey", "bertulio", "nivandro", "welligton"],
     "consolidada": ["hugo", "angelo"],
     "comissoes": ["hugo", "angelo"],
+    "espelho": ["hugo", "angelo"],
 }
 
 # ---------------------------------------------------------------------------
