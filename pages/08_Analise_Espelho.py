@@ -43,11 +43,6 @@ registrar_acesso("Análise Espelho", username=username)
 
 # Classificação TBP 360 → fatores Platinum (referência Connect Group)
 # A TIM classifica por custcode — pode divergir do negociado com o parceiro
-FATORES_PLATINUM = {
-    "Fidelizado Novo":    5.0,
-    "Fidelizado Aditivo": 4.0,
-    "Não Fidelizado":     0.3,
-}
 FATOR_FIBRA_PLATINUM = 2.5   # Ultra Fibra — fator TIM direto (valor fixo por linha)
 
 TIPOS_COMISSAO = {
@@ -186,12 +181,13 @@ def get_resultados_mes(mes_alvo: str) -> dict:
         if raw.empty:
             return {}
 
+        # Apenas NOVO e ADITIVO — RENEGOCIAÇÃO tratada separadamente no futuro
         df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"])
 
         # Apenas ativados no mês
         ativ = df[df["mes_ativacao"] == mes_alvo].copy()
 
-        # Separa NOVO e ADITIVO
+        # Separa por tipo para exibição, mas fator é único (NOVO e ADITIVO = mesma lógica)
         novo    = ativ[ativ["tipo_contratacao"].str.upper() == "NOVO"]
         aditivo = ativ[ativ["tipo_contratacao"].str.upper() == "ADITIVO"]
 
@@ -202,22 +198,15 @@ def get_resultados_mes(mes_alvo: str) -> dict:
         receita_novo  = novo["preco_oferta"].sum()
         receita_adic  = aditivo["preco_oferta"].sum()
 
-        # Expectativa de comissão VOZ — Platinum fidelizado
-        # Novo fidelizado = 5.0 | Aditivo fidelizado = 4.0
-        exp_voz_novo    = receita_novo    * FATORES_PLATINUM["Fidelizado Novo"]
-        exp_voz_aditivo = receita_adic    * FATORES_PLATINUM["Fidelizado Aditivo"]
-        exp_voz_total   = exp_voz_novo + exp_voz_aditivo
-
+        # Expectativa calculada fora desta função com o fator da sidebar
+        # (fator único sobre receita_total — NOVO e ADITIVO seguem a mesma lógica)
         return {
-            "vol_total":      vol_total,
-            "vol_novo":       vol_novo,
-            "vol_aditivo":    vol_aditivo,
-            "receita_total":  receita_total,
-            "receita_novo":   receita_novo,
-            "receita_adic":   receita_adic,
-            "exp_voz_novo":   exp_voz_novo,
-            "exp_voz_aditivo": exp_voz_aditivo,
-            "exp_voz_total":  exp_voz_total,
+            "vol_total":     vol_total,
+            "vol_novo":      vol_novo,
+            "vol_aditivo":   vol_aditivo,
+            "receita_total": receita_total,
+            "receita_novo":  receita_novo,
+            "receita_adic":  receita_adic,
         }
     except Exception as e:
         st.warning(f"Erro ao carregar dados do dashboard: {e}")
@@ -336,18 +325,13 @@ with st.sidebar:
     st.markdown("---")
 
     # Fator negociado com TIM (classificação do custcode)
-    st.markdown("**Classificação TBP do custcode**")
-    st.caption("Define os fatores de expectativa (Comissão Básica VOZ)")
+    st.markdown("**Fator de comissionamento VOZ**")
+    st.caption("NOVO e ADITIVO seguem o mesmo fator — definido pela classificação TBP")
 
-    fator_novo = st.number_input(
-        "Fator NOVO fidelizado",
-        min_value=0.1, max_value=10.0, value=5.0, step=0.1, format="%.1f",
-        help="Platinum fidelizado novo = 5.0 | Silver = 4.5 | Blue = 4.0",
-    )
-    fator_adic = st.number_input(
-        "Fator ADITIVO fidelizado",
-        min_value=0.1, max_value=10.0, value=4.0, step=0.1, format="%.1f",
-        help="Platinum aditivo fidelizado = 4.0 | Silver = 3.5",
+    fator_voz = st.number_input(
+        "Fator (Receita Contratada × Fator = Comissão)",
+        min_value=0.1, max_value=10.0, value=4.5, step=0.1, format="%.1f",
+        help="Platinum fidelizado = 5,0 | Silver fidelizado = 4,5 | Blue = 4,0 | Não fidelizado = 0,3",
     )
 
     st.markdown("---")
@@ -388,7 +372,7 @@ if not uploaded_files:
         c1.metric("Volume total ativado", f"{res.get('vol_total',0):,} acessos")
         c2.metric("Receita Contratada",   fmt(res.get("receita_total", 0)))
         c3.metric("Expectativa VOZ (Platinum)",
-                  fmt(res.get("receita_novo",0)*fator_novo + res.get("receita_adic",0)*fator_adic))
+                  fmt(res.get("receita_total",0) * fator_voz))
         st.info("⬆ Carregue o Espelho acima para ver o comparativo completo.")
     st.stop()
 
@@ -412,7 +396,8 @@ else:
     st.info(f"📄 Arquivo carregado: **{nomes}** — {len(df_esp)} linhas.")
 
 # Recalcula expectativa com fatores personalizados da sidebar
-exp_voz = res_dash.get("receita_novo", 0) * fator_novo + res_dash.get("receita_adic", 0) * fator_adic
+# Expectativa VOZ: receita total (NOVO+ADITIVO) × fator único configurável
+exp_voz = res_dash.get("receita_total", 0) * fator_voz
 
 # ─────────────────────────────────────────────
 # CABEÇALHO DO COMPARATIVO
@@ -497,8 +482,8 @@ with c1:
     st.markdown(f'<div class="valor-grande azul">{fmt(exp_voz)}</div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="label-sm">
-        Novo: {fmt(res_dash.get("receita_novo",0))} × {fator_novo} = {fmt(res_dash.get("receita_novo",0)*fator_novo)}<br>
-        Adic: {fmt(res_dash.get("receita_adic",0))} × {fator_adic} = {fmt(res_dash.get("receita_adic",0)*fator_adic)}
+        NOVO: {fmt(res_dash.get("receita_novo",0))} &nbsp;|&nbsp; ADITIVO: {fmt(res_dash.get("receita_adic",0))}<br>
+        Total: {fmt(res_dash.get("receita_total",0))} × {fator_voz} = {fmt(exp_voz)}
     </div>
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
@@ -529,9 +514,7 @@ with c3:
 
 # Alerta de diferença de fator
 if res_esp["voz_fator_medio"] > 0:
-    fator_esperado_medio = (
-        res_dash.get("receita_novo",0) * fator_novo + res_dash.get("receita_adic",0) * fator_adic
-    ) / res_dash.get("receita_total", 1) if res_dash.get("receita_total",0) > 0 else 0
+    fator_esperado_medio = fator_voz
 
     if abs(res_esp["voz_fator_medio"] - fator_esperado_medio) > 0.1:
         st.markdown(f"""
