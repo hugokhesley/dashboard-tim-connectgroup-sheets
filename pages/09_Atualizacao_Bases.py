@@ -108,7 +108,7 @@ SdtidFile.verify_mac = _verify_mac_ignorar
 
 
 def gerar_token_rsa(sdtid_secret_key: str, pin: int = 1234) -> str:
-    sdtid_b64   = st.secrets[sdtid_secret_key]
+    sdtid_b64   = st.secrets["email"][sdtid_secret_key]
     sdtid_bytes = base64.b64decode(sdtid_b64)
     with tempfile.NamedTemporaryFile(suffix=".sdtid", delete=False) as tmp:
         tmp.write(sdtid_bytes)
