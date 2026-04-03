@@ -39,7 +39,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-username = require_login("atualizacao_bases", allowed_users=["hugo"])
+username = require_login("atualizacao_bases")
 registrar_acesso("Atualização de Bases", username=username)
 
 st.markdown("""
