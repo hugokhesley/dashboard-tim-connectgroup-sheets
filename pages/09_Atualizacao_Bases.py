@@ -394,19 +394,20 @@ elif st.session_state.etapa == "selenium":
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
-            options.add_argument("--disable-software-rasterizer")
-            options.add_argument("--remote-debugging-port=9222")
 
-            # Usa Chromium do sistema se disponível (Streamlit Cloud)
             import shutil
-            chromium_path = shutil.which("chromium-browser") or shutil.which("chromium")
-            if chromium_path:
-                options.binary_location = chromium_path
+            chromium = shutil.which("chromium") or shutil.which("chromium-browser")
+            chromedriver = shutil.which("chromedriver")
+
+            if chromium and chromedriver:
+                # Streamlit Cloud — usa chromium do sistema
+                options.binary_location = chromium
                 driver = webdriver.Chrome(
-                    service=Service("/usr/bin/chromedriver"),
+                    service=Service(chromedriver),
                     options=options
                 )
             else:
+                # Local — usa webdriver-manager
                 driver = webdriver.Chrome(
                     service=Service(ChromeDriverManager().install()),
                     options=options
