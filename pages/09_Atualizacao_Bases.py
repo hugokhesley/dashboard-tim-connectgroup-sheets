@@ -310,8 +310,14 @@ def solicitar_relatorio_radar(driver, data_inicio, data_fim, log_fn=None):
 # SEÇÃO: ACESSO RÁPIDO AO RADAR
 # ─────────────────────────────────────────────
 
-st.markdown("### 🌐 Acesso Rápido ao Radar TIM")
-st.caption("Clique para abrir o Radar já logado na conta desejada (requer script local instalado no PC)")
+st.markdown("### 🌐 Acesso Rápido aos Sistemas TIM")
+st.caption("Clique para abrir o sistema já logado na conta desejada (requer script local instalado no PC)")
+
+# Sistemas disponíveis
+SISTEMAS_DISPONIVEIS = {
+    "radar":   {"label": "📡 Radar TIM",  "emoji": "📡"},
+    "phoenix": {"label": "🔥 Phoenix",    "emoji": "🔥"},
+}
 
 # Carrega contas do Google Sheets
 @st.cache_data(ttl=30, show_spinner=False)
@@ -322,9 +328,8 @@ def carregar_contas_radar():
         try:
             aba = planilha.worksheet("ContasRadar")
             dados = aba.get_all_records()
-            return dados  # lista de dicts: [{"login": "t3729525", "nome": "Campina Grande"}, ...]
+            return dados
         except gspread.WorksheetNotFound:
-            # Cria a aba com dados iniciais
             aba = planilha.add_worksheet(title="ContasRadar", rows=20, cols=3)
             aba.update([
                 ["login", "nome"],
@@ -353,27 +358,30 @@ def salvar_contas_radar(contas: list):
 
 contas_radar = carregar_contas_radar()
 
-# Botões de acesso rápido
-if contas_radar:
-    cols = st.columns(min(len(contas_radar), 4))
-    for i, conta in enumerate(contas_radar):
-        with cols[i % 4]:
-            login = conta.get("login", "")
-            nome  = conta.get("nome", login)
-            url_protocolo = f"radar-login://{login}"
-            st.link_button(
-                f"🌐 {nome}\n`{login}`",
-                url=url_protocolo,
-                use_container_width=True,
-            )
-else:
-    st.info("Nenhuma conta cadastrada ainda.")
+# Tabs por sistema
+tabs_sistemas = st.tabs([info["label"] for info in SISTEMAS_DISPONIVEIS.values()])
+
+for tab, (sistema, info) in zip(tabs_sistemas, SISTEMAS_DISPONIVEIS.items()):
+    with tab:
+        if contas_radar:
+            cols = st.columns(min(len(contas_radar), 4))
+            for i, conta in enumerate(contas_radar):
+                with cols[i % 4]:
+                    login = conta.get("login", "")
+                    nome  = conta.get("nome", login)
+                    url_protocolo = f"radar-login://{sistema}/{login}"
+                    st.link_button(
+                        f"{info['emoji']} {nome}\n`{login}`",
+                        url=url_protocolo,
+                        use_container_width=True,
+                    )
+        else:
+            st.info("Nenhuma conta cadastrada ainda.")
 
 # Gerenciamento de contas
 with st.expander("⚙️ Gerenciar contas"):
-    st.caption("Adicione ou remova logins do Radar TIM")
+    st.caption("Adicione ou remova logins — valem para todos os sistemas")
 
-    # Formulário para nova conta
     col_a, col_b, col_c = st.columns([2, 3, 1])
     with col_a:
         novo_login = st.text_input("Login (ex: t3729525)", key="novo_login_input").strip().lower()
@@ -394,7 +402,6 @@ with st.expander("⚙️ Gerenciar contas"):
             else:
                 st.warning("Preencha o login e o nome.")
 
-    # Lista para remover
     if contas_radar:
         st.markdown("**Remover conta:**")
         opcoes = {f"{c['nome']} ({c['login']})": c["login"] for c in contas_radar}
@@ -410,7 +417,7 @@ with st.expander("⚙️ Gerenciar contas"):
 st.markdown("""
 <div style="background:#1a1f2e;border-radius:10px;padding:12px 16px;margin:8px 0 20px 0;
     border:1px solid #2d3748;font-size:0.78rem;color:#64748b;">
-    💡 <b>Como funciona:</b> Ao clicar, seu PC abre o Chrome e faz o login automaticamente no Radar TIM.
+    💡 <b>Como funciona:</b> Clique em qualquer botão → Chrome abre e faz login automático no sistema escolhido.
     Requer o <code>radar_login_handler.py</code> instalado localmente
     (execute <code>registrar_protocolo.bat</code> como Administrador uma vez).
 </div>
