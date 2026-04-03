@@ -225,13 +225,19 @@ def fazer_login_radar(driver, login, nome, token):
         time.sleep(5)
 
 
-def solicitar_relatorio_radar(driver, data_inicio, data_fim):
+def solicitar_relatorio_radar(driver, data_inicio, data_fim, log_fn=None):
+    def _log(msg):
+        if log_fn:
+            log_fn(msg)
+
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
+    _log(f"  → Navegando para lista de relatórios...")
     driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
-    time.sleep(4)
+    time.sleep(6)
+    _log(f"  → URL: {driver.current_url[:70]}")
 
     try:
         fechar = WebDriverWait(driver, 5).until(
@@ -241,13 +247,16 @@ def solicitar_relatorio_radar(driver, data_inicio, data_fim):
     except Exception:
         pass
 
-    base = WebDriverWait(driver, 15).until(
+    _log(f"  → Buscando link Base Geral...")
+    base = WebDriverWait(driver, 25).until(
         EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral - Após 01/05/2009')]"))
     )
     driver.execute_script("arguments[0].click()", base)
-    time.sleep(3)
+    time.sleep(5)
+    _log(f"  → Clicou Base Geral. URL: {driver.current_url[:70]}")
 
-    campo_de = WebDriverWait(driver, 15).until(
+    _log(f"  → Aguardando campo data...")
+    campo_de = WebDriverWait(driver, 25).until(
         EC.presence_of_element_located((By.NAME, "a.dt_precadastro_de"))
     )
     driver.execute_script("arguments[0].removeAttribute('readonly')", campo_de)
@@ -255,6 +264,7 @@ def solicitar_relatorio_radar(driver, data_inicio, data_fim):
     campo_ate = driver.find_element(By.NAME, "a.dt_precadastro_ate")
     driver.execute_script("arguments[0].removeAttribute('readonly')", campo_ate)
     driver.execute_script(f"arguments[0].value = '{data_fim}'", campo_ate)
+    _log(f"  → Datas: {data_inicio} → {data_fim}")
 
     for valor in ["1", "2", "3"]:
         try:
@@ -264,19 +274,20 @@ def solicitar_relatorio_radar(driver, data_inicio, data_fim):
                 driver.execute_script("arguments[0].click()", cb)
         except Exception:
             pass
+    _log(f"  → Checkboxes marcados")
 
-    gerar = WebDriverWait(driver, 10).until(
+    _log(f"  → Clicando Gerar Relatório...")
+    gerar = WebDriverWait(driver, 15).until(
         EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatório']"))
     )
     driver.execute_script("arguments[0].click()", gerar)
-    time.sleep(4)
+    time.sleep(5)
+    _log(f"  → Enviado! URL: {driver.current_url[:70]}")
 
-    # Lê posição na fila
     posicao = 1
     try:
         driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
         time.sleep(3)
-        from selenium.webdriver.common.by import By
         linhas = driver.find_elements(By.XPATH, "//table//tr[contains(.,'pendente')]")
         if linhas:
             try:
@@ -284,8 +295,9 @@ def solicitar_relatorio_radar(driver, data_inicio, data_fim):
                 posicao = int(pos.text.strip()) if pos.text.strip().isdigit() else len(linhas)
             except Exception:
                 posicao = len(linhas)
+        _log(f"  → Posição na fila: {posicao}")
     except Exception:
-        pass
+        _log(f"  ⚠️ Não leu fila")
 
     return posicao
 
@@ -418,7 +430,7 @@ elif st.session_state.etapa == "selenium":
             try:
                 fazer_login_radar(driver, login, nome, token)
                 add_log(f"  ✅ Login OK")
-                posicao = solicitar_relatorio_radar(driver, data_inicio, data_fim)
+                posicao = solicitar_relatorio_radar(driver, data_inicio, data_fim, log_fn=add_log)
                 add_log(f"  ✓ Relatório solicitado! Posição na fila: {posicao}")
                 st.session_state.posicoes.append(posicao)
             except Exception as e:
