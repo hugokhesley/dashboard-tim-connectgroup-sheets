@@ -81,13 +81,13 @@ st.markdown("""
 # ─────────────────────────────────────────────
 # CONFIGURAÇÕES VIA SECRETS
 # ─────────────────────────────────────────────
-EMAIL_1         = st.secrets["EMAIL_1"]
-SENHA_1         = st.secrets["SENHA_1"]
-EMAIL_2         = st.secrets["EMAIL_2"]
-SENHA_2         = st.secrets["SENHA_2"]
-IMAP_HOST       = st.secrets.get("IMAP_HOST", "imap.titan.email")
-IMAP_PORT       = int(st.secrets.get("IMAP_PORT", 993))
-REMETENTE_RADAR = st.secrets.get("REMETENTE_RADAR", "noreply-radartim@timbrasil.com.br")
+EMAIL_1         = st.secrets["email"]["EMAIL_1"]
+SENHA_1         = st.secrets["email"]["SENHA_1"]
+EMAIL_2         = st.secrets["email"]["EMAIL_2"]
+SENHA_2         = st.secrets["email"]["SENHA_2"]
+IMAP_HOST       = st.secrets["email"].get("IMAP_HOST", "imap.titan.email")
+IMAP_PORT       = int(st.secrets["email"].get("IMAP_PORT", 993))
+REMETENTE_RADAR = st.secrets["email"].get("REMETENTE_RADAR", "noreply-radartim@timbrasil.com.br")
 
 SPREADSHEET_ID  = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 ABA_DESTINO     = "DadosRadar"
