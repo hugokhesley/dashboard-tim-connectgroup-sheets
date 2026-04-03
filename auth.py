@@ -35,6 +35,7 @@ PAGE_ACCESS = {
     "consolidada": ["hugo", "angelo"],
     "comissoes": ["hugo", "angelo"],
     "espelho":     ["hugo", "angelo"],
+    "atualizacao_bases":     ["hugo"],
 }
 
 # ---------------------------------------------------------------------------
