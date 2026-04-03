@@ -88,11 +88,25 @@ def mes_label(ym: str) -> str:
 # LEITURA DO ESPELHO
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
-def parse_espelho(file_bytes: bytes) -> pd.DataFrame:
-    """Lê o XLSX do espelho e retorna df limpo."""
-    df = pd.read_excel(io.BytesIO(file_bytes), header=0)
-    # Normaliza nomes de colunas
-    df.columns = [str(c).strip() for c in df.columns]
+def parse_espelho(file_bytes_1: bytes, file_bytes_2: bytes | None = None) -> pd.DataFrame:
+    """
+    Lê um ou dois XLSX do espelho e retorna df consolidado.
+    Quando dois arquivos são passados, faz concat (mesmo layout, partes diferentes).
+    """
+    def _ler(b: bytes) -> pd.DataFrame:
+        df = pd.read_excel(io.BytesIO(b), header=0)
+        df.columns = [str(c).strip() for c in df.columns]
+        return df
+
+    df = _ler(file_bytes_1)
+    if file_bytes_2:
+        df2 = _ler(file_bytes_2)
+        # Alinha colunas — garante que ambos tenham as mesmas antes do concat
+        all_cols = list(dict.fromkeys(list(df.columns) + list(df2.columns)))
+        df  = df.reindex(columns=all_cols)
+        df2 = df2.reindex(columns=all_cols)
+        df  = pd.concat([df, df2], ignore_index=True)
+
     # Garante numéricas
     for col in ["Valor Unitário", "Receita Contratada", "Fator Elemento",
                 "Total Receita Bônus Meta", "Total Receita Bônus Aceleração",
@@ -343,23 +357,28 @@ with st.sidebar:
     st.caption(f"Mês selecionado: **{mes_label(mes_sel)}**")
 
 # ─────────────────────────────────────────────
-# UPLOAD DO ESPELHO
+# UPLOAD DO ESPELHO (1 ou 2 arquivos)
 # ─────────────────────────────────────────────
-uploaded = st.file_uploader(
-    "📂 Carregar planilha Espelho TIM (.xlsx)",
+st.markdown("#### 📂 Upload do Espelho TIM")
+st.caption("Selecione um ou dois arquivos de uma vez (Ctrl+clique ou Cmd+clique para selecionar múltiplos).")
+
+uploaded_files = st.file_uploader(
+    "Planilha(s) Espelho TIM (.xlsx)",
     type=["xlsx"],
-    help="Planilha enviada pela TIM com o detalhamento do pagamento",
+    accept_multiple_files=True,
+    key="espelho_files",
+    help="Selecione os dois arquivos simultaneamente se o espelho vier dividido em partes.",
 )
 
-if not uploaded:
+if not uploaded_files:
     st.markdown("""
     <div class="info-box">
-        ℹ️ Faça o upload da planilha Espelho TIM para visualizar o comparativo.
-        Os dados do dashboard para o mês selecionado serão carregados automaticamente.
+        ℹ️ Carregue a planilha Espelho TIM para visualizar o comparativo.
+        Se vier em duas partes, selecione os dois arquivos de uma vez (Ctrl+clique).
+        Os dados do dashboard para o mês selecionado são carregados automaticamente.
     </div>
     """, unsafe_allow_html=True)
 
-    # Mostra preview dos dados do dashboard mesmo sem espelho
     with st.spinner("Carregando dados do dashboard..."):
         res = get_resultados_mes(mes_sel)
 
@@ -370,17 +389,27 @@ if not uploaded:
         c2.metric("Receita Contratada",   fmt(res.get("receita_total", 0)))
         c3.metric("Expectativa VOZ (Platinum)",
                   fmt(res.get("receita_novo",0)*fator_novo + res.get("receita_adic",0)*fator_adic))
-        st.info("⬆ Faça o upload do Espelho para ver o comparativo completo.")
+        st.info("⬆ Carregue o Espelho acima para ver o comparativo completo.")
     st.stop()
 
 # ─────────────────────────────────────────────
 # PROCESSAMENTO
 # ─────────────────────────────────────────────
-with st.spinner("Processando espelho e carregando dados do dashboard..."):
-    file_bytes  = uploaded.read()
-    df_esp      = parse_espelho(file_bytes)
-    res_esp     = resumo_espelho(df_esp)
-    res_dash    = get_resultados_mes(mes_sel)
+bytes_1 = uploaded_files[0].read()
+bytes_2 = uploaded_files[1].read() if len(uploaded_files) > 1 else None
+
+n_arquivos = len(uploaded_files)
+nomes = " + ".join(f.name for f in uploaded_files)
+
+with st.spinner(f"Processando {n_arquivos} arquivo(s) do espelho..."):
+    df_esp   = parse_espelho(bytes_1, bytes_2)
+    res_esp  = resumo_espelho(df_esp)
+    res_dash = get_resultados_mes(mes_sel)
+
+if n_arquivos == 2:
+    st.success(f"✅ Dois arquivos consolidados: **{nomes}** — {len(df_esp)} linhas no total.")
+else:
+    st.info(f"📄 Arquivo carregado: **{nomes}** — {len(df_esp)} linhas.")
 
 # Recalcula expectativa com fatores personalizados da sidebar
 exp_voz = res_dash.get("receita_novo", 0) * fator_novo + res_dash.get("receita_adic", 0) * fator_adic
