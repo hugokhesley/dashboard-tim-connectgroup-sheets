@@ -181,8 +181,13 @@ def get_resultados_mes(mes_alvo: str) -> dict:
         if raw.empty:
             return {}
 
+        # Filtra apenas aba DadosRadar — evita duplicação com outras abas da planilha
+        raw_radar = raw.copy()
+        if "_aba" in raw_radar.columns:
+            raw_radar = raw_radar[raw_radar["_aba"] == "DadosRadar"].copy()
+
         # Apenas NOVO e ADITIVO — RENEGOCIAÇÃO tratada separadamente no futuro
-        df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"])
+        df = apply_filters(raw_radar, mes_alvo, ["NOVO", "ADITIVO"])
 
         # Apenas ativados no mês
         ativ = df[df["mes_ativacao"] == mes_alvo].copy()
