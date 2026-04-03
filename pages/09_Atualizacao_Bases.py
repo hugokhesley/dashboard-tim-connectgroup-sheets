@@ -1,14 +1,10 @@
 """
 09_Atualizacao_Bases.py — Atualização automática da base DadosRadar
 Connect Group | Dashboard TIM Empresas
-
-Solicita relatórios no Radar TIM via Selenium, aguarda os emails
-via IMAP e sobe os dados para a aba DadosRadar no Google Sheets.
 Acesso restrito: hugo
 """
 
 import streamlit as st
-import threading
 import time
 import imaplib
 import email
@@ -22,7 +18,6 @@ import os
 from datetime import datetime, timezone, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
 from securid.exceptions import InvalidSignature
 
@@ -55,20 +50,10 @@ st.markdown("""
   }
   .header-title { font-size: 1.9rem; font-weight: 800; color: #fff; margin: 0; }
   .header-sub   { font-size: 0.85rem; color: rgba(255,255,255,0.65); margin: 4px 0 0 0; }
-  .status-card {
-    background: #1a1f2e; border-radius: 14px; padding: 20px 24px;
-    border: 1px solid #2d3748; margin-bottom: 12px;
-  }
-  .step-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px;
-    color: #94a3b8; font-weight: 600; margin-bottom: 4px; }
-  .step-value { font-size: 1rem; font-weight: 600; color: #f1f5f9; }
   section[data-testid="stSidebar"] { background: #111827 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# HEADER
-# ─────────────────────────────────────────────
 st.markdown("""
 <div class="header-res">
   <div>
@@ -79,7 +64,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# CONFIGURAÇÕES VIA SECRETS
+# SECRETS
 # ─────────────────────────────────────────────
 EMAIL_1         = st.secrets["email"]["EMAIL_1"]
 SENHA_1         = st.secrets["email"]["SENHA_1"]
@@ -92,7 +77,7 @@ REMETENTE_RADAR = st.secrets["email"].get("REMETENTE_RADAR", "noreply-radartim@t
 SPREADSHEET_ID  = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 ABA_DESTINO     = "DadosRadar"
 JANELA_MINUTOS  = 40
-INTERVALO_IMAP  = 300  # 5 minutos
+INTERVALO_IMAP  = 300
 
 CONTAS = [
     {"login": "t3729525", "nome": "Campina Grande", "sdtid_secret": "SDTID_T3729525"},
@@ -116,22 +101,18 @@ def calcular_datas():
     return f"01/{mes:02d}/{ano}", hoje.strftime("%d/%m/%Y")
 
 
+# Monkey-patch para ignorar MAC check
 def _verify_mac_ignorar(self, kind, str0, str1, node, section, key1, iv):
-    """Monkey-patch para ignorar MAC check em tokens com CopyProtection=1."""
     pass
-
 SdtidFile.verify_mac = _verify_mac_ignorar
 
 
 def gerar_token_rsa(sdtid_secret_key: str, pin: int = 1234) -> str:
-    """Gera o token RSA a partir do conteúdo do .sdtid armazenado nos secrets."""
-    sdtid_b64 = st.secrets[sdtid_secret_key]
+    sdtid_b64   = st.secrets[sdtid_secret_key]
     sdtid_bytes = base64.b64decode(sdtid_b64)
-
     with tempfile.NamedTemporaryFile(suffix=".sdtid", delete=False) as tmp:
         tmp.write(sdtid_bytes)
         tmp_path = tmp.name
-
     try:
         token_obj = SdtidFile(tmp_path).get_token()
         token_obj.pin = pin
@@ -141,20 +122,16 @@ def gerar_token_rsa(sdtid_secret_key: str, pin: int = 1234) -> str:
 
 
 def verificar_email_novo(email_conta, senha, desde):
-    """Verifica se chegou email novo do Radar. Retorna link ou None."""
     try:
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(email_conta, senha)
         mail.select("INBOX")
-
         status, msgs = mail.search(None, f'FROM "{REMETENTE_RADAR}"')
         if status != "OK" or not msgs[0]:
             mail.logout()
             return None
-
         ids = msgs[0].split()
         desde_utc = desde.astimezone(timezone.utc)
-
         for uid in reversed(ids):
             status, dados = mail.fetch(uid, "(RFC822)")
             msg = email.message_from_bytes(dados[0][1])
@@ -169,10 +146,8 @@ def verificar_email_novo(email_conta, senha, desde):
                     data_email = data_email.astimezone(timezone.utc)
             except Exception:
                 continue
-
             if data_email <= desde_utc:
                 break
-
             for parte in msg.walk():
                 if parte.get_content_type() in ("text/plain", "text/html"):
                     corpo = parte.get_payload(decode=True).decode(errors="ignore")
@@ -180,74 +155,239 @@ def verificar_email_novo(email_conta, senha, desde):
                     if match:
                         mail.logout()
                         return match.group(0).strip()
-
         mail.logout()
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 
 def baixar_xlsx(link: str) -> bytes:
-    response = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
-    response.raise_for_status()
-    return response.content
+    r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
+    r.raise_for_status()
+    return r.content
 
 
-def subir_para_sheets(df: pd.DataFrame, log_fn):
-    log_fn("  ↑ Conectando ao Google Sheets...")
+def subir_para_sheets(df: pd.DataFrame):
     gc = get_gspread_client()
     planilha = gc.open_by_key(SPREADSHEET_ID)
     try:
         aba = planilha.worksheet(ABA_DESTINO)
     except gspread.WorksheetNotFound:
         aba = planilha.add_worksheet(title=ABA_DESTINO, rows=1, cols=1)
-
     aba.clear()
     df = df.fillna("")
     dados = [df.columns.tolist()] + df.values.tolist()
     dados = [[str(v) for v in linha] for linha in dados]
     aba.update(dados, value_input_option="USER_ENTERED")
-    log_fn(f"  ✅ {len(df)} linhas gravadas em '{ABA_DESTINO}'!")
+    return len(df)
 
 
-# ─────────────────────────────────────────────
-# FLUXO PRINCIPAL (roda em thread para não travar UI)
-# ─────────────────────────────────────────────
+def fazer_login_radar(driver, login, nome, token):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
 
-def fluxo_completo(posicao_manual: int, log_container):
-    logs = []
-
-    def log(msg):
-        logs.append(msg)
-        log_container.code("\n".join(logs))
+    driver.get("https://radar.timbrasil.com.br/")
+    time.sleep(5)
 
     try:
-        # ── Etapa 1: Login no Radar e solicitação (via Selenium headless) ──
-        log("🤖 Iniciando Selenium headless...")
+        campo = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "identifierInput"))
+        )
+        campo.clear()
+        campo.send_keys(login)
+        btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
+        driver.execute_script("arguments[0].click()", btn)
+        time.sleep(4)
+    except Exception:
+        pass
 
+    try:
+        WebDriverWait(driver, 20).until(
+            lambda d: "iam-pf" in d.current_url or "authorization" in d.current_url
+        )
+        time.sleep(3)
+    except Exception:
+        pass
+
+    campo_token = WebDriverWait(driver, 15).until(
+        EC.presence_of_element_located((By.ID, "password"))
+    )
+    campo_token.clear()
+    campo_token.send_keys(token)
+    time.sleep(1)
+    btn_entrar = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
+    driver.execute_script("arguments[0].click()", btn_entrar)
+    time.sleep(8)
+
+    if driver.execute_script("return document.body.innerHTML.trim()") == "":
+        driver.get(driver.current_url)
+        time.sleep(5)
+
+
+def solicitar_relatorio_radar(driver, data_inicio, data_fim):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
+    time.sleep(4)
+
+    try:
+        fechar = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'close')]"))
+        )
+        fechar.click()
+    except Exception:
+        pass
+
+    base = WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral - Após 01/05/2009')]"))
+    )
+    driver.execute_script("arguments[0].click()", base)
+    time.sleep(3)
+
+    campo_de = WebDriverWait(driver, 15).until(
+        EC.presence_of_element_located((By.NAME, "a.dt_precadastro_de"))
+    )
+    driver.execute_script("arguments[0].removeAttribute('readonly')", campo_de)
+    driver.execute_script(f"arguments[0].value = '{data_inicio}'", campo_de)
+    campo_ate = driver.find_element(By.NAME, "a.dt_precadastro_ate")
+    driver.execute_script("arguments[0].removeAttribute('readonly')", campo_ate)
+    driver.execute_script(f"arguments[0].value = '{data_fim}'", campo_ate)
+
+    for valor in ["1", "2", "3"]:
+        try:
+            cb = driver.find_element(By.XPATH,
+                f"//input[@type='checkbox' and @name='g.idtipocontrata' and @value='{valor}']")
+            if not cb.is_selected():
+                driver.execute_script("arguments[0].click()", cb)
+        except Exception:
+            pass
+
+    gerar = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatório']"))
+    )
+    driver.execute_script("arguments[0].click()", gerar)
+    time.sleep(4)
+
+    # Lê posição na fila
+    posicao = 1
+    try:
+        driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
+        time.sleep(3)
+        from selenium.webdriver.common.by import By
+        linhas = driver.find_elements(By.XPATH, "//table//tr[contains(.,'pendente')]")
+        if linhas:
+            try:
+                pos = linhas[0].find_element(By.XPATH, ".//td[last()]")
+                posicao = int(pos.text.strip()) if pos.text.strip().isdigit() else len(linhas)
+            except Exception:
+                posicao = len(linhas)
+    except Exception:
+        pass
+
+    return posicao
+
+
+# ─────────────────────────────────────────────
+# INTERFACE
+# ─────────────────────────────────────────────
+
+st.markdown("### ⚙️ Configuração")
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.info("""
+    **O que este processo faz:**
+    1. 🤖 Login automático nas duas contas do Radar TIM (headless)
+    2. 📋 Solicita **Base Geral – Após 01/05/2009** com filtros ADITIVO, NOVO e RENEGOCIAÇÃO
+    3. ⏳ Aguarda os emails chegarem
+    4. ⬇️ Baixa os dois arquivos e consolida
+    5. ☁️ Sobe para a aba **DadosRadar** no Google Sheets
+    """)
+
+with col2:
+    posicao_fila = st.number_input(
+        "Posição estimada na fila",
+        min_value=1, max_value=50, value=3,
+        help="Cada posição ≈ 7 min"
+    )
+    tempo_est = (posicao_fila * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
+    primeira  = tempo_est // 2
+    st.caption(f"⏱ Tempo total: **~{tempo_est} min**")
+    st.caption(f"🔍 Primeira verificação: **~{primeira} min**")
+
+st.markdown("---")
+
+# ── Inicializa estado ──
+if "etapa" not in st.session_state:
+    st.session_state.etapa = "idle"
+if "logs" not in st.session_state:
+    st.session_state.logs = []
+if "posicoes" not in st.session_state:
+    st.session_state.posicoes = []
+if "conta_idx" not in st.session_state:
+    st.session_state.conta_idx = 0
+if "link1" not in st.session_state:
+    st.session_state.link1 = None
+if "link2" not in st.session_state:
+    st.session_state.link2 = None
+if "desde" not in st.session_state:
+    st.session_state.desde = None
+if "tentativa_imap" not in st.session_state:
+    st.session_state.tentativa_imap = 0
+if "posicao_fila_val" not in st.session_state:
+    st.session_state.posicao_fila_val = 3
+
+
+def add_log(msg):
+    st.session_state.logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+
+def mostrar_logs():
+    if st.session_state.logs:
+        st.code("\n".join(st.session_state.logs), language=None)
+
+
+# ── Botão de início ──
+if st.session_state.etapa == "idle":
+    if st.button("🚀 Iniciar Atualização", type="primary", use_container_width=True):
+        st.session_state.etapa = "selenium"
+        st.session_state.logs = []
+        st.session_state.posicoes = []
+        st.session_state.conta_idx = 0
+        st.session_state.link1 = None
+        st.session_state.link2 = None
+        st.session_state.desde = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
+        st.session_state.tentativa_imap = 0
+        st.session_state.posicao_fila_val = posicao_fila
+        add_log("🚀 Processo iniciado!")
+        st.rerun()
+
+# ── Etapa: Selenium ──
+elif st.session_state.etapa == "selenium":
+    st.warning("⏳ Fazendo login e solicitando relatórios no Radar TIM...")
+    mostrar_logs()
+
+    try:
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
         from webdriver_manager.chrome import ChromeDriverManager
 
         data_inicio, data_fim = calcular_datas()
-        log(f"📅 Período: {data_inicio} → {data_fim}")
+        add_log(f"📅 Período: {data_inicio} → {data_fim}")
 
-        posicoes = []
-
-        for conta in CONTAS:
+        for i, conta in enumerate(CONTAS):
             login = conta["login"]
             nome  = conta["nome"]
-            log(f"\n🌐 Processando {nome} ({login})...")
+            add_log(f"🌐 Processando {nome} ({login})...")
 
-            # Gera token RSA
             token = gerar_token_rsa(conta["sdtid_secret"])
-            log(f"  🔐 Token RSA gerado para {login.upper()}")
+            add_log(f"  🔐 Token RSA gerado")
 
-            # Cria driver headless
             options = Options()
             options.add_argument("--headless")
             options.add_argument("--no-sandbox")
@@ -261,249 +401,130 @@ def fluxo_completo(posicao_manual: int, log_container):
             )
 
             try:
-                driver.get("https://radar.timbrasil.com.br/")
-                time.sleep(5)
-
-                # Digita username
-                try:
-                    campo = WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.ID, "identifierInput"))
-                    )
-                    campo.clear()
-                    campo.send_keys(login)
-                    time.sleep(0.5)
-                    btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.ID, "signOnButton"))
-                    )
-                    driver.execute_script("arguments[0].click()", btn)
-                    log(f"  ✓ Username enviado")
-                    time.sleep(4)
-                except Exception as e:
-                    log(f"  ⚠️ Tela username: {e}")
-
-                # Aguarda SmartID
-                try:
-                    WebDriverWait(driver, 20).until(
-                        lambda d: "iam-pf" in d.current_url or "authorization" in d.current_url
-                    )
-                    time.sleep(3)
-                    log(f"  ✓ Tela SmartID")
-                except Exception:
-                    log(f"  ⚠️ Timeout SmartID")
-
-                # Insere token
-                campo_token = WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.ID, "password"))
-                )
-                campo_token.clear()
-                campo_token.send_keys(token)
-                time.sleep(1)
-                btn_entrar = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "signOnButton"))
-                )
-                driver.execute_script("arguments[0].click()", btn_entrar)
-                log(f"  ✓ Token enviado, aguardando login...")
-                time.sleep(8)
-
-                # Reload se branco
-                if driver.execute_script("return document.body.innerHTML.trim()") == "":
-                    driver.get(driver.current_url)
-                    time.sleep(5)
-
-                log(f"  ✅ Login OK — URL: {driver.current_url[:50]}...")
-
-                # Lista de relatórios
-                driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
-                time.sleep(4)
-
-                # Fecha modal
-                try:
-                    fechar = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'close')]"))
-                    )
-                    fechar.click()
-                except Exception:
-                    pass
-
-                # Base Geral
-                base = WebDriverWait(driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral - Após 01/05/2009')]"))
-                )
-                driver.execute_script("arguments[0].click()", base)
-                time.sleep(3)
-                log(f"  ✓ Relatório selecionado")
-
-                # Datas
-                campo_de = WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.NAME, "a.dt_precadastro_de"))
-                )
-                driver.execute_script("arguments[0].removeAttribute('readonly')", campo_de)
-                driver.execute_script(f"arguments[0].value = '{data_inicio}'", campo_de)
-                campo_ate = driver.find_element(By.NAME, "a.dt_precadastro_ate")
-                driver.execute_script("arguments[0].removeAttribute('readonly')", campo_ate)
-                driver.execute_script(f"arguments[0].value = '{data_fim}'", campo_ate)
-                log(f"  ✓ Datas preenchidas")
-
-                # Checkboxes: ADITIVO(1), NOVO(2), RENEGOCIAÇÃO(3)
-                for valor in ["1", "2", "3"]:
-                    try:
-                        cb = driver.find_element(By.XPATH,
-                            f"//input[@type='checkbox' and @name='g.idtipocontrata' and @value='{valor}']")
-                        if not cb.is_selected():
-                            driver.execute_script("arguments[0].click()", cb)
-                    except Exception:
-                        pass
-                log(f"  ✓ Tipos marcados")
-
-                # Gerar
-                gerar = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatório']"))
-                )
-                driver.execute_script("arguments[0].click()", gerar)
-                time.sleep(4)
-                log(f"  ✓ Relatório solicitado!")
-
-                # Posição na fila
-                posicao = posicao_manual  # usa o valor informado pelo usuário
-                try:
-                    driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
-                    time.sleep(3)
-                    linhas = driver.find_elements(By.XPATH, "//table//tr[contains(.,'pendente')]")
-                    if linhas:
-                        try:
-                            pos = linhas[0].find_element(By.XPATH, ".//td[last()]")
-                            posicao = int(pos.text.strip()) if pos.text.strip().isdigit() else len(linhas)
-                        except Exception:
-                            posicao = len(linhas)
-                    log(f"  📊 Posição na fila: {posicao}")
-                except Exception:
-                    log(f"  ⚠️ Não leu fila, usando posição informada: {posicao}")
-
-                posicoes.append(posicao)
-
+                fazer_login_radar(driver, login, nome, token)
+                add_log(f"  ✅ Login OK")
+                posicao = solicitar_relatorio_radar(driver, data_inicio, data_fim)
+                add_log(f"  ✓ Relatório solicitado! Posição na fila: {posicao}")
+                st.session_state.posicoes.append(posicao)
+            except Exception as e:
+                add_log(f"  ❌ Erro: {e}")
+                st.session_state.posicoes.append(st.session_state.posicao_fila_val)
             finally:
                 driver.quit()
-                log(f"  🔒 Sessão de {nome} encerrada.")
+                add_log(f"  🔒 Sessão encerrada")
 
-        # ── Etapa 2: Aguarda emails ──
-        maior_posicao = max(posicoes) if posicoes else posicao_manual
-        tempo_total   = (maior_posicao * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
-        primeira_busca = tempo_total // 2
+        # Calcula espera
+        maior = max(st.session_state.posicoes) if st.session_state.posicoes else st.session_state.posicao_fila_val
+        tempo_total  = (maior * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
+        primeira_min = tempo_total // 2
 
-        log(f"\n⏳ Aguardando {primeira_busca} min antes da primeira verificação de emails...")
-        log(f"   (Tempo total estimado: {tempo_total} min | Posição máxima: {maior_posicao})")
+        add_log(f"📊 Posição máxima: {maior} | Espera total: ~{tempo_total} min")
+        add_log(f"⏳ Aguardando {primeira_min} min antes da primeira verificação de email...")
 
-        time.sleep(primeira_busca * 60)
+        st.session_state.espera_ate = (datetime.now() + timedelta(minutes=primeira_min)).isoformat()
+        st.session_state.etapa = "aguardando"
 
-        desde = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
-        link1 = None
-        link2 = None
-        tentativa = 0
-        limite = 12  # até 60 min depois
+    except Exception as e:
+        add_log(f"❌ Erro no Selenium: {e}")
+        st.session_state.etapa = "erro"
 
-        log(f"\n📧 Iniciando verificação de emails...")
+    st.rerun()
 
-        while tentativa < limite:
-            tentativa += 1
-            log(f"  🔍 Verificação #{tentativa}...")
+# ── Etapa: Aguardando ──
+elif st.session_state.etapa == "aguardando":
+    espera_ate = datetime.fromisoformat(st.session_state.espera_ate)
+    restante   = int((espera_ate - datetime.now()).total_seconds())
 
-            if link1 is None:
-                link1 = verificar_email_novo(EMAIL_1, SENHA_1, desde)
-                if link1:
-                    log(f"  ✅ Email 1 recebido!")
-                else:
-                    log(f"  ⏸  Email 1 ainda não chegou")
+    if restante > 0:
+        mins = restante // 60
+        segs = restante % 60
+        st.warning(f"⏳ Aguardando... {mins}m {segs}s para primeira verificação de email")
+        mostrar_logs()
+        time.sleep(30)
+        st.rerun()
+    else:
+        add_log("🔍 Iniciando verificação de emails...")
+        st.session_state.etapa = "imap"
+        st.rerun()
 
-            if link2 is None:
-                link2 = verificar_email_novo(EMAIL_2, SENHA_2, desde)
-                if link2:
-                    log(f"  ✅ Email 2 recebido!")
-                else:
-                    log(f"  ⏸  Email 2 ainda não chegou")
+# ── Etapa: IMAP ──
+elif st.session_state.etapa == "imap":
+    st.warning("📧 Verificando emails...")
+    mostrar_logs()
 
-            if link1 and link2:
-                break
+    st.session_state.tentativa_imap += 1
+    add_log(f"🔍 Verificação #{st.session_state.tentativa_imap}...")
 
-            log(f"  Aguardando {INTERVALO_IMAP//60} min...")
-            time.sleep(INTERVALO_IMAP)
+    if st.session_state.link1 is None:
+        link = verificar_email_novo(EMAIL_1, SENHA_1, st.session_state.desde)
+        if link:
+            st.session_state.link1 = link
+            add_log("  ✅ Email 1 recebido!")
+        else:
+            add_log(f"  ⏸  Email 1 ainda não chegou ({EMAIL_1})")
 
-        if not (link1 and link2):
-            log("❌ Timeout: não recebeu os dois emails. Verifique manualmente.")
-            return
+    if st.session_state.link2 is None:
+        link = verificar_email_novo(EMAIL_2, SENHA_2, st.session_state.desde)
+        if link:
+            st.session_state.link2 = link
+            add_log("  ✅ Email 2 recebido!")
+        else:
+            add_log(f"  ⏸  Email 2 ainda não chegou ({EMAIL_2})")
 
-        # ── Etapa 3: Baixa e junta ──
-        log(f"\n⬇️  Baixando planilhas...")
-        bytes1 = baixar_xlsx(link1)
-        bytes2 = baixar_xlsx(link2)
-        log(f"  ✓ Downloads concluídos")
+    if st.session_state.link1 and st.session_state.link2:
+        add_log("🎯 Ambos os emails recebidos!")
+        st.session_state.etapa = "download"
+        st.rerun()
+    elif st.session_state.tentativa_imap >= 12:
+        add_log("❌ Timeout: emails não chegaram em 60 min.")
+        st.session_state.etapa = "erro"
+        st.rerun()
+    else:
+        add_log(f"  Próxima verificação em {INTERVALO_IMAP//60} min...")
+        time.sleep(INTERVALO_IMAP)
+        st.rerun()
+
+# ── Etapa: Download e Upload ──
+elif st.session_state.etapa == "download":
+    st.warning("⬇️ Baixando planilhas e subindo para o Sheets...")
+    mostrar_logs()
+
+    try:
+        add_log("⬇️ Baixando planilha 1...")
+        bytes1 = baixar_xlsx(st.session_state.link1)
+        add_log("⬇️ Baixando planilha 2...")
+        bytes2 = baixar_xlsx(st.session_state.link2)
 
         df1 = pd.read_excel(bytes1, header=0)
         df2 = pd.read_excel(bytes2, header=0)
         df_final = pd.concat([df1, df2], ignore_index=True)
-        log(f"  📋 Total: {len(df_final)} linhas | {len(df_final.columns)} colunas")
+        add_log(f"📋 Total: {len(df_final)} linhas | {len(df_final.columns)} colunas")
 
-        # ── Etapa 4: Sobe pro Sheets ──
-        subir_para_sheets(df_final, log)
-        log(f"\n🎉 DadosRadar atualizado com sucesso!")
+        add_log("☁️ Subindo para o Google Sheets...")
+        total = subir_para_sheets(df_final)
+        add_log(f"✅ {total} linhas gravadas em '{ABA_DESTINO}'!")
 
+        st.session_state.etapa = "concluido"
     except Exception as e:
-        log(f"\n❌ Erro inesperado: {e}")
+        add_log(f"❌ Erro: {e}")
+        st.session_state.etapa = "erro"
 
+    st.rerun()
 
-# ─────────────────────────────────────────────
-# INTERFACE
-# ─────────────────────────────────────────────
-
-st.markdown("### ⚙️ Configuração da atualização")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.info("""
-    **O que este processo faz:**
-    1. 🤖 Faz login automático nas duas contas do Radar TIM
-    2. 📋 Solicita o relatório **Base Geral – Após 01/05/2009** com filtros ADITIVO, NOVO e RENEGOCIAÇÃO
-    3. ⏳ Aguarda os emails chegarem (baseado na posição na fila)
-    4. ⬇️ Baixa os dois arquivos e consolida
-    5. ☁️ Sobe tudo para a aba **DadosRadar** no Google Sheets
-    """)
-
-with col2:
-    posicao_fila = st.number_input(
-        "Posição estimada na fila",
-        min_value=1, max_value=50, value=3,
-        help="Se souber a posição atual na fila do Radar, informe aqui. Cada posição = ~7 min."
-    )
-
-    tempo_est = (posicao_fila * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
-    primeira  = tempo_est // 2
-    st.caption(f"⏱ Tempo total estimado: **~{tempo_est} min**")
-    st.caption(f"🔍 Primeira verificação em: **~{primeira} min**")
-
-st.markdown("---")
-
-# Estado da execução
-if "rodando" not in st.session_state:
-    st.session_state.rodando = False
-
-if not st.session_state.rodando:
-    if st.button("🚀 Iniciar Atualização", type="primary", use_container_width=True):
-        st.session_state.rodando = True
+# ── Concluído ──
+elif st.session_state.etapa == "concluido":
+    st.success("🎉 DadosRadar atualizado com sucesso!")
+    mostrar_logs()
+    if st.button("🔄 Nova atualização", use_container_width=True):
+        st.session_state.etapa = "idle"
+        st.session_state.logs = []
         st.rerun()
-else:
-    st.warning("⏳ Processo em andamento... Não feche esta página.")
-    log_container = st.empty()
-    log_container.code("Iniciando...")
 
-    # Roda em thread para não travar o Streamlit
-    t = threading.Thread(
-        target=fluxo_completo,
-        args=(posicao_fila, log_container),
-        daemon=True
-    )
-    t.start()
-    t.join()
-
-    st.session_state.rodando = False
-    if st.button("🔄 Nova atualização"):
+# ── Erro ──
+elif st.session_state.etapa == "erro":
+    st.error("❌ Processo encerrado com erro. Veja os logs abaixo.")
+    mostrar_logs()
+    if st.button("🔄 Tentar novamente", use_container_width=True):
+        st.session_state.etapa = "idle"
+        st.session_state.logs = []
         st.rerun()
