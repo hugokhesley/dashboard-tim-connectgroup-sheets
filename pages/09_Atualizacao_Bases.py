@@ -676,8 +676,9 @@ elif st.session_state.etapa == "download":
         add_log("⬇️ Baixando planilha 2...")
         bytes2 = baixar_xlsx(st.session_state.link2)
 
-        df1 = pd.read_excel(bytes1, header=0)
-        df2 = pd.read_excel(bytes2, header=0)
+        import io
+        df1 = pd.read_excel(io.BytesIO(bytes1), header=0)
+        df2 = pd.read_excel(io.BytesIO(bytes2), header=0)
         df_final = pd.concat([df1, df2], ignore_index=True)
         add_log(f"📋 Total: {len(df_final)} linhas | {len(df_final.columns)} colunas")
 
