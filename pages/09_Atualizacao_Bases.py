@@ -73,6 +73,7 @@ SENHA_2         = st.secrets["email"]["SENHA_2"]
 IMAP_HOST       = st.secrets["email"].get("IMAP_HOST", "imap.titan.email")
 IMAP_PORT       = int(st.secrets["email"].get("IMAP_PORT", 993))
 REMETENTE_RADAR = st.secrets["email"].get("REMETENTE_RADAR", "noreply-radartim@timbrasil.com.br")
+ASSUNTO_RADAR   = "O Radar já terminou de gerar o relatório"
 
 SPREADSHEET_ID  = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 ABA_DESTINO     = "DadosRadar"
@@ -126,7 +127,8 @@ def verificar_email_novo(email_conta, senha, desde):
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(email_conta, senha)
         mail.select("INBOX")
-        status, msgs = mail.search(None, f'FROM "{REMETENTE_RADAR}"')
+        # Busca por assunto (funciona mesmo com emails encaminhados)
+        status, msgs = mail.search(None, f'SUBJECT "{ASSUNTO_RADAR}"')
         if status != "OK" or not msgs[0]:
             mail.logout()
             return None
@@ -585,6 +587,13 @@ elif st.session_state.etapa == "aguardando":
         segs = restante % 60
         st.warning(f"⏳ Aguardando... {mins}m {segs}s para primeira verificação de email")
         mostrar_logs()
+
+        # Botão para pular o countdown
+        if st.button("⚡ Já chegou! Verificar emails agora", type="primary", use_container_width=True):
+            add_log("⚡ Verificação antecipada solicitada!")
+            st.session_state.etapa = "imap"
+            st.rerun()
+
         time.sleep(30)
         st.rerun()
     else:
