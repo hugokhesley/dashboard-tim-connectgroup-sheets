@@ -126,63 +126,84 @@ def verificar_email_novo(email_conta, senha, desde):
     try:
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(email_conta, senha)
-        mail.select("INBOX")
 
-        # Busca emails recentes e filtra por assunto no Python (evita problema de encoding)
+        # Lista todas as pastas disponíveis para buscar na certa
+        _, pastas_raw = mail.list()
+        pastas = []
+        for p in pastas_raw:
+            if p:
+                nome = p.decode(errors="ignore").split('"/"')[-1].strip().strip('"')
+                pastas.append(nome)
+
+        # Prioriza INBOX e qualquer pasta que contenha o Gmail vinculado
+        caixas_buscar = ["INBOX"]
+        for p in pastas:
+            if "gmail" in p.lower() or "totodecasa" in p.lower() or "google" in p.lower() or "@gmail" in p.lower():
+                if p not in caixas_buscar:
+                    caixas_buscar.append(p)
+
         desde_utc = desde.astimezone(timezone.utc)
         data_imap = desde_utc.strftime("%d-%b-%Y")
-        status, msgs = mail.search(None, f'SINCE "{data_imap}"')
 
-        if status != "OK" or not msgs[0]:
-            mail.logout()
-            return None
-
-        ids = msgs[0].split()
-
-        for uid in reversed(ids):
-            status, dados = mail.fetch(uid, "(RFC822)")
-            msg = email.message_from_bytes(dados[0][1])
-
-            # Verifica data
-            data_str = msg.get("Date")
-            if not data_str:
-                continue
+        for caixa in caixas_buscar:
             try:
-                data_email = parsedate_to_datetime(data_str)
-                if data_email.tzinfo is None:
-                    data_email = data_email.replace(tzinfo=timezone.utc)
-                else:
-                    data_email = data_email.astimezone(timezone.utc)
+                # Sempre usa aspas para pastas com caracteres especiais (@, espaços)
+                status_sel, _ = mail.select(f'"{caixa}"')
+                if status_sel != "OK":
+                    continue
             except Exception:
                 continue
 
-            if data_email <= desde_utc:
+            status, msgs = mail.search(None, f'SINCE "{data_imap}"')
+            if status != "OK" or not msgs[0]:
                 continue
 
-            # Filtra por assunto no Python
-            assunto_raw = msg.get("Subject", "")
-            try:
-                partes = decode_header(assunto_raw)
-                assunto = ""
-                for parte, enc in partes:
-                    if isinstance(parte, bytes):
-                        assunto += parte.decode(enc or "utf-8", errors="ignore")
+            ids = msgs[0].split()
+
+            for uid in reversed(ids):
+                status, dados = mail.fetch(uid, "(RFC822)")
+                msg = email.message_from_bytes(dados[0][1])
+
+                # Verifica data
+                data_str = msg.get("Date")
+                if not data_str:
+                    continue
+                try:
+                    data_email = parsedate_to_datetime(data_str)
+                    if data_email.tzinfo is None:
+                        data_email = data_email.replace(tzinfo=timezone.utc)
                     else:
-                        assunto += parte
-            except Exception:
-                assunto = assunto_raw
+                        data_email = data_email.astimezone(timezone.utc)
+                except Exception:
+                    continue
 
-            if "Radar" not in assunto and "radar" not in assunto:
-                continue
+                if data_email <= desde_utc:
+                    continue
 
-            # Extrai o link do corpo
-            for parte in msg.walk():
-                if parte.get_content_type() in ("text/plain", "text/html"):
-                    corpo = parte.get_payload(decode=True).decode(errors="ignore")
-                    match = re.search(r'https://radar\.timbrasil\.com\.br/[^\s"<>\)]+', corpo)
-                    if match:
-                        mail.logout()
-                        return match.group(0).strip()
+                # Filtra por assunto no Python
+                assunto_raw = msg.get("Subject", "")
+                try:
+                    partes = decode_header(assunto_raw)
+                    assunto = ""
+                    for parte, enc in partes:
+                        if isinstance(parte, bytes):
+                            assunto += parte.decode(enc or "utf-8", errors="ignore")
+                        else:
+                            assunto += parte
+                except Exception:
+                    assunto = assunto_raw
+
+                if "Radar" not in assunto and "radar" not in assunto:
+                    continue
+
+                # Extrai o link do corpo
+                for parte in msg.walk():
+                    if parte.get_content_type() in ("text/plain", "text/html"):
+                        corpo = parte.get_payload(decode=True).decode(errors="ignore")
+                        match = re.search(r'https://radar\.timbrasil\.com\.br/[^\s"<>\)]+', corpo)
+                        if match:
+                            mail.logout()
+                            return match.group(0).strip()
 
         mail.logout()
         return None
