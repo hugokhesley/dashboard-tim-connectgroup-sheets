@@ -127,16 +127,23 @@ def verificar_email_novo(email_conta, senha, desde):
         mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
         mail.login(email_conta, senha)
         mail.select("INBOX")
-        # Busca por assunto (funciona mesmo com emails encaminhados)
-        status, msgs = mail.search(None, f'SUBJECT "{ASSUNTO_RADAR}"')
+
+        # Busca emails recentes e filtra por assunto no Python (evita problema de encoding)
+        desde_utc = desde.astimezone(timezone.utc)
+        data_imap = desde_utc.strftime("%d-%b-%Y")
+        status, msgs = mail.search(None, f'SINCE "{data_imap}"')
+
         if status != "OK" or not msgs[0]:
             mail.logout()
             return None
+
         ids = msgs[0].split()
-        desde_utc = desde.astimezone(timezone.utc)
+
         for uid in reversed(ids):
             status, dados = mail.fetch(uid, "(RFC822)")
             msg = email.message_from_bytes(dados[0][1])
+
+            # Verifica data
             data_str = msg.get("Date")
             if not data_str:
                 continue
@@ -148,8 +155,27 @@ def verificar_email_novo(email_conta, senha, desde):
                     data_email = data_email.astimezone(timezone.utc)
             except Exception:
                 continue
+
             if data_email <= desde_utc:
-                break
+                continue
+
+            # Filtra por assunto no Python
+            assunto_raw = msg.get("Subject", "")
+            try:
+                partes = decode_header(assunto_raw)
+                assunto = ""
+                for parte, enc in partes:
+                    if isinstance(parte, bytes):
+                        assunto += parte.decode(enc or "utf-8", errors="ignore")
+                    else:
+                        assunto += parte
+            except Exception:
+                assunto = assunto_raw
+
+            if "Radar" not in assunto and "radar" not in assunto:
+                continue
+
+            # Extrai o link do corpo
             for parte in msg.walk():
                 if parte.get_content_type() in ("text/plain", "text/html"):
                     corpo = parte.get_payload(decode=True).decode(errors="ignore")
@@ -157,6 +183,7 @@ def verificar_email_novo(email_conta, senha, desde):
                     if match:
                         mail.logout()
                         return match.group(0).strip()
+
         mail.logout()
         return None
     except Exception:
