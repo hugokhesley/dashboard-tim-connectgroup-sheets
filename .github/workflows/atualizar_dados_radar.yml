@@ -1,0 +1,57 @@
+name: Atualizar DadosRadar
+
+on:
+  # Acionamento manual via API (disparado pelo dashboard)
+  workflow_dispatch:
+    inputs:
+      posicao_fila:
+        description: 'Posição estimada na fila do Radar'
+        required: false
+        default: '3'
+
+  # Agendamento automático diário (horário de Brasília = UTC-3)
+  # Ajuste o horário abaixo conforme necessário
+  # Exemplo: 06:00 BRT = 09:00 UTC
+  schedule:
+    - cron: '0 9 * * 1-5'  # Segunda a sexta às 06:00 BRT
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install pandas openpyxl gspread google-auth requests securid selenium webdriver-manager
+
+      - name: Instalar Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Criar arquivo de credenciais Google
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Criar arquivos SDTID
+        run: |
+          echo '${{ secrets.SDTID_T3729525_B64 }}' | base64 -d > T3729525_001938489117.sdtid
+          echo '${{ secrets.SDTID_T3761125_B64 }}' | base64 -d > T3761125_001938495598.sdtid
+
+      - name: Executar atualização
+        env:
+          EMAIL_1: ${{ secrets.IMAP_EMAIL_1 }}
+          SENHA_1: ${{ secrets.IMAP_SENHA_1 }}
+          EMAIL_2: ${{ secrets.IMAP_EMAIL_2 }}
+          SENHA_2: ${{ secrets.IMAP_SENHA_2 }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          POSICAO_FILA: ${{ github.event.inputs.posicao_fila || '3' }}
+        run: |
+          python actions_runner.py
