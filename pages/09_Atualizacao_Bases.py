@@ -496,6 +496,10 @@ if usa_github_actions:
             github_repo  = st.secrets.get("GITHUB_REPO", "hugokhesley/dashboard-tim-connectgroup-sheets")
             workflow_id  = "atualizar_dados_radar.yml"
 
+            if not github_token:
+                st.error("❌ Secret `GITHUB_PAT` não encontrado ou vazio no Streamlit.")
+                return False
+
             url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_id}/dispatches"
             headers = {
                 "Authorization": f"Bearer {github_token}",
@@ -507,7 +511,12 @@ if usa_github_actions:
                 "inputs": {"posicao_fila": str(posicao)}
             }
             resp = requests.post(url, json=payload, headers=headers, timeout=15)
-            return resp.status_code == 204
+
+            if resp.status_code != 204:
+                st.error(f"❌ GitHub API retornou status {resp.status_code}: {resp.text}")
+                return False
+
+            return True
         except Exception as e:
             st.error(f"Erro ao disparar workflow: {e}")
             return False
