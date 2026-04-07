@@ -476,32 +476,111 @@ st.markdown("""
 st.markdown("---")
 st.markdown("### ⚙️ Configuração da Atualização Automática")
 
-col1, col2 = st.columns([2, 1])
+# ── Modo de execução ──────────────────────────────────────────────
+modo = st.radio(
+    "Modo de execução:",
+    ["🚀 GitHub Actions (recomendado — roda na nuvem, pode fechar a aba)",
+     "🖥️ Streamlit (roda aqui — mantenha a aba aberta)"],
+    key="modo_execucao"
+)
 
-with col1:
-    st.info("""
-    **O que este processo faz:**
-    1. 🤖 Login automático nas duas contas do Radar TIM (headless)
-    2. 📋 Solicita **Base Geral – Após 01/05/2009** com filtros ADITIVO, NOVO e RENEGOCIAÇÃO
-    3. ⏳ Aguarda os emails chegarem
-    4. ⬇️ Baixa os dois arquivos e consolida
-    5. ☁️ Sobe para a aba **DadosRadar** no Google Sheets
-    """)
+usa_github_actions = "GitHub Actions" in modo
 
-with col2:
-    posicao_fila = st.number_input(
-        "Posição estimada na fila",
-        min_value=1, max_value=50, value=3,
-        help="Cada posição ≈ 7 min"
-    )
-    tempo_est = (posicao_fila * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
-    primeira  = tempo_est // 2
-    st.caption(f"⏱ Tempo total: **~{tempo_est} min**")
-    st.caption(f"🔍 Primeira verificação: **~{primeira} min**")
+if usa_github_actions:
+    st.success("✅ **Modo recomendado!** O processo roda no servidor do GitHub — você pode fechar esta aba tranquilamente.")
 
-st.markdown("---")
+    def disparar_github_actions(posicao: int) -> bool:
+        """Dispara o workflow via API do GitHub."""
+        try:
+            github_token = st.secrets.get("GITHUB_PAT", "")
+            github_repo  = st.secrets.get("GITHUB_REPO", "hugokhesley/dashboard-tim-connectgroup-sheets")
+            workflow_id  = "atualizar_dados_radar.yml"
 
-# ── Inicializa estado ──
+            url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_id}/dispatches"
+            headers = {
+                "Authorization": f"Bearer {github_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28"
+            }
+            payload = {
+                "ref": "main",
+                "inputs": {"posicao_fila": str(posicao)}
+            }
+            resp = requests.post(url, json=payload, headers=headers, timeout=15)
+            return resp.status_code == 204
+        except Exception as e:
+            st.error(f"Erro ao disparar workflow: {e}")
+            return False
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.info("""
+        **O que este processo faz:**
+        1. 🤖 Login automático nas duas contas do Radar TIM
+        2. 📋 Solicita **Base Geral – Após 01/05/2009** com filtros ADITIVO, NOVO e RENEGOCIAÇÃO
+        3. ⏳ Aguarda os emails chegarem automaticamente
+        4. ⬇️ Baixa os dois arquivos e consolida
+        5. ☁️ Sobe para a aba **DadosRadar** no Google Sheets
+        """)
+    with col2:
+        posicao_fila = st.number_input(
+            "Posição estimada na fila",
+            min_value=1, max_value=100, value=3,
+            help="Cada posição ≈ 7 min"
+        )
+        tempo_est = (posicao_fila * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
+        st.caption(f"⏱ Tempo total: **~{tempo_est} min**")
+
+    st.markdown("---")
+
+    if st.button("🚀 Iniciar Atualização via GitHub Actions", type="primary", use_container_width=True):
+        with st.spinner("Disparando workflow..."):
+            ok = disparar_github_actions(posicao_fila)
+        if ok:
+            st.success("""
+            ✅ **Workflow iniciado com sucesso!**
+
+            O processo está rodando no servidor do GitHub.
+            Você pode **fechar esta aba** — o DadosRadar será atualizado automaticamente.
+
+            Acompanhe o progresso em:
+            [github.com/hugokhesley/dashboard-tim-connectgroup-sheets/actions](https://github.com/hugokhesley/dashboard-tim-connectgroup-sheets/actions)
+            """)
+        else:
+            st.error("❌ Falha ao disparar o workflow. Verifique o secret `GITHUB_PAT` no Streamlit.")
+
+    st.markdown("---")
+
+# ── Modo Streamlit (aba aberta) ──────────────────────────────────
+if not usa_github_actions:
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.info("""
+        **O que este processo faz:**
+        1. 🤖 Login automático nas duas contas do Radar TIM (headless)
+        2. 📋 Solicita **Base Geral – Após 01/05/2009** com filtros ADITIVO, NOVO e RENEGOCIAÇÃO
+        3. ⏳ Aguarda os emails chegarem
+        4. ⬇️ Baixa os dois arquivos e consolida
+        5. ☁️ Sobe para a aba **DadosRadar** no Google Sheets
+        """)
+        st.warning("⚠️ Mantenha esta aba aberta durante todo o processo.")
+    with col2:
+        posicao_fila = st.number_input(
+            "Posição estimada na fila",
+            min_value=1, max_value=50, value=3,
+            help="Cada posição ≈ 7 min"
+        )
+        tempo_est = (posicao_fila * MINUTOS_POR_POSICAO) + MARGEM_EXTRA
+        primeira  = tempo_est // 2
+        st.caption(f"⏱ Tempo total: **~{tempo_est} min**")
+        st.caption(f"🔍 Primeira verificação: **~{primeira} min**")
+
+    st.markdown("---")
+
+# Para o modo GitHub Actions aqui — não mostra o fluxo Streamlit
+if usa_github_actions:
+    st.stop()
+
 if "etapa" not in st.session_state:
     st.session_state.etapa = "idle"
 if "logs" not in st.session_state:
