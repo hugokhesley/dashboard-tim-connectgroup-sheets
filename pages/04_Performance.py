@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 MESES_PT = {
     "01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril",
@@ -10,7 +10,7 @@ import pandas as pd
 from data_loader import (
     load_data, load_bko, load_colaboradores, apply_filters, get_parceiros,
     STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko,
-    registrar_acesso
+    registrar_acesso, get_gspread_client
 )
 from auth import require_login
 
@@ -24,8 +24,9 @@ st.set_page_config(
 username = require_login("performance")
 registrar_acesso("performance", username=username)
 
-MES_ALVO = datetime.now().strftime("%m/%Y")
+MES_ALVO          = datetime.now().strftime("%m/%Y")
 META_VENDEDOR_PAD = 850
+SPREADSHEET_ID    = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 
 def _meta_vend(nome: str, meta_dict: dict) -> float:
     return meta_dict.get(nome, META_VENDEDOR_PAD)
@@ -38,6 +39,93 @@ DESTINATARIOS_FULL = [
     "angelo@connectgroup.solutions",
     "andrey.albuquerque@connectgroup.solutions",
 ]
+
+# ── Classificação funil discador ──────────────────────────────────
+CONTATO_EFETIVO = [
+    "Contato realizado", "Desligou Apos Atendimento", "Ciente Nao tem Interesse",
+    "Nao Deseja Ouvir Oferta", "Ligar Mais Tarde", "Oferta WhattsApp",
+    "Finalizando WhattsApp", "Cliente Claro", "Cliente TIM",
+    "Possui um Contrato Recente", "Blacklist",
+]
+PROPOSTA_ENVIADA = [
+    "Oferta WhattsApp", "Finalizando WhattsApp", "Contato realizado", "Ligar Mais Tarde",
+]
+
+def _classificar_funil(resultado: str) -> str:
+    r = str(resultado).split("(")[0].strip()
+    for p in PROPOSTA_ENVIADA:
+        if p.lower() in r.lower():
+            return "proposta"
+    for p in CONTATO_EFETIVO:
+        if p.lower() in r.lower():
+            return "contato"
+    return "nao_alcancado"
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_discador_resumo():
+    """Carrega aba Discador e retorna resumo por vendedor (hoje e mês)."""
+    try:
+        gc = get_gspread_client()
+        planilha = gc.open_by_key(SPREADSHEET_ID)
+        aba = planilha.worksheet("Discador")
+        dados = aba.get_all_records()
+        if not dados:
+            return pd.DataFrame()
+        df = pd.DataFrame(dados)
+        df.columns = [c.strip() for c in df.columns]
+        rename = {
+            "Data / Hora": "data_hora", "Usuário": "usuario",
+            "Resultado": "resultado", "Campanha": "campanha",
+            "Duração": "duracao",
+        }
+        df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+        df = df[df["usuario"].notna() & (df["usuario"].str.strip() != "")]
+        df["data_hora"] = pd.to_datetime(df["data_hora"], dayfirst=True, errors="coerce")
+        df["data"]      = df["data_hora"].dt.date
+        df["funil"]     = df["resultado"].apply(_classificar_funil)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def resumo_discador_por_lider(df_disc, colab):
+    """Retorna dict {lider: [{vendedor, total, contato, proposta}]}"""
+    if df_disc.empty or colab is None or colab.empty:
+        return {}
+
+    # Mapa vendedor → lider
+    lider_map = {}
+    for _, row in colab.iterrows():
+        lider_map[str(row["vendedor"]).strip().upper()] = str(row["lider"]).strip()
+
+    df_disc["lider"] = df_disc["usuario"].apply(
+        lambda u: lider_map.get(str(u).strip().upper(), "Sem Equipe")
+    )
+
+    # Hoje e mês atual
+    hoje = date.today()
+    mes_ini = hoje.replace(day=1)
+
+    resultado = {}
+    for lider in df_disc["lider"].unique():
+        if lider == "Sem Equipe":
+            continue
+        dl = df_disc[df_disc["lider"] == lider]
+        vendedores = []
+        for vend in sorted(dl["usuario"].unique()):
+            dv      = dl[dl["usuario"] == vend]
+            dv_hoje = dv[dv["data"] == hoje]
+            dv_mes  = dv[dv["data"] >= mes_ini]
+            vendedores.append({
+                "vendedor":        vend.split()[0].title(),
+                "hoje_total":      len(dv_hoje),
+                "hoje_contato":    len(dv_hoje[dv_hoje["funil"].isin(["contato","proposta"])]),
+                "hoje_proposta":   len(dv_hoje[dv_hoje["funil"] == "proposta"]),
+                "mes_total":       len(dv_mes),
+                "mes_contato":     len(dv_mes[dv_mes["funil"].isin(["contato","proposta"])]),
+                "mes_proposta":    len(dv_mes[dv_mes["funil"] == "proposta"]),
+            })
+        resultado[lider] = vendedores
+    return resultado
 
 # ── Telegram ──────────────────────────────────────────────────────
 # Token do bot e chat_ids dos líderes
@@ -662,6 +750,10 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
     # ── Telegram ──────────────────────────────────────────────────
     if enviar_tg and lideres_selecionados:
         resultados_tg = {}
+        # Carrega resumo do discador
+        disc_df = load_discador_resumo()
+        disc_resumo = resumo_discador_por_lider(disc_df, colab) if not disc_df.empty else {}
+
         with st.spinner("Enviando pelo Telegram..."):
             for lider in lideres_selecionados:
                 d = dados.get(lider)
@@ -690,7 +782,6 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
                 rec_pip_total = df_pip_lider["preco_oferta"].sum()
                 n_pip = int(df_pip_lider["acessos"].sum())
 
-                # Pipeline por vendedor que ainda não bateu meta
                 pip_por_vend = df_pip_lider.groupby("vendedor_real")["preco_oferta"].sum()
                 linhas_pip = ""
                 for v in d["vendedores"]:
@@ -713,6 +804,28 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
                 pct_eq = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
                 status_equipe = "✅ Meta atingida!" if falta_equipe == 0 else f"🎯 Falta R$ {falta_equipe:,.2f} para meta da equipe"
 
+                # ── Resumo de ligações do discador ─────────────────
+                disc_section = ""
+                vends_disc = disc_resumo.get(lider, [])
+                if vends_disc:
+                    hoje_total   = sum(v["hoje_total"]   for v in vends_disc)
+                    hoje_contato = sum(v["hoje_contato"] for v in vends_disc)
+                    hoje_prop    = sum(v["hoje_proposta"] for v in vends_disc)
+                    tx_hoje = round(hoje_contato / hoje_total * 100, 1) if hoje_total > 0 else 0
+
+                    linhas_disc = ""
+                    for v in vends_disc:
+                        if v["hoje_total"] > 0:
+                            tx_v = round(v["hoje_contato"] / v["hoje_total"] * 100, 1) if v["hoje_total"] > 0 else 0
+                            linhas_disc += f"\n  📞 <b>{v['vendedor']}</b>: {v['hoje_total']} lig. · ✅ {v['hoje_contato']} contatos ({tx_v}%) · 💬 {v['hoje_proposta']} propostas"
+                        else:
+                            linhas_disc += f"\n  ⚪ <b>{v['vendedor']}</b>: sem ligações hoje"
+
+                    disc_section = f"""
+
+📞 <b>Discador — Hoje:</b>
+• Total: {hoje_total} lig. · ✅ {hoje_contato} contatos ({tx_hoje}%) · 💬 {hoje_prop} propostas{linhas_disc}"""
+
                 mensagem = f"""💰 <b>Comissionamento {MES_ALVO} — {lider}</b>
 
 📊 <b>Resumo da equipe ({pct_eq}%):</b>
@@ -721,7 +834,7 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
 • {status_equipe}
 • 🏆 <b>Sua comissão estimada: R$ {d['total_comiss_lider']:,.2f}</b>
 
-👥 <b>Por vendedor:</b>{linhas_vend}{pip_section}
+👥 <b>Por vendedor:</b>{linhas_vend}{pip_section}{disc_section}
 
 📅 <i>{MES_ALVO} · Connect Group</i>"""
 
