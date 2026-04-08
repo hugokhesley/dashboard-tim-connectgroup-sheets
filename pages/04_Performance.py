@@ -324,31 +324,48 @@ def render_visual(df, lideres, lider_sel, meta_dict):
 #  NOVA VISÃO: COMISSIONAMENTO
 # ─────────────────────────────────────────────────────────────────
 
-def calcular_comissionamento(df, lideres, meta_dict):
+def calcular_comissionamento(df, lideres, meta_dict, colab=None):
     """
     Calcula comissionamento de vendedores e líderes.
+    Usa a planilha Colaboradores como base — todos os vendedores aparecem,
+    mesmo os que não ativaram nada no mês.
     Regra:
       - Vendedor: recebe 100% da receita ativada SE receita >= meta (padrão R$850)
       - Líder: recebe 50% da receita de cada vendedor que bateu a meta
-    Retorna dict por líder com dados de cada vendedor.
     """
     df_atv = df[df["mes_ativacao"] == MES_ALVO].copy()
-
-    # Receita ativada por vendedor
     rec_por_vend = df_atv.groupby("vendedor_real")["preco_oferta"].sum()
+
+    # Monta dicionário lider → lista de vendedores a partir do Colaboradores
+    # Se não tiver colab, usa os pedidos como fallback
+    vends_por_lider = {}
+    if colab is not None and not colab.empty:
+        for lider in lideres:
+            if lider == "Sem Equipe":
+                continue
+            # Filtra colaboradores deste líder
+            mask = colab["lider"].str.strip().str.lower() == lider.strip().lower()
+            vends = colab[mask]["vendedor"].dropna().unique().tolist()
+            vends_por_lider[lider] = sorted(vends)
+    else:
+        # Fallback: pega dos pedidos
+        for lider in lideres:
+            if lider == "Sem Equipe":
+                continue
+            dl = df[df["lider"] == lider]
+            vends_por_lider[lider] = sorted([v for v in dl["vendedor_real"].unique() if v != "Sem Vendedor"])
 
     resultado = {}
     for lider in lideres:
         if lider == "Sem Equipe":
             continue
-        dl = df[df["lider"] == lider]
-        vendedores = [v for v in dl["vendedor_real"].unique() if v != "Sem Vendedor"]
 
+        vendedores = vends_por_lider.get(lider, [])
         vendedores_data = []
         total_comiss_lider = 0.0
 
-        for vend in sorted(vendedores):
-            meta = _meta_vend(vend, meta_dict)
+        for vend in vendedores:
+            meta    = _meta_vend(vend, meta_dict)
             receita = rec_por_vend.get(vend, 0.0)
             bateu   = receita >= meta
 
@@ -357,33 +374,32 @@ def calcular_comissionamento(df, lideres, meta_dict):
             total_comiss_lider += comiss_lider
 
             vendedores_data.append({
-                "vendedor":      vend,
-                "meta":          meta,
-                "receita":       receita,
-                "bateu":         bateu,
-                "pct":           min(int(receita / meta * 100), 100) if meta > 0 else 0,
-                "comiss_vend":   comiss_vend,
-                "comiss_lider":  comiss_lider,
+                "vendedor":     vend,
+                "meta":         meta,
+                "receita":      receita,
+                "bateu":        bateu,
+                "pct":          min(int(receita / meta * 100), 100) if meta > 0 else 0,
+                "comiss_vend":  comiss_vend,
+                "comiss_lider": comiss_lider,
             })
 
-        # Meta do líder = soma das metas dos vendedores
         meta_lider = sum(_meta_vend(v, meta_dict) for v in vendedores) if vendedores else 0
         rec_lider  = sum(d["receita"] for d in vendedores_data)
         n_bateram  = sum(1 for d in vendedores_data if d["bateu"])
 
         resultado[lider] = {
-            "vendedores":        vendedores_data,
+            "vendedores":         vendedores_data,
             "total_comiss_lider": total_comiss_lider,
-            "meta_lider":        meta_lider,
-            "rec_lider":         rec_lider,
-            "n_vendedores":      len(vendedores),
-            "n_bateram":         n_bateram,
+            "meta_lider":         meta_lider,
+            "rec_lider":          rec_lider,
+            "n_vendedores":       len(vendedores),
+            "n_bateram":          n_bateram,
         }
 
     return resultado
 
 
-def render_comissionamento(df, lideres, meta_dict):
+def render_comissionamento(df, lideres, meta_dict, colab=None):
     st.markdown('<p class="section-title">💰 Projeção de Comissionamento — Meta x Realizado</p>', unsafe_allow_html=True)
 
     st.info(f"""
@@ -393,7 +409,7 @@ def render_comissionamento(df, lideres, meta_dict):
     • Baseado apenas em **ativações do mês** (mes_ativacao == {MES_ALVO})
     """)
 
-    dados = calcular_comissionamento(df, lideres, meta_dict)
+    dados = calcular_comissionamento(df, lideres, meta_dict, colab=colab)
 
     if not dados:
         st.warning("Nenhum dado de comissionamento disponível.")
@@ -1116,7 +1132,7 @@ def main():
 
     # ── TAB COMISSIONAMENTO ───────────────────────────────────────
     with tab_comiss:
-        render_comissionamento(df, lideres, meta_dict)
+        render_comissionamento(df, lideres, meta_dict, colab=colab)
 
 
 main()
