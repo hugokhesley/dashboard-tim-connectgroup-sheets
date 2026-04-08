@@ -786,6 +786,12 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
     # ── Telegram ──────────────────────────────────────────────────
     if enviar_tg and lideres_selecionados:
         resultados_tg = {}
+        # Carrega admin_lideres antes do loop
+        try:
+            admin_lideres = dict(st.secrets.get("telegram", {}).get("admin", {}))
+        except Exception:
+            admin_lideres = {}
+
         # Carrega resumo do discador
         disc_df = load_discador_resumo()
         disc_resumo = resumo_discador_por_lider(disc_df, colab) if not disc_df.empty else {}
@@ -877,15 +883,15 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
                 ok = enviar_telegram(str(chat_id), mensagem)
                 resultados_tg[lider] = "✅ Enviado" if ok else "❌ Falha no envio"
 
+                # Envia cópia para o admin com indicação de qual líder recebeu
+                for nome_admin, chat_admin in admin_lideres.items():
+                    msg_copia = f"📋 <b>[CÓPIA — enviado para {lider}]</b>\n\n{mensagem}"
+                    enviar_telegram(str(chat_admin), msg_copia)
+
         for lider, status in resultados_tg.items():
             st.caption(f"{status} → {lider}")
 
         # Envia resumo consolidado para o admin
-        try:
-            admin_lideres = dict(st.secrets.get("telegram", {}).get("admin", {}))
-        except Exception:
-            admin_lideres = {}
-
         if admin_lideres:
             linhas_admin = ""
             total_comiss_geral = 0
