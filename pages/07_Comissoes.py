@@ -1,10 +1,10 @@
 """
-07_Comissoes.py — Comissão de Parceiros (Versão Estável - Etapas 1 e 2 funcionando)
+07_Comissoes.py — Comissão de Parceiros (Versão Simples e Funcional)
 """
 
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 import sys
 import os
 
@@ -13,24 +13,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from auth import require_login
 from data_loader import get_gspread_client, registrar_acesso
 
-st.set_page_config(
-    page_title="Connect Group | Comissões Parceiros",
-    page_icon="💰",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
+st.set_page_config(page_title="Comissões Parceiros", page_icon="💰", layout="wide")
 username = require_login("comissoes")
 registrar_acesso("Comissões Parceiros", username=username)
 
-# ==================== WEASYPRINT (opcional por enquanto) ====================
-try:
-    from weasyprint import HTML
-    WEASYPRINT_AVAILABLE = True
-except Exception:
-    WEASYPRINT_AVAILABLE = False
-
 # ==================== CONSTANTES ====================
+TIPOS_PRODUTO = [
+    "Plano Voz (Móvel)", "Plano Dados (Móvel)", "Plug In", "M2M",
+    "TIM Office Fixo", "Ultra Fibra (CNPJ)", "VAS",
+    "Migração Pré→Pós Corporate", "Outro"
+]
+
 MESES_PT = {"01":"Jan","02":"Fev","03":"Mar","04":"Abr","05":"Mai","06":"Jun","07":"Jul","08":"Ago",
             "09":"Set","10":"Out","11":"Nov","12":"Dez"}
 
@@ -66,26 +59,8 @@ if "com_step" not in st.session_state:
         "com_step": 1,
         "com_parceiro": None,
         "com_vendas": [],
-        "com_fator": 0.0,
-        "com_fator_label": "",
-        "com_imposto": 6.0,
         "com_comp": date.today().strftime("%Y-%m"),
-        "com_vencimento": (date.today() + timedelta(days=10)).isoformat(),
-        "com_pix_tipo": "CNPJ",
-        "com_pix_chave": "",
     })
-
-# ==================== SIDEBAR ====================
-with st.sidebar:
-    st.markdown("### 💰 Comissão de Parceiros")
-    st.progress(min(st.session_state.com_step / 5, 1.0))
-
-    if st.button("🔄 Nova Emissão", use_container_width=True):
-        for key in list(st.session_state.keys()):
-            if key.startswith("com_"):
-                del st.session_state[key]
-        st.session_state.com_step = 1
-        st.rerun()
 
 # ==================== TÍTULO ====================
 st.title("💰 Emissão de Comissão de Parceiros")
@@ -93,7 +68,7 @@ st.caption("Conforme Ordem de Serviço TIM SMB OS_2025_29")
 
 step = st.session_state.com_step
 
-# ==================== ETAPA 1: PARCEIRO ====================
+# ==================== ETAPA 1 ====================
 if step == 1:
     st.subheader("1. Selecionar ou Cadastrar Parceiro")
     
@@ -110,7 +85,6 @@ if step == 1:
             
             if sel != "— Selecione um parceiro —":
                 p = df_parc[df_parc["nome"] == sel].iloc[0].to_dict()
-                
                 col1, col2, col3 = st.columns(3)
                 col1.metric("CNPJ/CPF", p.get("cnpj_cpf", "—"))
                 col2.metric("E-mail", p.get("email", "—"))
@@ -118,8 +92,6 @@ if step == 1:
                 
                 if st.button("✅ Continuar com este parceiro", type="primary", use_container_width=True):
                     st.session_state.com_parceiro = p
-                    st.session_state.com_pix_chave = p.get("pix_chave", "")
-                    st.session_state.com_pix_tipo = p.get("pix_tipo", "CNPJ")
                     st.session_state.com_step = 2
                     st.rerun()
 
@@ -142,11 +114,11 @@ if step == 1:
                 else:
                     st.error("Nome, CNPJ/CPF e Chave PIX são obrigatórios.")
 
-# ==================== ETAPA 2: VENDAS ====================
+# ==================== ETAPA 2 ====================
 elif step == 2:
     if not st.session_state.com_parceiro:
-        st.error("Parceiro não selecionado. Volte para a Etapa 1.")
-        if st.button("Voltar para Etapa 1"):
+        st.error("Parceiro não selecionado.")
+        if st.button("Voltar"):
             st.session_state.com_step = 1
             st.rerun()
     else:
@@ -160,21 +132,25 @@ elif step == 2:
             valor = c3.number_input("Valor da Venda (R$)", min_value=0.0, step=0.01, format="%.2f")
             tipo = c4.selectbox("Tipo de Produto", TIPOS_PRODUTO)
             
-            if st.form_submit_button("➕ Adicionar Venda"):
+            submit = st.form_submit_button("➕ Adicionar Venda", type="primary")
+
+            if submit:
                 if desc and valor > 0:
                     st.session_state.com_vendas.append({
-                        "desc": desc, 
-                        "comp": comp, 
-                        "valor": valor, 
+                        "desc": desc,
+                        "comp": comp,
+                        "valor": valor,
                         "tipo": tipo
                     })
                     st.rerun()
+                else:
+                    st.error("Descrição e valor são obrigatórios.")
 
-        # Mostrar vendas adicionadas
+        # Mostrar vendas já adicionadas
         if st.session_state.com_vendas:
             df_v = pd.DataFrame(st.session_state.com_vendas)
             st.dataframe(df_v, use_container_width=True, hide_index=True)
-            st.metric("Total Base de Vendas", fmt_brl(df_v["valor"].sum()))
+            st.metric("Total Base", fmt_brl(df_v["valor"].sum()))
 
         col1, col2 = st.columns([1, 3])
         if col1.button("← Voltar"):
@@ -183,10 +159,8 @@ elif step == 2:
         if col2.button("Próximo →", type="primary", disabled=len(st.session_state.com_vendas) == 0):
             st.session_state.com_step = 3
             st.rerun()
-        else:
-            st.info("Adicione pelo menos uma venda para continuar.")
 
 else:
-    st.info(f"Etapa {step} em desenvolvimento.")
+    st.info(f"Etapa {step} ainda em desenvolvimento.")
 
-st.caption("Sistema de Comissões Connect Group • Versão Estável")
+st.caption("Sistema de Comissões Connect Group")
