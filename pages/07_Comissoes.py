@@ -194,6 +194,41 @@ def load_historico_emissoes() -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────
+# ENVIO DE E-MAIL VIA TITAN SMTP
+# ─────────────────────────────────────────────
+def enviar_email_parceiro(destinatario: str, assunto: str, corpo_texto: str) -> tuple:
+    """
+    Envia e-mail via Titan SMTP (smtp.titan.email:465 SSL).
+    Secrets: [email] host, port, user, password, from
+    Retorna (sucesso: bool, mensagem: str)
+    """
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    try:
+        cfg       = st.secrets["email"]
+        host      = cfg.get("host", "smtp.titan.email")
+        port      = int(cfg.get("port", 465))
+        user      = cfg["user"]
+        pwd       = cfg["password"]
+        from_addr = cfg.get("from", user)
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = assunto
+        msg["From"]    = from_addr
+        msg["To"]      = destinatario
+        msg.attach(MIMEText(corpo_texto, "plain", "utf-8"))
+
+        with smtplib.SMTP_SSL(host, port) as server:
+            server.login(user, pwd)
+            server.sendmail(from_addr, [destinatario], msg.as_string())
+
+        return True, "E-mail enviado com sucesso."
+    except Exception as e:
+        return False, str(e)
+
+
+# ─────────────────────────────────────────────
 # FORMATAÇÃO
 # ─────────────────────────────────────────────
 def fmt_brl(v: float) -> str:
@@ -311,7 +346,7 @@ if st.session_state.com_mostrar_historico:
 # ─────────────────────────────────────────────
 st.title("💰 Comissão de Parceiros")
 step = st.session_state.com_step
-st.progress(step / 5, text=f"Etapa {step} de 5")
+st.progress(min(step / 5, 1.0), text=f"Etapa {min(step, 5)} de 5")
 
 
 # ══════════════════════════════════════════════
@@ -792,6 +827,24 @@ Connect Group Telecom"""
 
         if ok:
             st.session_state.com_registro_ts = ts_ou_erro
+
+            # Envia e-mail para o parceiro se canal incluir e-mail e e-mail estiver preenchido
+            email_dest = p.get("email", "").strip()
+            if canal_f in ("E-mail", "E-mail + WhatsApp") and email_dest:
+                with st.spinner("Enviando e-mail ao parceiro..."):
+                    assunto_email = f"Termo de Comissionamento — {comp_str_raw} — {p.get('nome', '')}"
+                    ok_email, msg_email = enviar_email_parceiro(
+                        destinatario=email_dest,
+                        assunto=assunto_email,
+                        corpo_texto=email_preview,
+                    )
+                if ok_email:
+                    st.session_state.com_email_status = f"✅ E-mail enviado para {email_dest}"
+                else:
+                    st.session_state.com_email_status = f"⚠️ Registrado, mas falha no e-mail: {msg_email}"
+            else:
+                st.session_state.com_email_status = None
+
             st.session_state.com_step = 6
             st.rerun()
         else:
@@ -808,6 +861,14 @@ elif step == 6:
 
     st.success("✅ Emissão registrada com sucesso!")
     st.markdown(f"**Registrado em:** {st.session_state.com_registro_ts}")
+
+    # Status do envio de e-mail
+    email_status = st.session_state.get("com_email_status")
+    if email_status:
+        if email_status.startswith("✅"):
+            st.success(email_status)
+        else:
+            st.warning(email_status)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Parceiro", p.get("nome", ""))
