@@ -64,6 +64,12 @@ def _classificar_funil(resultado: str) -> str:
 @st.cache_data(ttl=120, show_spinner=False)
 def load_discador_resumo():
     """Carrega aba Discador e retorna resumo por vendedor (hoje e mês)."""
+    # De/Para: nomes do discador → nomes do dashboard
+    DEPARA = {
+        "MARIA GABRIELLI CORREIA BARROS":     "MARIA GABRIELLI CORREIA",
+        "JOSE LUIZ FELIX BARBOSA":            "JOSE LUIZ FELX BARBOSA",
+        "KENNIA ANDRIELY DOS SANTOS MARINHO": "KENNIA ANDRIELY DOS SANTOS",
+    }
     try:
         gc = get_gspread_client()
         planilha = gc.open_by_key(SPREADSHEET_ID)
@@ -80,6 +86,10 @@ def load_discador_resumo():
         }
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
         df = df[df["usuario"].notna() & (df["usuario"].str.strip() != "")]
+        # Aplica De/Para
+        df["usuario"] = df["usuario"].apply(
+            lambda u: DEPARA.get(str(u).strip().upper(), str(u).strip()) if pd.notna(u) else u
+        )
         df["data_hora"] = pd.to_datetime(df["data_hora"], dayfirst=True, errors="coerce")
         df["data"]      = df["data_hora"].dt.date
         df["funil"]     = df["resultado"].apply(_classificar_funil)

@@ -113,18 +113,45 @@ def load_discador():
         df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
         # Filtra sem usuário
         df = df[df["usuario"].notna() & (df["usuario"].str.strip() != "")]
+
+        # ── De/Para: corrige nomes do discador para nomes do dash ──
+        DEPARA = {
+            "MARIA GABRIELLI CORREIA BARROS": "MARIA GABRIELLI CORREIA",
+            "JOSE LUIZ FELIX BARBOSA":        "JOSE LUIZ FELX BARBOSA",
+            "KENNIA ANDRIELY DOS SANTOS MARINHO": "KENNIA ANDRIELY DOS SANTOS",
+        }
+        df["usuario"] = df["usuario"].apply(
+            lambda u: DEPARA.get(str(u).strip().upper(), str(u).strip()) if pd.notna(u) else u
+        )
+
         # Parse data
         df["data_hora"] = pd.to_datetime(df["data_hora"], dayfirst=True, errors="coerce")
         df["data"]      = df["data_hora"].dt.date
         df["hora"]      = df["data_hora"].dt.hour
-        # Duração em segundos
+
+        # Duração — mantém string original (ex: 00:07:22) e calcula segundos para cálculos
+        def dur_normalizar(d):
+            """Garante formato HH:MM:SS."""
+            try:
+                parts = str(d).strip().split(":")
+                if len(parts) == 3:
+                    return f"{int(parts[0]):02d}:{int(parts[1]):02d}:{int(parts[2]):02d}"
+                elif len(parts) == 2:
+                    return f"00:{int(parts[0]):02d}:{int(parts[1]):02d}"
+            except Exception:
+                pass
+            return "00:00:00"
+
         def dur_seg(d):
             try:
-                parts = str(d).split(":")
+                parts = str(d).strip().split(":")
                 return int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
             except Exception:
                 return 0
-        df["dur_seg"] = df["duracao"].apply(dur_seg)
+
+        df["duracao"]  = df["duracao"].apply(dur_normalizar)
+        df["dur_seg"]  = df["duracao"].apply(dur_seg)
+
         # Classificação funil
         df["funil"] = df["resultado"].apply(classificar)
         return df
