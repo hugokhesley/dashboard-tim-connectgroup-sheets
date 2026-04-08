@@ -259,27 +259,49 @@ def gerar_pdf_contrato(dados: dict) -> bytes:
     story.append(hr())
 
     # 3. Vendas
+    # Largura útil da página: A4 - margens = 21cm - 5cm = 16cm
+    # Colunas: Descrição(8) | Comp(2) | Tipo(3) | Valor(3) = 16cm
     story.append(Paragraph(f"3. VENDAS DO PERÍODO — Competência {p['comp']}", s_h))
-    tab_data = [["Produto / Descrição", "Comp.", "Tipo", "Valor Venda"]]
-    for v in vendas:
-        tab_data.append([v["desc"], v["comp"], v["tipo"],
-                         f"R$ {v['valor']:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
-    tab_data.append(["TOTAL BASE", "", "", f"R$ {base:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
 
-    t = Table(tab_data, colWidths=[8*cm, 2.2*cm, 3*cm, 2.8*cm])
+    s_cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=7.5, leading=10, wordWrap="CJK")
+    s_cell_bold = ParagraphStyle("cell_bold", parent=styles["Normal"], fontSize=7.5, leading=10, fontName="Helvetica-Bold")
+    s_cell_r = ParagraphStyle("cell_r", parent=styles["Normal"], fontSize=7.5, leading=10, alignment=2)  # right
+
+    def _p(txt, style=None): return Paragraph(str(txt), style or s_cell)
+
+    tab_data = [[
+        _p("Produto / Descrição", s_cell_bold),
+        _p("Comp.", s_cell_bold),
+        _p("Tipo", s_cell_bold),
+        _p("Valor Venda", s_cell_bold),
+    ]]
+    for v in vendas:
+        val_fmt = f"R$ {v['valor']:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+        tab_data.append([
+            _p(v["desc"]),
+            _p(v["comp"]),
+            _p(v["tipo"]),
+            _p(val_fmt, s_cell_r),
+        ])
+    base_fmt = f"R$ {base:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+    tab_data.append([
+        _p("TOTAL BASE", s_cell_bold), _p(""), _p(""),
+        _p(base_fmt, s_cell_r),
+    ])
+
+    t = Table(tab_data, colWidths=[8*cm, 2*cm, 3*cm, 3*cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND",  (0,0), (-1,0),  colors.HexColor("#1a1a2e")),
-        ("TEXTCOLOR",   (0,0), (-1,0),  colors.white),
-        ("FONTNAME",    (0,0), (-1,0),  "Helvetica-Bold"),
-        ("FONTSIZE",    (0,0), (-1,-1), 7.5),
-        ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.white, colors.HexColor("#f5f5f5")]),
-        ("BACKGROUND",  (0,-1), (-1,-1), colors.HexColor("#e8f5e9")),
-        ("FONTNAME",    (0,-1), (-1,-1), "Helvetica-Bold"),
-        ("GRID",        (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
-        ("ALIGN",       (3,0), (3,-1), "RIGHT"),
-        ("TOPPADDING",  (0,0), (-1,-1), 4),
-        ("BOTTOMPADDING",(0,0), (-1,-1), 4),
-        ("LEFTPADDING", (0,0), (-1,-1), 6),
+        ("BACKGROUND",    (0,0), (-1,0),   colors.HexColor("#1a1a2e")),
+        ("TEXTCOLOR",     (0,0), (-1,0),   colors.white),
+        ("FONTSIZE",      (0,0), (-1,-1),  7.5),
+        ("ROWBACKGROUNDS",(0,1), (-1,-2),  [colors.white, colors.HexColor("#f5f5f5")]),
+        ("BACKGROUND",    (0,-1), (-1,-1), colors.HexColor("#e8f5e9")),
+        ("GRID",          (0,0), (-1,-1),  0.3, colors.HexColor("#cccccc")),
+        ("VALIGN",        (0,0), (-1,-1),  "TOP"),
+        ("TOPPADDING",    (0,0), (-1,-1),  5),
+        ("BOTTOMPADDING", (0,0), (-1,-1),  5),
+        ("LEFTPADDING",   (0,0), (-1,-1),  6),
+        ("RIGHTPADDING",  (0,0), (-1,-1),  6),
     ]))
     story.append(t)
     story.append(Spacer(1, 0.3*cm))
