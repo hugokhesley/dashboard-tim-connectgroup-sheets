@@ -306,6 +306,40 @@ def get_parceiros(df: pd.DataFrame) -> list:
 
 
 @st.cache_data(ttl=180)
+def load_depara_discador() -> dict:
+    """
+    Carrega aba 'deParaDiscador' e retorna dict {nomeNoDiscador: NomeNoDash}.
+    Usado para normalizar nomes de vendedores que vêm do discador com grafia diferente.
+    Colunas esperadas: nomeNoDiscador | NomeNoDash
+    """
+    try:
+        client = get_gspread_client()
+        sheet_url = st.secrets['sheets']['url']
+        spreadsheet = client.open_by_url(sheet_url)
+        ws = spreadsheet.worksheet('deParaDiscador')
+        all_values = ws.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return {}
+        headers = [_s(h) for h in all_values[0]]
+        rows    = all_values[1:]
+        # Identifica colunas por nome (flexível)
+        col_de  = next((i for i, h in enumerate(headers) if 'discador' in _normalize(h)), None)
+        col_para = next((i for i, h in enumerate(headers) if 'dash' in _normalize(h)), None)
+        if col_de is None or col_para is None:
+            return {}
+        depara = {}
+        for row in rows:
+            if len(row) > max(col_de, col_para):
+                chave  = _s(row[col_de]).strip().upper()
+                valor  = _s(row[col_para]).strip()
+                if chave and valor:
+                    depara[chave] = valor
+        return depara
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=180)
 def load_bko() -> pd.DataFrame:
     """Carrega aba BKO-VENDEDOR-REAL e retorna df com pedido, vendedor_real, lider."""
     try:
@@ -336,6 +370,12 @@ def load_bko() -> pd.DataFrame:
         df['pedido']        = df['pedido'].apply(_norm_pedido)
         df['vendedor_real'] = df['vendedor_real'].apply(_s)
         df['lider']         = df['lider'].apply(lambda x: _s(x) if _s(x) else 'Sem Equipe')
+        # Aplica de-para do discador: substitui nomes divergentes pelo nome correto do dash
+        depara = load_depara_discador()
+        if depara:
+            df['vendedor_real'] = df['vendedor_real'].apply(
+                lambda x: depara.get(x.strip().upper(), x)
+            )
         # Remove linhas sem pedido
         df = df[df['pedido'] != ''].reset_index(drop=True)
         return df[['pedido', 'vendedor_real', 'lider']]
