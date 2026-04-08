@@ -637,27 +637,63 @@ def render_comissionamento(df, lideres, meta_dict):
                     resultados_tg[lider] = "⚠️ chat_id não configurado"
                     continue
 
-                # Monta mensagem individual para o líder
+                # Monta linhas de vendedores (comissionamento)
                 linhas_vend = ""
                 for v in d["vendedores"]:
-                    icon = "✅" if v["bateu"] else "❌"
-                    linhas_vend += f"\n  {icon} <b>{v['vendedor']}</b>: R$ {v['receita']:,.2f} ({v['pct']}%) → repasse R$ {v['comiss_lider']:,.2f}"
+                    icon  = "✅" if v["bateu"] else "❌"
+                    falta = max(v["meta"] - v["receita"], 0)
+                    info_falta = f" | falta R$ {falta:,.2f}" if not v["bateu"] and falta > 0 else ""
+                    linhas_vend += f"\n  {icon} <b>{v['vendedor']}</b>: R$ {v['receita']:,.2f} ({v['pct']}%){info_falta}"
+                    if v["bateu"]:
+                        linhas_vend += f" → repasse R$ {v['comiss_lider']:,.2f}"
+
+                # Calcula pipeline da equipe deste líder
+                df_pip_lider = df[
+                    (df["lider"] == lider) &
+                    (df["mes_ativacao"].isna())
+                ]
+                rec_pip_total = df_pip_lider["preco_oferta"].sum()
+                n_pip = int(df_pip_lider["acessos"].sum())
+
+                # Pipeline por vendedor que ainda não bateu meta
+                pip_por_vend = df_pip_lider.groupby("vendedor_real")["preco_oferta"].sum()
+                linhas_pip = ""
+                for v in d["vendedores"]:
+                    if not v["bateu"]:
+                        pip_vend = pip_por_vend.get(v["vendedor"], 0)
+                        falta    = max(v["meta"] - v["receita"], 0)
+                        if pip_vend > 0:
+                            cobre = "✅ cobre a meta!" if pip_vend >= falta else f"⚡ cobre {min(int(pip_vend/falta*100),100)}% do que falta"
+                            linhas_pip += f"\n  ⏳ <b>{v['vendedor']}</b>: R$ {pip_vend:,.2f} tramitando → {cobre}"
+
+                pip_section = ""
+                if linhas_pip:
+                    pip_section = f"""
+
+⏳ <b>Pipeline que pode fechar a meta:</b>{linhas_pip}"""
+                elif rec_pip_total > 0:
+                    pip_section = f"\n\n⏳ <b>Pipeline da equipe:</b> R$ {rec_pip_total:,.2f} ({n_pip} acessos tramitando)"
+
+                # Quanto falta para a equipe bater a meta total
+                falta_equipe = max(d["meta_lider"] - d["rec_lider"], 0)
+                pct_eq = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
+                status_equipe = "✅ Meta atingida!" if falta_equipe == 0 else f"🎯 Falta R$ {falta_equipe:,.2f} para meta da equipe"
 
                 mensagem = f"""💰 <b>Comissionamento {MES_ALVO} — {lider}</b>
 
-📊 <b>Resumo da sua equipe:</b>
+📊 <b>Resumo da equipe ({pct_eq}%):</b>
 • Vendedores: {d['n_vendedores']} | Bateram meta: {d['n_bateram']}
-• Receita total: R$ {d['rec_lider']:,.2f}
+• Receita ativada: R$ {d['rec_lider']:,.2f} / R$ {d['meta_lider']:,.2f}
+• {status_equipe}
 • 🏆 <b>Sua comissão estimada: R$ {d['total_comiss_lider']:,.2f}</b>
 
-👥 <b>Detalhes por vendedor:</b>{linhas_vend}
+👥 <b>Por vendedor:</b>{linhas_vend}{pip_section}
 
-📅 <i>Referência: {MES_ALVO} · Connect Group</i>"""
+📅 <i>{MES_ALVO} · Connect Group</i>"""
 
                 ok = enviar_telegram(str(chat_id), mensagem)
                 resultados_tg[lider] = "✅ Enviado" if ok else "❌ Falha no envio"
 
-        # Exibe resultados
         for lider, status in resultados_tg.items():
             st.caption(f"{status} → {lider}")
 
