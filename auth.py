@@ -36,6 +36,7 @@ PAGE_ACCESS = {
     "comissoes": ["hugo", "angelo"],
     "espelho":     ["hugo", "angelo"],
     "atualizacao_bases":     ["hugo"],
+    "discador":     ["hugo"],
 }
 
 # ---------------------------------------------------------------------------
