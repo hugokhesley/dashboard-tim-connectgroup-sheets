@@ -1,266 +1,1082 @@
 """
-07_Comissoes.py — Comissão de Parceiros (Etapas 1 a 4 funcionando)
+07_Comissoes.py — Sistema de Comissão de Parceiros
+Connect Group | Dashboard TIM Empresas
+
+Acesso restrito: hugo, angelo (conforme PAGE_ACCESS em auth.py)
+Integrado ao DadosRadar via Google Sheets (aba: Parceiros, aba: Comissoes)
 """
 
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import sys
 import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from auth import require_login
-from data_loader import get_gspread_client, registrar_acesso
+from data_loader import (
+    get_gspread_client,
+    registrar_acesso,
+    _s, _to_num, _norm_pedido,
+)
 
-st.set_page_config(page_title="Comissões Parceiros", page_icon="💰", layout="wide")
+# ─────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="Connect Group | Comissões",
+    page_icon="💰",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 username = require_login("comissoes")
-registrar_acesso("Comissões Parceiros", username=username)
+registrar_acesso("Comissões", username=username)
 
-# ==================== WEASYPRINT ====================
-try:
-    from weasyprint import HTML
-    WEASYPRINT_AVAILABLE = True
-except Exception:
-    WEASYPRINT_AVAILABLE = False
-
-# ==================== CONSTANTES ====================
+# ─────────────────────────────────────────────
+# CONSTANTES
+# ─────────────────────────────────────────────
 FATORES_PADRAO = {
-    "Black — Fidelizado Novo (5,80)": 5.80,
-    "Platinum — Fidelizado (5,00)": 5.00,
-    "Black — Dados/Plug In (4,80)": 4.80,
-    "Silver — Fidelizado Novo (4,50)": 4.50,
-    "Platinum — Dados/Plug In (4,00)": 4.00,
-    "Silver — Aditivo (3,50)": 3.50,
-    "Blue — Qualquer (3,00)": 3.00,
-    "Portabilidade (1,25)": 1.25,
-    "Não fidelizado (0,30)": 0.30,
-    "⚙️ Personalizado": None,
+    "Black — Fidelizado Novo (5,80)":        5.80,
+    "Platinum — Fidelizado (5,00)":          5.00,
+    "Black — Dados/Plug In (4,80)":          4.80,
+    "Silver — Fidelizado Novo (4,50)":       4.50,
+    "Platinum — Dados/Plug In (4,00)":       4.00,
+    "Silver — Aditivo (3,50)":               3.50,
+    "Blue — Qualquer (3,00)":                3.00,
+    "Portabilidade (1,25)":                  1.25,
+    "Não fidelizado (0,30)":                 0.30,
+    "⚙️ Personalizado":                      None,
 }
 
 TIPOS_PRODUTO = [
-    "Plano Voz (Móvel)", "Plano Dados (Móvel)", "Plug In", "M2M",
-    "TIM Office Fixo", "Ultra Fibra (CNPJ)", "VAS",
-    "Migração Pré→Pós Corporate", "Outro"
+    "Plano Voz (Móvel)",
+    "Plano Dados (Móvel)",
+    "Plug In",
+    "M2M",
+    "TIM Office Fixo",
+    "Ultra Fibra (CNPJ)",
+    "VAS",
+    "Migração Pré→Pós Corporate",
+    "Outro",
 ]
 
 ALIQUOTAS_SIMPLES = [6.00, 6.84, 7.54, 8.04, 10.26, 11.31, 13.50]
 
-MESES_PT = {"01":"Jan","02":"Fev","03":"Mar","04":"Abr","05":"Mai","06":"Jun","07":"Jul","08":"Ago",
-            "09":"Set","10":"Out","11":"Nov","12":"Dez"}
+MESES_PT = {
+    "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr",
+    "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago",
+    "09": "Set", "10": "Out", "11": "Nov", "12": "Dez",
+}
 
-def fmt_brl(v: float) -> str:
-    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+# ─────────────────────────────────────────────
+# HELPERS SHEETS
+# ─────────────────────────────────────────────
+SHEET_URL = lambda: st.secrets["sheets"]["url"]
 
-def fmt_comp(ym: str) -> str:
-    if not ym or len(ym) < 7: return ym
-    y, m = ym[:4], ym[5:7]
-    return f"{MESES_PT.get(m, m)}/{y}"
-
-# ==================== CARREGAR PARCEIROS ====================
 @st.cache_data(ttl=60)
 def load_parceiros_sheet() -> pd.DataFrame:
+    """Carrega aba 'Parceiros' do Sheets."""
     try:
         client = get_gspread_client()
-        ss = client.open_by_url(st.secrets["sheets"]["url"])
+        ss = client.open_by_url(SHEET_URL())
+        try:
+            ws = ss.worksheet("Parceiros")
+        except Exception:
+            # Cria a aba se não existir
+            ws = ss.add_worksheet(title="Parceiros", rows=500, cols=8)
+            ws.update("A1:H1", [[
+                "id", "nome", "cnpj_cpf", "email", "telefone",
+                "pix_chave", "pix_tipo", "ativo"
+            ]])
+            return pd.DataFrame(columns=[
+                "id", "nome", "cnpj_cpf", "email", "telefone",
+                "pix_chave", "pix_tipo", "ativo"
+            ])
+        vals = ws.get_all_values()
+        if not vals or len(vals) < 2:
+            return pd.DataFrame(columns=[
+                "id", "nome", "cnpj_cpf", "email", "telefone",
+                "pix_chave", "pix_tipo", "ativo"
+            ])
+        df = pd.DataFrame(vals[1:], columns=vals[0])
+        df = df[df["ativo"].str.upper() != "NÃO"].copy()
+        df = df[df["nome"] != ""].copy()
+        return df.reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Aba Parceiros não carregada: {e}")
+        return pd.DataFrame()
+
+
+def salvar_parceiro(dados: dict) -> tuple:
+    """Insere novo parceiro na aba Parceiros."""
+    try:
+        client = get_gspread_client()
+        ss = client.open_by_url(SHEET_URL())
         ws = ss.worksheet("Parceiros")
+        import time
+        novo_id = str(int(time.time()))
+        ws.append_row([
+            novo_id,
+            dados["nome"],
+            dados["cnpj_cpf"],
+            dados["email"],
+            dados["telefone"],
+            dados["pix_chave"],
+            dados["pix_tipo"],
+            "SIM",
+        ], value_input_option="USER_ENTERED")
+        load_parceiros_sheet.clear()
+        return True, novo_id
+    except Exception as e:
+        return False, str(e)
+
+
+def salvar_emissao(dados: dict) -> tuple:
+    """
+    Grava o registro de emissão na aba 'Comissoes'.
+    Cria a aba automaticamente se não existir.
+    """
+    try:
+        client = get_gspread_client()
+        ss = client.open_by_url(SHEET_URL())
+        try:
+            ws = ss.worksheet("Comissoes")
+        except Exception:
+            ws = ss.add_worksheet(title="Comissoes", rows=2000, cols=15)
+            ws.update("A1:O1", [[
+                "timestamp", "emitido_por", "parceiro", "cnpj_cpf",
+                "competencia", "vencimento", "fator", "aliquota_simples",
+                "base_vendas", "comissao_bruta", "desconto_imposto",
+                "comissao_liquida", "pix_tipo", "pix_chave", "canal_envio"
+            ]])
+        agora = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S")
+        ws.append_row([
+            agora,
+            dados.get("emitido_por", ""),
+            dados.get("parceiro", ""),
+            dados.get("cnpj_cpf", ""),
+            dados.get("competencia", ""),
+            dados.get("vencimento", ""),
+            dados.get("fator", 0),
+            dados.get("aliquota_simples", 0),
+            dados.get("base_vendas", 0),
+            dados.get("comissao_bruta", 0),
+            dados.get("desconto_imposto", 0),
+            dados.get("comissao_liquida", 0),
+            dados.get("pix_tipo", ""),
+            dados.get("pix_chave", ""),
+            dados.get("canal_envio", ""),
+        ], value_input_option="USER_ENTERED")
+        return True, agora
+    except Exception as e:
+        return False, str(e)
+
+
+@st.cache_data(ttl=60)
+def load_historico_emissoes() -> pd.DataFrame:
+    """Carrega histórico de emissões da aba Comissoes."""
+    try:
+        client = get_gspread_client()
+        ss = client.open_by_url(SHEET_URL())
+        ws = ss.worksheet("Comissoes")
         vals = ws.get_all_values()
         if not vals or len(vals) < 2:
             return pd.DataFrame()
         df = pd.DataFrame(vals[1:], columns=vals[0])
-        if "ativo" in df.columns:
-            df = df[df["ativo"].str.upper() != "NÃO"].copy()
-        return df.reset_index(drop=True)
+        for col in ["base_vendas", "comissao_bruta", "desconto_imposto", "comissao_liquida", "fator", "aliquota_simples"]:
+            if col in df.columns:
+                df[col] = df[col].apply(_to_num)
+        return df
     except Exception:
         return pd.DataFrame()
 
-# ==================== SESSION STATE ====================
-if "com_step" not in st.session_state:
-    st.session_state.update({
+
+# ─────────────────────────────────────────────
+# GERADOR DE PDF DO CONTRATO
+# ─────────────────────────────────────────────
+def gerar_pdf_contrato(dados: dict) -> bytes:
+    """
+    Gera o Termo de Comissionamento em PDF usando reportlab.
+    Retorna bytes do PDF pronto para download ou envio como anexo.
+    """
+    import io as _io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    )
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2.5*cm, rightMargin=2.5*cm,
+        topMargin=2*cm, bottomMargin=2*cm,
+    )
+
+    styles = getSampleStyleSheet()
+    s_title  = ParagraphStyle("titulo",  parent=styles["Title"],   fontSize=13, spaceAfter=4,  textColor=colors.HexColor("#1a1a2e"))
+    s_sub    = ParagraphStyle("sub",     parent=styles["Normal"],  fontSize=9,  spaceAfter=14, textColor=colors.grey, alignment=1)
+    s_h      = ParagraphStyle("h",       parent=styles["Heading2"],fontSize=9,  spaceBefore=10,spaceAfter=4, textColor=colors.HexColor("#e63946"), fontName="Helvetica-Bold")
+    s_body   = ParagraphStyle("body",    parent=styles["Normal"],  fontSize=8.5,spaceAfter=6,  leading=13)
+    s_bold   = ParagraphStyle("bold",    parent=styles["Normal"],  fontSize=8.5,spaceAfter=4,  fontName="Helvetica-Bold")
+    s_small  = ParagraphStyle("small",   parent=styles["Normal"],  fontSize=7.5,spaceAfter=4,  textColor=colors.grey)
+
+    p = dados
+    vendas   = p["vendas"]
+    base     = p["base"]
+    bruto    = p["bruto"]
+    desconto = p["desconto"]
+    liquido  = p["liquido"]
+    fator    = p["fator"]
+    imp      = p["imp"]
+
+    def hr(): return HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc"), spaceAfter=8)
+
+    story = []
+
+    # Cabeçalho
+    story.append(Paragraph("TERMO DE COMISSIONAMENTO", s_title))
+    story.append(Paragraph("Connect Group Telecom — Parceiro Sem Vínculo Empregatício", s_sub))
+    story.append(hr())
+
+    # 1. Partes
+    story.append(Paragraph("1. IDENTIFICAÇÃO DAS PARTES", s_h))
+    story.append(Paragraph(f"<b>Contratante:</b> Connect Group Telecom (Revendedor TIM Empresas)", s_body))
+    story.append(Paragraph(f"<b>Parceiro:</b> {p['nome']} — {p['cnpj_cpf']}", s_body))
+    story.append(Paragraph(f"<b>E-mail:</b> {p['email'] or '—'}  &nbsp; <b>Tel:</b> {p['telefone'] or '—'}", s_body))
+    story.append(hr())
+
+    # 2. Relação
+    story.append(Paragraph("2. RELAÇÃO ENTRE AS PARTES", s_h))
+    story.append(Paragraph(
+        "O Parceiro atua como prestador de serviços independente, sem vínculo empregatício, "
+        "subordinação ou exclusividade com a Contratante, sendo remunerado exclusivamente pelos "
+        "resultados comerciais obtidos, conforme Ordem de Serviço TIM SMB (OS_2025_29).", s_body))
+    story.append(hr())
+
+    # 3. Vendas
+    story.append(Paragraph(f"3. VENDAS DO PERÍODO — Competência {p['comp']}", s_h))
+    tab_data = [["Produto / Descrição", "Comp.", "Tipo", "Valor Venda"]]
+    for v in vendas:
+        tab_data.append([v["desc"], v["comp"], v["tipo"],
+                         f"R$ {v['valor']:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
+    tab_data.append(["TOTAL BASE", "", "", f"R$ {base:,.2f}".replace(",","X").replace(".",",").replace("X",".")])
+
+    t = Table(tab_data, colWidths=[8*cm, 2.2*cm, 3*cm, 2.8*cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND",  (0,0), (-1,0),  colors.HexColor("#1a1a2e")),
+        ("TEXTCOLOR",   (0,0), (-1,0),  colors.white),
+        ("FONTNAME",    (0,0), (-1,0),  "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 7.5),
+        ("ROWBACKGROUNDS", (0,1), (-1,-2), [colors.white, colors.HexColor("#f5f5f5")]),
+        ("BACKGROUND",  (0,-1), (-1,-1), colors.HexColor("#e8f5e9")),
+        ("FONTNAME",    (0,-1), (-1,-1), "Helvetica-Bold"),
+        ("GRID",        (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
+        ("ALIGN",       (3,0), (3,-1), "RIGHT"),
+        ("TOPPADDING",  (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 0.3*cm))
+    story.append(hr())
+
+    # 4. Cálculo
+    story.append(Paragraph("4. CÁLCULO DA COMISSÃO", s_h))
+    calc_data = [
+        ["Base bruta de vendas",                   f"R$ {base:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+        [f"Fator multiplicador",                    f"× {fator:.2f}"],
+        ["Comissão bruta",                          f"R$ {bruto:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+        [f"Desconto Simples Nacional ({imp:.2f}%)", f"− R$ {desconto:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+        ["VALOR LÍQUIDO A RECEBER",                 f"R$ {liquido:,.2f}".replace(",","X").replace(".",",").replace("X",".")],
+    ]
+    tc = Table(calc_data, colWidths=[10*cm, 6*cm])
+    tc.setStyle(TableStyle([
+        ("FONTSIZE",    (0,0), (-1,-1), 8),
+        ("ROWBACKGROUNDS", (0,0), (-1,-2), [colors.white, colors.HexColor("#f5f5f5")]),
+        ("BACKGROUND",  (0,-1), (-1,-1), colors.HexColor("#e8f5e9")),
+        ("FONTNAME",    (0,-1), (-1,-1), "Helvetica-Bold"),
+        ("FONTNAME",    (0,2),  (1,2),   "Helvetica-Bold"),
+        ("GRID",        (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
+        ("ALIGN",       (1,0), (1,-1), "RIGHT"),
+        ("TOPPADDING",  (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+        ("LEFTPADDING", (0,0), (-1,-1), 6),
+    ]))
+    story.append(tc)
+    story.append(Spacer(1, 0.3*cm))
+    story.append(hr())
+
+    # 5. Pagamento
+    story.append(Paragraph("5. PAGAMENTO", s_h))
+    story.append(Paragraph(f"<b>Chave PIX ({p['pix_tipo']}):</b> {p['pix_chave']}", s_body))
+    story.append(Paragraph(f"<b>Vencimento:</b> {p['vencimento']}", s_body))
+    story.append(Paragraph("O pagamento será realizado após conferência dos dados e assinatura deste Termo.", s_body))
+    story.append(hr())
+
+    # 6. Premissas
+    story.append(Paragraph("6. PREMISSAS — ESTORNOS E PENALIDADES (OS TIM SMB OS_2025_29)", s_h))
+    clausulas = [
+        ("6.1 Churn", "Cancelamentos voluntários ou involuntários em até 180 dias da ativação geram estorno integral. Churn involuntário: 270 dias."),
+        ("6.2 Fraude", "Identificação de fraude em até 365 dias da instalação gera estorno de 100%."),
+        ("6.3 Suspensão", "Suspensão temporária (inadimplência > 7 dias) em até 180 dias da ativação gera estorno. Migrações Pré→Pós: 90 dias."),
+        ("6.4 Downgrade", "Rebaixamento de plano em até 180 dias da ativação/migração está sujeito a estorno."),
+        ("6.5 Inadimplência", "Inadimplência > 30 dias dentro de 4 meses da ativação gera estorno por até 120 dias."),
+        ("6.6 Cesta de Qualidade", "Deflações incidirão sobre comissão e bônus conforme apuração TIM (safra M-6)."),
+    ]
+    for titulo, texto in clausulas:
+        story.append(Paragraph(f"<b>{titulo}:</b> {texto}", s_body))
+    story.append(hr())
+
+    # 7. Disposições
+    story.append(Paragraph("7. DISPOSIÇÕES GERAIS", s_h))
+    story.append(Paragraph(
+        "A Connect Group atua como intermediária do repasse da remuneração TIM ao Parceiro. "
+        "As regras são sujeitas a alteração conforme novas OS emitidas pela TIM.", s_body))
+    story.append(hr())
+
+    # Assinaturas
+    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph(f"Emitido em {p['hoje']} — Connect Group Telecom", s_small))
+    story.append(Spacer(1, 1.5*cm))
+    sig_data = [
+        ["_______________________________", "_______________________________"],
+        ["Connect Group Telecom",           p["nome"]],
+        ["Contratante",                     "Parceiro / Prestador"],
+    ]
+    ts = Table(sig_data, colWidths=[8*cm, 8*cm])
+    ts.setStyle(TableStyle([
+        ("FONTSIZE",   (0,0), (-1,-1), 8),
+        ("ALIGN",      (0,0), (-1,-1), "CENTER"),
+        ("TOPPADDING", (0,0), (-1,-1), 2),
+    ]))
+    story.append(ts)
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─────────────────────────────────────────────
+# ENVIO DE E-MAIL VIA TITAN SMTP
+# ─────────────────────────────────────────────
+def enviar_email_parceiro(destinatario: str, assunto: str, corpo_texto: str, pdf_bytes: bytes = None, pdf_nome: str = "contrato.pdf") -> tuple:
+    """
+    Envia e-mail via Titan SMTP (smtp.titan.email:465 SSL).
+    Anexa PDF do contrato se pdf_bytes for fornecido.
+    Secrets: [email] host, port, user, password, from
+    Retorna (sucesso: bool, mensagem: str)
+    """
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+    try:
+        cfg       = st.secrets["email"]
+        host      = cfg.get("host", "smtp.titan.email")
+        port      = int(cfg.get("port", 465))
+        user      = cfg["user"]
+        pwd       = cfg["password"]
+        from_addr = cfg.get("from", user)
+
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = assunto
+        msg["From"]    = from_addr
+        msg["To"]      = destinatario
+
+        # Corpo em texto simples
+        msg.attach(MIMEText(corpo_texto, "plain", "utf-8"))
+
+        # Anexa PDF se fornecido
+        if pdf_bytes:
+            part = MIMEBase("application", "pdf")
+            part.set_payload(pdf_bytes)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="{pdf_nome}"')
+            msg.attach(part)
+
+        with smtplib.SMTP_SSL(host, port) as server:
+            server.login(user, pwd)
+            server.sendmail(from_addr, [destinatario], msg.as_string())
+
+        return True, f"E-mail enviado para {destinatario}."
+    except Exception as e:
+        return False, str(e)
+
+
+# ─────────────────────────────────────────────
+# FORMATAÇÃO
+# ─────────────────────────────────────────────
+def fmt_brl(v: float) -> str:
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def fmt_comp(ym: str) -> str:
+    """'2025-05' → 'Mai/2025'"""
+    if not ym or len(ym) < 7:
+        return ym
+    y, m = ym[:4], ym[5:7]
+    return f"{MESES_PT.get(m, m)}/{y}"
+
+
+# ─────────────────────────────────────────────
+# SESSION STATE
+# ─────────────────────────────────────────────
+def _init_state():
+    defaults = {
         "com_step": 1,
         "com_parceiro": None,
         "com_vendas": [],
-        "com_fator": 0.0,
-        "com_fator_label": "",
-        "com_imposto": 6.0,
+        "com_fator": None,
+        "com_fator_label": None,
+        "com_imposto": None,
+        "com_bruto": 0.0,
+        "com_liquido": 0.0,
+        "com_desconto_imp": 0.0,
         "com_comp": date.today().strftime("%Y-%m"),
         "com_vencimento": (date.today() + timedelta(days=10)).isoformat(),
-        "com_pix_tipo": "CNPJ",
         "com_pix_chave": "",
-    })
+        "com_pix_tipo": "CNPJ",
+        "com_canal": "E-mail",
+        "com_registro_ts": None,
+        "com_mostrar_historico": False,
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-# ==================== TÍTULO ====================
-st.title("💰 Emissão de Comissão de Parceiros")
-st.caption("Conforme Ordem de Serviço TIM SMB OS_2025_29")
+_init_state()
 
+
+def reset_fluxo():
+    keys = [k for k in st.session_state if k.startswith("com_")]
+    for k in keys:
+        del st.session_state[k]
+    _init_state()
+
+
+def calcular():
+    vendas = st.session_state.com_vendas
+    base = sum(v["valor"] for v in vendas)
+    fator = st.session_state.com_fator or 0.0
+    imp = st.session_state.com_imposto or 0.0
+    bruto = base * fator
+    desconto = bruto * (imp / 100)
+    liquido = bruto - desconto
+    st.session_state.com_bruto = bruto
+    st.session_state.com_desconto_imp = desconto
+    st.session_state.com_liquido = liquido
+    return base, bruto, desconto, liquido
+
+
+# ─────────────────────────────────────────────
+# SIDEBAR — NAVEGAÇÃO
+# ─────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("**💰 Comissão de Parceiros**")
+
+    passos = ["1 · Parceiro", "2 · Vendas", "3 · Cálculo", "4 · Contrato", "5 · Envio"]
+    step_atual = st.session_state.com_step
+
+    for i, nome in enumerate(passos, 1):
+        if i < step_atual:
+            st.markdown(f"✅ ~~{nome}~~")
+        elif i == step_atual:
+            st.markdown(f"**➤ {nome}**")
+        else:
+            st.markdown(f"<span style='color:#555'>{nome}</span>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    if st.button("🔄 Nova emissão", use_container_width=True):
+        reset_fluxo()
+        st.rerun()
+
+    if st.button("📋 Histórico de emissões", use_container_width=True):
+        st.session_state.com_mostrar_historico = not st.session_state.com_mostrar_historico
+        st.rerun()
+
+
+# ─────────────────────────────────────────────
+# HISTÓRICO (toggle)
+# ─────────────────────────────────────────────
+if st.session_state.com_mostrar_historico:
+    st.title("📋 Histórico de emissões")
+    df_hist = load_historico_emissoes()
+    if df_hist.empty:
+        st.info("Nenhuma emissão registrada ainda.")
+    else:
+        df_show = df_hist.copy()
+        for col in ["comissao_bruta", "comissao_liquida", "base_vendas"]:
+            if col in df_show.columns:
+                df_show[col] = df_show[col].apply(fmt_brl)
+        st.dataframe(df_show, use_container_width=True, hide_index=True)
+        # Download CSV
+        csv = df_hist.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇ Baixar CSV", csv, "emissoes_comissao.csv", "text/csv")
+    st.stop()
+
+
+# ─────────────────────────────────────────────
+# TÍTULO DA PÁGINA
+# ─────────────────────────────────────────────
+st.title("💰 Comissão de Parceiros")
 step = st.session_state.com_step
+st.progress(min(step / 5, 1.0), text=f"Etapa {min(step, 5)} de 5")
 
-# ETAPA 1
+
+# ══════════════════════════════════════════════
+# ETAPA 1 — PARCEIRO
+# ══════════════════════════════════════════════
 if step == 1:
-    st.subheader("1. Selecionar ou Cadastrar Parceiro")
+    st.subheader("1 · Selecionar parceiro")
+
     df_parc = load_parceiros_sheet()
 
-    tab1, tab2 = st.tabs(["Parceiros Existentes", "Novo Parceiro"])
+    tab_sel, tab_novo = st.tabs(["Parceiros cadastrados", "Novo parceiro"])
 
-    with tab1:
+    with tab_sel:
         if df_parc.empty:
-            st.info("Nenhum parceiro cadastrado.")
+            st.info("Nenhum parceiro cadastrado. Use a aba 'Novo parceiro'.")
         else:
-            nomes = ["— Selecione um parceiro —"] + df_parc["nome"].dropna().tolist()
-            sel = st.selectbox("Escolha o parceiro", nomes)
-            if sel != "— Selecione um parceiro —":
-                p = df_parc[df_parc["nome"] == sel].iloc[0].to_dict()
+            opcoes = ["— selecione —"] + df_parc["nome"].tolist()
+            sel = st.selectbox("Parceiro", opcoes, key="sel_parceiro_nome")
+
+            if sel != "— selecione —":
+                linha = df_parc[df_parc["nome"] == sel].iloc[0]
+                p = linha.to_dict()
                 col1, col2, col3 = st.columns(3)
-                col1.metric("CNPJ/CPF", p.get("cnpj_cpf", "—"))
-                col2.metric("E-mail", p.get("email", "—"))
-                col3.metric("PIX", f"{p.get('pix_tipo','—')}: {p.get('pix_chave','—')}")
-                
-                if st.button("✅ Continuar com este parceiro", type="primary", use_container_width=True):
+                col1.markdown(f"**CNPJ/CPF:** `{p.get('cnpj_cpf','—')}`")
+                col2.markdown(f"**E-mail:** {p.get('email','—')}")
+                col3.markdown(f"**PIX ({p.get('pix_tipo','—')}):** `{p.get('pix_chave','—')}`")
+
+                if st.button("✅ Confirmar parceiro", type="primary", use_container_width=True):
                     st.session_state.com_parceiro = p
+                    st.session_state.com_pix_chave = p.get("pix_chave", "")
+                    st.session_state.com_pix_tipo = p.get("pix_tipo", "CNPJ")
                     st.session_state.com_step = 2
                     st.rerun()
 
-    with tab2:
-        with st.form("novo_parceiro"):
-            nome = st.text_input("Nome / Razão Social *")
-            cnpj = st.text_input("CNPJ / CPF *")
-            email = st.text_input("E-mail")
-            pix_chave = st.text_input("Chave PIX *")
-            pix_tipo = st.selectbox("Tipo PIX", ["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"])
-            if st.form_submit_button("Cadastrar e Continuar", type="primary"):
-                if nome and cnpj and pix_chave:
-                    st.session_state.com_parceiro = {"nome": nome, "cnpj_cpf": cnpj, "email": email, "pix_chave": pix_chave, "pix_tipo": pix_tipo}
+    with tab_novo:
+        with st.form("form_novo_parceiro"):
+            c1, c2 = st.columns(2)
+            nome_novo = c1.text_input("Nome / Razão Social *")
+            doc_novo  = c2.text_input("CNPJ / CPF *")
+            c3, c4    = st.columns(2)
+            email_novo = c3.text_input("E-mail")
+            tel_novo   = c4.text_input("Telefone")
+            c5, c6    = st.columns([3, 1])
+            pix_chave_novo = c5.text_input("Chave PIX *")
+            pix_tipo_novo  = c6.selectbox("Tipo PIX", ["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"])
+            submit_novo = st.form_submit_button("Cadastrar e usar", type="primary", use_container_width=True)
+
+        if submit_novo:
+            if not nome_novo or not doc_novo or not pix_chave_novo:
+                st.error("Preencha Nome, CNPJ/CPF e Chave PIX.")
+            else:
+                dados_novo = {
+                    "nome": nome_novo, "cnpj_cpf": doc_novo,
+                    "email": email_novo, "telefone": tel_novo,
+                    "pix_chave": pix_chave_novo, "pix_tipo": pix_tipo_novo,
+                }
+                ok, novo_id = salvar_parceiro(dados_novo)
+                if ok:
+                    st.success(f"Parceiro cadastrado (ID {novo_id}).")
+                    dados_novo["id"] = novo_id
+                    st.session_state.com_parceiro = dados_novo
+                    st.session_state.com_pix_chave = pix_chave_novo
+                    st.session_state.com_pix_tipo = pix_tipo_novo
                     st.session_state.com_step = 2
                     st.rerun()
+                else:
+                    st.error(f"Erro ao salvar: {novo_id}")
 
-# ETAPA 2
+
+# ══════════════════════════════════════════════
+# ETAPA 2 — VENDAS
+# ══════════════════════════════════════════════
 elif step == 2:
     p = st.session_state.com_parceiro
-    st.subheader(f"2. Vendas — {p.get('nome', 'Parceiro')}")
+    st.subheader(f"2 · Vendas — {p.get('nome','')}")
 
-    with st.form("add_venda", clear_on_submit=True):
+    # Formulário de adição
+    with st.form("form_add_venda", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1.5])
-        desc = c1.text_input("Produto / Descrição *")
-        comp = c2.text_input("Competência", value=fmt_comp(st.session_state.com_comp))
-        valor = c3.number_input("Valor da Venda (R$)", min_value=0.0, step=0.01)
-        tipo = c4.selectbox("Tipo de Produto", TIPOS_PRODUTO)
-        
-        if st.form_submit_button("➕ Adicionar Venda", type="primary"):
-            if desc and valor > 0:
-                st.session_state.com_vendas.append({"desc": desc, "comp": comp, "valor": valor, "tipo": tipo})
-                st.rerun()
+        desc_v  = c1.text_input("Produto / Descrição *")
+        comp_v  = c2.text_input("Competência (MM/AAAA)", value=fmt_comp(st.session_state.com_comp))
+        valor_v = c3.number_input("Valor venda (R$) *", min_value=0.0, step=0.01, format="%.2f")
+        tipo_v  = c4.selectbox("Tipo", TIPOS_PRODUTO)
+        add_btn = st.form_submit_button("➕ Adicionar linha", use_container_width=True)
 
-    if st.session_state.com_vendas:
-        df_v = pd.DataFrame(st.session_state.com_vendas)
-        st.dataframe(df_v, use_container_width=True, hide_index=True)
-        st.metric("Total Base", fmt_brl(df_v["valor"].sum()))
+    if add_btn:
+        if not desc_v or valor_v <= 0:
+            st.error("Preencha descrição e valor.")
+        else:
+            import time
+            st.session_state.com_vendas.append({
+                "id": int(time.time() * 1000),
+                "desc": desc_v,
+                "comp": comp_v,
+                "valor": valor_v,
+                "tipo": tipo_v,
+            })
+            st.rerun()
 
-    col1, col2 = st.columns([1, 3])
-    if col1.button("← Voltar"):
+    # Tabela de vendas
+    vendas = st.session_state.com_vendas
+    if vendas:
+        df_v = pd.DataFrame(vendas)
+
+        # Coluna de delete
+        col_header = st.columns([3, 1.5, 1.5, 1.5, 0.5])
+        col_header[0].markdown("**Produto**")
+        col_header[1].markdown("**Competência**")
+        col_header[2].markdown("**Valor**")
+        col_header[3].markdown("**Tipo**")
+
+        ids_remover = []
+        for _, row in df_v.iterrows():
+            c1, c2, c3, c4, c5 = st.columns([3, 1.5, 1.5, 1.5, 0.5])
+            c1.write(row["desc"])
+            c2.write(row["comp"])
+            c3.write(fmt_brl(row["valor"]))
+            c4.write(row["tipo"])
+            if c5.button("✕", key=f"del_{row['id']}"):
+                ids_remover.append(row["id"])
+
+        if ids_remover:
+            st.session_state.com_vendas = [v for v in vendas if v["id"] not in ids_remover]
+            st.rerun()
+
+        total_base = sum(v["valor"] for v in vendas)
+        st.markdown("---")
+        m1, m2 = st.columns(2)
+        m1.metric("Total base de vendas", fmt_brl(total_base))
+        m2.metric("Qtd. linhas", len(vendas))
+    else:
+        st.info("Nenhuma venda adicionada ainda.")
+
+    st.markdown("---")
+    c_back, c_next = st.columns([1, 3])
+    if c_back.button("← Voltar"):
         st.session_state.com_step = 1
         st.rerun()
-    if col2.button("Próximo →", type="primary", disabled=len(st.session_state.com_vendas) == 0):
+    if c_next.button("Próximo →", type="primary", disabled=len(vendas) == 0, use_container_width=True):
         st.session_state.com_step = 3
         st.rerun()
 
-# ETAPA 3
+
+# ══════════════════════════════════════════════
+# ETAPA 3 — CÁLCULO
+# ══════════════════════════════════════════════
 elif step == 3:
-    st.subheader("3. Cálculo da Comissão")
-    base = sum(v["valor"] for v in st.session_state.com_vendas)
+    p = st.session_state.com_parceiro
+    st.subheader("3 · Fator e cálculo")
 
-    fator_label = st.selectbox("Fator Multiplicador", list(FATORES_PADRAO.keys()))
-    fator = FATORES_PADRAO[fator_label] or st.number_input("Fator personalizado", value=3.0, step=0.1)
+    col_fator, col_resumo = st.columns([1.2, 1])
 
-    aliquota = st.radio("Alíquota Simples Nacional", [f"{x:.2f}%" for x in ALIQUOTAS_SIMPLES] + ["Personalizada"], horizontal=True)
-    imposto = float(aliquota.replace("%","")) if aliquota != "Personalizada" else st.number_input("Alíquota (%)", value=6.0)
+    with col_fator:
+        st.markdown("**Fator multiplicador**")
+        st.caption("Conforme classificação TBP 360 (OS TIM SMB OS_2025_29)")
 
-    bruto = base * fator
-    desconto = bruto * (imposto / 100)
-    liquido = bruto - desconto
+        fator_sel = st.selectbox(
+            "Selecione o fator",
+            list(FATORES_PADRAO.keys()),
+            index=0,
+        )
 
-    st.session_state.com_fator = fator
-    st.session_state.com_fator_label = fator_label
-    st.session_state.com_imposto = imposto
+        fator_val = FATORES_PADRAO[fator_sel]
+        if fator_val is None:
+            fator_val = st.number_input(
+                "Fator personalizado", min_value=0.01, max_value=20.0,
+                step=0.01, format="%.2f", value=3.0,
+            )
 
-    st.success(f"**Valor Líquido a Pagar: {fmt_brl(liquido)}**")
+        st.session_state.com_fator = fator_val
+        st.session_state.com_fator_label = fator_sel
 
-    col1, col2 = st.columns([1, 3])
-    if col1.button("← Voltar"):
+        st.markdown("---")
+        st.markdown("**Simples Nacional — alíquota efetiva**")
+
+        opcoes_imp = [f"{a:.2f}%".replace(".", ",") for a in ALIQUOTAS_SIMPLES] + ["Personalizada"]
+        imp_sel = st.radio("Alíquota", opcoes_imp, horizontal=True)
+
+        if imp_sel == "Personalizada":
+            imp_val = st.number_input("Alíquota (%)", min_value=0.0, max_value=33.0, step=0.01, format="%.2f")
+        else:
+            imp_val = float(imp_sel.replace(",", ".").replace("%", ""))
+
+        st.session_state.com_imposto = imp_val
+
+    with col_resumo:
+        base, bruto, desconto, liquido = calcular()
+
+        st.markdown("**Resumo financeiro**")
+        st.markdown(f"""
+| Item | Valor |
+|---|---|
+| Base bruta de vendas | **{fmt_brl(base)}** |
+| Fator × {fator_val:.2f} | |
+| **Comissão bruta** | **{fmt_brl(bruto)}** |
+| Desconto imposto ({imp_val:.2f}%) | − {fmt_brl(desconto)} |
+""")
+        st.success(f"💰 Valor líquido a pagar: **{fmt_brl(liquido)}**")
+
+    st.markdown("---")
+    c_back, c_next = st.columns([1, 3])
+    if c_back.button("← Voltar"):
         st.session_state.com_step = 2
         st.rerun()
-    if col2.button("Gerar Contrato →", type="primary"):
+    if c_next.button("Gerar contrato →", type="primary", use_container_width=True):
         st.session_state.com_step = 4
         st.rerun()
 
-# ETAPA 4 - CONTRATO + PDF
+
+# ══════════════════════════════════════════════
+# ETAPA 4 — CONTRATO
+# ══════════════════════════════════════════════
 elif step == 4:
-    st.subheader("4. Termo de Comissionamento")
     p = st.session_state.com_parceiro
-    base = sum(v["valor"] for v in st.session_state.com_vendas)
-    bruto = base * st.session_state.com_fator
-    desconto = bruto * (st.session_state.com_imposto / 100)
-    liquido = bruto - desconto
-    venc = date.fromisoformat(st.session_state.com_vencimento)
+    vendas = st.session_state.com_vendas
+    base = sum(v["valor"] for v in vendas)
+    bruto = st.session_state.com_bruto
+    liquido = st.session_state.com_liquido
+    desconto = st.session_state.com_desconto_imp
+    fator = st.session_state.com_fator
+    imp = st.session_state.com_imposto
 
-    contrato_html = f"""
-    <html><head><meta charset="utf-8">
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
-        h1 {{ color: #1e3a8a; text-align: center; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th, td {{ border: 1px solid #ccc; padding: 10px; }}
-        th {{ background: #f0f0f0; }}
-        .total {{ font-weight: bold; background: #e6f0ff; }}
-    </style></head>
-    <body>
-        <h1>TERMO DE COMISSIONAMENTO</h1>
-        <p><strong>Parceiro:</strong> {p.get('nome')} — {p.get('cnpj_cpf')}</p>
-        <p><strong>Competência:</strong> {fmt_comp(st.session_state.com_comp)}</p>
-        
-        <h2>Vendas do Período</h2>
-        <table>
-            <tr><th>Descrição</th><th>Competência</th><th>Tipo</th><th>Valor</th></tr>
-            {"".join(f"<tr><td>{v['desc']}</td><td>{v['comp']}</td><td>{v['tipo']}</td><td align='right'>{fmt_brl(v['valor'])}</td></tr>" for v in st.session_state.com_vendas)}
-            <tr class="total"><td colspan="3">TOTAL BASE</td><td align="right">{fmt_brl(base)}</td></tr>
-        </table>
+    st.subheader("4 · Termo de Comissionamento")
 
-        <h2>Cálculo da Comissão</h2>
-        <p>Fator: {st.session_state.com_fator_label} × {st.session_state.com_fator:.2f}</p>
-        <p>Comissão Bruta: {fmt_brl(bruto)}</p>
-        <p>Desconto Simples Nacional ({st.session_state.com_imposto:.2f}%): − {fmt_brl(desconto)}</p>
-        <h2 style="color:#15803d">Valor Líquido a Receber: {fmt_brl(liquido)}</h2>
+    col_cfg, col_prev = st.columns([1, 1.4])
 
-        <p><strong>PIX:</strong> {st.session_state.com_pix_tipo} — {st.session_state.com_pix_chave}</p>
-        <p><strong>Vencimento:</strong> {venc.strftime('%d/%m/%Y')}</p>
-    </body></html>
-    """
+    with col_cfg:
+        st.markdown("**Configurações do termo**")
+        comp_pag = st.text_input(
+            "Competência do pagamento",
+            value=fmt_comp(st.session_state.com_comp),
+            key="comp_pag_input",
+        )
+        venc_pag = st.date_input(
+            "Vencimento",
+            value=date.fromisoformat(st.session_state.com_vencimento),
+        )
+        st.session_state.com_vencimento = venc_pag.isoformat()
 
-    if WEASYPRINT_AVAILABLE:
-        try:
-            pdf_bytes = HTML(string=contrato_html).write_pdf()
-            st.success("✅ Contrato gerado com sucesso!")
-            st.download_button(
-                "⬇️ Baixar Contrato em PDF",
-                data=pdf_bytes,
-                file_name=f"Comissao_{p.get('nome','').replace(' ','_')}_{fmt_comp(st.session_state.com_comp)}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
-        except Exception as e:
-            st.error(f"Erro ao gerar PDF: {e}")
-    else:
-        st.warning("WeasyPrint não disponível. PDF desabilitado.")
+        pix_tipo = st.selectbox(
+            "Tipo de PIX",
+            ["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"],
+            index=["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"].index(
+                st.session_state.com_pix_tipo
+                if st.session_state.com_pix_tipo in ["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"]
+                else "CNPJ"
+            ),
+        )
+        pix_chave = st.text_input("Chave PIX", value=st.session_state.com_pix_chave)
+        st.session_state.com_pix_tipo = pix_tipo
+        st.session_state.com_pix_chave = pix_chave
 
-    col1, col2 = st.columns([1, 3])
-    if col1.button("← Voltar"):
+    with col_prev:
+        st.markdown("**Preview do documento**")
+
+    # Gera conteúdo do contrato como texto
+    hoje_str = date.today().strftime("%d/%m/%Y")
+    venc_str = venc_pag.strftime("%d/%m/%Y")
+    linhas_tab = "\n".join(
+        f"| {v['desc']} | {v['comp']} | {v['tipo']} | {fmt_brl(v['valor'])} |"
+        for v in vendas
+    )
+
+    contrato_md = f"""
+---
+### TERMO DE COMISSIONAMENTO
+**Connect Group Telecom — Parceiro Sem Vínculo Empregatício**
+
+---
+
+**1. IDENTIFICAÇÃO DAS PARTES**
+
+**Contratante:** Connect Group Telecom (Revendedor TIM Empresas)
+**Parceiro:** {p.get('nome','')} — {p.get('cnpj_cpf','')}
+**E-mail:** {p.get('email','—')} | **Tel:** {p.get('telefone','—')}
+
+---
+
+**2. RELAÇÃO ENTRE AS PARTES**
+
+O Parceiro atua como prestador de serviços independente, sem vínculo empregatício,
+subordinação ou exclusividade com a Contratante, sendo remunerado exclusivamente pelos
+resultados comerciais obtidos, conforme Ordem de Serviço TIM SMB **(OS_2025_29)**.
+
+---
+
+**3. VENDAS DO PERÍODO — Competência {comp_pag}**
+
+| Produto / Descrição | Comp. | Tipo | Valor Venda |
+|---|---|---|---|
+{linhas_tab}
+| **TOTAL BASE** | | | **{fmt_brl(base)}** |
+
+---
+
+**4. CÁLCULO DA COMISSÃO**
+
+| Item | Valor |
+|---|---|
+| Base bruta de vendas | {fmt_brl(base)} |
+| Fator multiplicador | × {fator:.2f} |
+| **Comissão bruta** | **{fmt_brl(bruto)}** |
+| Desconto Simples Nacional ({imp:.2f}%) | − {fmt_brl(desconto)} |
+| **VALOR LÍQUIDO A RECEBER** | **{fmt_brl(liquido)}** |
+
+---
+
+**5. PAGAMENTO**
+
+**Chave PIX ({pix_tipo}):** `{pix_chave}`
+**Vencimento:** {venc_str}
+
+O pagamento será realizado após conferência dos dados e assinatura deste Termo.
+
+---
+
+**6. PREMISSAS — ESTORNOS E PENALIDADES (OS TIM SMB OS_2025_29)**
+
+**6.1 Churn (Cancelamento):** Cancelamentos voluntários ou involuntários em até **180 dias**
+da ativação geram estorno integral da comissão. Churn involuntário: prazo de **270 dias**.
+
+**6.2 Fraude:** Identificação de fraude em até **365 dias** da instalação gera estorno de 100%.
+
+**6.3 Suspensão:** Suspensão temporária (incluindo inadimplência > 7 dias) em até **180 dias**
+da ativação gera estorno. Migrações Pré→Pós: prazo de **90 dias**.
+
+**6.4 Downgrade:** Rebaixamento de plano em até **180 dias** da ativação/migração
+está sujeito a estorno.
+
+**6.5 Inadimplência:** Inadimplência > 30 dias dentro de 4 meses da ativação gera estorno
+aplicado em espelho por até 120 dias.
+
+**6.6 Cesta de Qualidade:** Cálculo: ordens sem incidência / total de ordens instaladas (safra M-6).
+Deflações incidirão sobre comissão básica e bônus conforme apuração TIM.
+
+Os estornos serão deduzidos em emissões futuras ou cobrados separadamente.
+
+---
+
+**7. DISPOSIÇÕES GERAIS**
+
+A Connect Group atua como intermediária do repasse da remuneração TIM ao Parceiro.
+As regras são sujeitas a alteração conforme novas OS emitidas pela TIM. O Parceiro
+será notificado de alterações relevantes.
+
+---
+
+*Emitido em {hoje_str} | Connect Group Telecom*
+
+_____________________________ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; _____________________________
+
+Connect Group Telecom &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; {p.get('nome','')}
+
+Contratante &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Parceiro / Prestador
+"""
+
+    with col_prev:
+        with st.expander("📄 Ver contrato completo", expanded=True):
+            st.markdown(contrato_md)
+
+    # Gera PDF e disponibiliza para download
+    dados_pdf = {
+        "nome": p.get("nome",""), "cnpj_cpf": p.get("cnpj_cpf",""),
+        "email": p.get("email",""), "telefone": p.get("telefone",""),
+        "comp": comp_pag, "hoje": hoje_str, "vencimento": venc_str,
+        "pix_tipo": pix_tipo, "pix_chave": pix_chave,
+        "vendas": vendas, "base": base,
+        "bruto": bruto, "desconto": desconto, "liquido": liquido,
+        "fator": fator, "imp": imp,
+    }
+    pdf_bytes = gerar_pdf_contrato(dados_pdf)
+    st.session_state.com_pdf_bytes = pdf_bytes
+    st.session_state.com_pdf_nome  = f"Comissao_{p.get('nome','parceiro').replace(' ','_')}_{comp_pag.replace('/','_')}.pdf"
+
+    st.download_button(
+        label="⬇ Baixar contrato (.pdf)",
+        data=pdf_bytes,
+        file_name=st.session_state.com_pdf_nome,
+        mime="application/pdf",
+        use_container_width=True,
+    )
+
+    st.markdown("---")
+    c_back, c_next = st.columns([1, 3])
+    if c_back.button("← Voltar"):
         st.session_state.com_step = 3
         st.rerun()
-    if col2.button("Preparar Envio →", type="primary"):
+    if c_next.button("Preparar envio →", type="primary", use_container_width=True):
         st.session_state.com_step = 5
         st.rerun()
 
-else:
-    st.info("Etapa em desenvolvimento...")
 
-st.caption("Sistema de Comissões Connect Group")
+# ══════════════════════════════════════════════
+# ETAPA 5 — ENVIO E REGISTRO
+# ══════════════════════════════════════════════
+elif step == 5:
+    p = st.session_state.com_parceiro
+    bruto = st.session_state.com_bruto
+    liquido = st.session_state.com_liquido
+    desconto = st.session_state.com_desconto_imp
+    fator = st.session_state.com_fator
+    imp = st.session_state.com_imposto
+
+    st.subheader("5 · Envio e registro")
+
+    col_pix, col_email = st.columns(2)
+
+    with col_pix:
+        st.markdown("**PIX de pagamento**")
+        pix_tipo_f = st.selectbox(
+            "Tipo da chave",
+            ["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"],
+            index=["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"].index(
+                st.session_state.com_pix_tipo
+                if st.session_state.com_pix_tipo in ["CNPJ", "CPF", "E-mail", "Celular", "Aleatória"]
+                else "CNPJ"
+            ),
+        )
+        pix_chave_f = st.text_input("Chave PIX", value=st.session_state.com_pix_chave)
+        banco_f = st.text_input("Banco (opcional)", placeholder="Ex: Nubank, Sicoob...")
+        canal_f = st.selectbox("Canal de envio", ["E-mail", "WhatsApp", "E-mail + WhatsApp", "Presencial (Impresso)"])
+
+        st.session_state.com_pix_tipo = pix_tipo_f
+        st.session_state.com_pix_chave = pix_chave_f
+        st.session_state.com_canal = canal_f
+
+    with col_email:
+        st.markdown("**Preview do e-mail**")
+        comp_str = fmt_comp(st.session_state.com_comp)
+        venc_str = date.fromisoformat(st.session_state.com_vencimento).strftime("%d/%m/%Y")
+        primeiro_nome = p.get("nome", "").split()[0]
+
+        email_preview = f"""Olá, {primeiro_nome}!
+
+Segue o Termo de Comissionamento — {comp_str}.
+
+RESUMO FINANCEIRO
+─────────────────────────────────────
+Comissão bruta:          {fmt_brl(bruto)}
+Desconto imposto ({imp:.2f}%):  − {fmt_brl(desconto)}
+VALOR LÍQUIDO:           {fmt_brl(liquido)}
+─────────────────────────────────────
+
+PAGAMENTO VIA PIX
+Tipo: {pix_tipo_f}
+Chave: {pix_chave_f}
+{f'Banco: {banco_f}' if banco_f else ''}
+Vencimento: {venc_str}
+
+Por favor, assine o documento em anexo e
+confirme os dados de pagamento.
+
+Atenciosamente,
+Connect Group Telecom"""
+
+        st.text_area("E-mail gerado", email_preview, height=260, disabled=True)
+
+    st.markdown("---")
+    st.info("📌 Ao confirmar, esta emissão será gravada na aba **Comissoes** da planilha com todos os dados.")
+
+    c_back, _, c_conf = st.columns([1, 2, 2])
+    if c_back.button("← Voltar"):
+        st.session_state.com_step = 4
+        st.rerun()
+
+    if c_conf.button("✅ Confirmar e registrar emissão", type="primary", use_container_width=True):
+        vendas = st.session_state.com_vendas
+        base = sum(v["valor"] for v in vendas)
+        comp_str_raw = fmt_comp(st.session_state.com_comp)
+
+        dados_emissao = {
+            "emitido_por": username,
+            "parceiro": p.get("nome", ""),
+            "cnpj_cpf": p.get("cnpj_cpf", ""),
+            "competencia": comp_str_raw,
+            "vencimento": date.fromisoformat(st.session_state.com_vencimento).strftime("%d/%m/%Y"),
+            "fator": fator,
+            "aliquota_simples": imp,
+            "base_vendas": base,
+            "comissao_bruta": bruto,
+            "desconto_imposto": desconto,
+            "comissao_liquida": liquido,
+            "pix_tipo": pix_tipo_f,
+            "pix_chave": pix_chave_f,
+            "canal_envio": canal_f,
+        }
+
+        with st.spinner("Registrando na planilha..."):
+            ok, ts_ou_erro = salvar_emissao(dados_emissao)
+            load_historico_emissoes.clear()
+
+        if ok:
+            st.session_state.com_registro_ts = ts_ou_erro
+
+            # Envia e-mail para o parceiro se canal incluir e-mail e e-mail estiver preenchido
+            email_dest = p.get("email", "").strip()
+            if canal_f in ("E-mail", "E-mail + WhatsApp") and email_dest:
+                with st.spinner("Enviando e-mail ao parceiro..."):
+                    assunto_email = f"Termo de Comissionamento — {comp_str_raw} — {p.get('nome', '')}"
+                    pdf_b = st.session_state.get("com_pdf_bytes")
+                    pdf_n = st.session_state.get("com_pdf_nome", "contrato.pdf")
+                    ok_email, msg_email = enviar_email_parceiro(
+                        destinatario=email_dest,
+                        assunto=assunto_email,
+                        corpo_texto=email_preview,
+                        pdf_bytes=pdf_b,
+                        pdf_nome=pdf_n,
+                    )
+                if ok_email:
+                    st.session_state.com_email_status = f"✅ E-mail enviado para {email_dest}"
+                else:
+                    st.session_state.com_email_status = f"⚠️ Registrado, mas falha no e-mail: {msg_email}"
+            else:
+                st.session_state.com_email_status = None
+
+            st.session_state.com_step = 6
+            st.rerun()
+        else:
+            st.error(f"Erro ao registrar: {ts_ou_erro}")
+
+
+# ══════════════════════════════════════════════
+# ETAPA 6 — CONFIRMAÇÃO
+# ══════════════════════════════════════════════
+elif step == 6:
+    p = st.session_state.com_parceiro
+    bruto = st.session_state.com_bruto
+    liquido = st.session_state.com_liquido
+
+    st.success("✅ Emissão registrada com sucesso!")
+    st.markdown(f"**Registrado em:** {st.session_state.com_registro_ts}")
+
+    # Status do envio de e-mail
+    email_status = st.session_state.get("com_email_status")
+    if email_status:
+        if email_status.startswith("✅"):
+            st.success(email_status)
+        else:
+            st.warning(email_status)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Parceiro", p.get("nome", ""))
+    c2.metric("Comissão bruta", fmt_brl(bruto))
+    c3.metric("Valor líquido", fmt_brl(liquido))
+    c4.metric("PIX", st.session_state.com_pix_chave)
+
+    st.markdown("---")
+    st.info(f"📊 O registro foi gravado na aba **Comissoes** da planilha DadosRadar.")
+
+    if st.button("➕ Nova emissão", type="primary", use_container_width=True):
+        reset_fluxo()
+        st.rerun()
