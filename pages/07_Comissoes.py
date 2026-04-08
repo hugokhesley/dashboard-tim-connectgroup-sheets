@@ -408,8 +408,11 @@ def enviar_email_parceiro(destinatario: str, assunto: str, corpo_texto: str, pdf
 
         msg = MIMEMultipart("mixed")
         msg["Subject"] = assunto
+        CC = ["hugo@connectgroup.solutions", "angelo@connectgroup.solutions"]
+
         msg["From"]    = from_addr
         msg["To"]      = destinatario
+        msg["Cc"]      = ", ".join(CC)
 
         # Corpo em texto simples
         msg.attach(MIMEText(corpo_texto, "plain", "utf-8"))
@@ -424,7 +427,7 @@ def enviar_email_parceiro(destinatario: str, assunto: str, corpo_texto: str, pdf
 
         with smtplib.SMTP_SSL(host, port) as server:
             server.login(user, pwd)
-            server.sendmail(from_addr, [destinatario], msg.as_string())
+            server.sendmail(from_addr, [destinatario] + CC, msg.as_string())
 
         return True, f"E-mail enviado para {destinatario}."
     except Exception as e:
