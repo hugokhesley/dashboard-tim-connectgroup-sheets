@@ -427,26 +427,34 @@ def calcular_comissionamento(df, lideres, meta_dict, colab=None):
     Calcula comissionamento de vendedores e líderes.
     Usa a planilha Colaboradores como base — todos os vendedores aparecem,
     mesmo os que não ativaram nada no mês.
-    Regra:
-      - Vendedor: recebe 100% da receita ativada SE receita >= meta (padrão R$850)
-      - Líder: recebe 50% da receita de cada vendedor que bateu a meta
     """
+    import unicodedata
+
+    def normalizar(s):
+        """Remove acentos e deixa em minúsculas para comparação."""
+        return ''.join(
+            c for c in unicodedata.normalize('NFD', str(s).strip().lower())
+            if unicodedata.category(c) != 'Mn'
+        )
+
     df_atv = df[df["mes_ativacao"] == MES_ALVO].copy()
     rec_por_vend = df_atv.groupby("vendedor_real")["preco_oferta"].sum()
 
-    # Monta dicionário lider → lista de vendedores a partir do Colaboradores
-    # Se não tiver colab, usa os pedidos como fallback
     vends_por_lider = {}
     if colab is not None and not colab.empty:
+        # Cria mapa normalizado: nome_normalizado → nome_original no colab
+        colab_lider_norm = {normalizar(row["lider"]): row["lider"]
+                            for _, row in colab.iterrows() if pd.notna(row.get("lider"))}
+
         for lider in lideres:
             if lider == "Sem Equipe":
                 continue
-            # Filtra colaboradores deste líder
-            mask = colab["lider"].str.strip().str.lower() == lider.strip().lower()
+            lider_norm = normalizar(lider)
+            # Busca por nome normalizado (ignora acentos e case)
+            mask = colab["lider"].apply(normalizar) == lider_norm
             vends = colab[mask]["vendedor"].dropna().unique().tolist()
             vends_por_lider[lider] = sorted(vends)
     else:
-        # Fallback: pega dos pedidos
         for lider in lideres:
             if lider == "Sem Equipe":
                 continue
@@ -459,6 +467,12 @@ def calcular_comissionamento(df, lideres, meta_dict, colab=None):
             continue
 
         vendedores = vends_por_lider.get(lider, [])
+
+        # Fallback: se colab não encontrou ninguém, usa os pedidos
+        if not vendedores:
+            dl = df[df["lider"] == lider]
+            vendedores = sorted([v for v in dl["vendedor_real"].unique() if v not in ("Sem Vendedor", "")])
+
         vendedores_data = []
         total_comiss_lider = 0.0
 
@@ -512,6 +526,18 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
     if not dados:
         st.warning("Nenhum dado de comissionamento disponível.")
         return
+
+    # ── Diagnóstico (expander) ────────────────────────────────────
+    with st.expander("🔍 Diagnóstico de dados", expanded=False):
+        st.caption(f"**Mês alvo:** `{MES_ALVO}`")
+        st.caption(f"**Líderes encontrados:** {list(dados.keys())}")
+        st.caption(f"**Ativações no mês:** {len(df[df['mes_ativacao'] == MES_ALVO])} pedidos")
+        st.caption(f"**Colaboradores carregados:** {len(colab) if colab is not None and not colab.empty else 0}")
+        if colab is not None and not colab.empty:
+            st.caption(f"**Líderes no colab:** {sorted(colab['lider'].dropna().unique().tolist())}")
+            st.caption(f"**Líderes no BKO:** {lideres}")
+        for lider, d in dados.items():
+            st.caption(f"→ **{lider}**: {d['n_vendedores']} vendedores | {[v['vendedor'] for v in d['vendedores']]}")
 
     # ── KPIs Globais ──────────────────────────────────────────────
     total_vend_all  = sum(sum(v["comiss_vend"] for v in d["vendedores"]) for d in dados.values())
