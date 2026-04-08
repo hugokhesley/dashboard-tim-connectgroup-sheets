@@ -539,6 +539,25 @@ def render_comissionamento(df, lideres, meta_dict):
 
     telegram_lideres = _telegram_lideres()
 
+    # Seletor de líderes para envio
+    lideres_disponiveis = list(dados.keys())
+    lideres_com_tg = [l for l in lideres_disponiveis if l in telegram_lideres]
+    lideres_sem_tg  = [l for l in lideres_disponiveis if l not in telegram_lideres]
+
+    if lideres_com_tg:
+        lideres_selecionados = st.multiselect(
+            "👥 Selecione quais líderes devem receber a notificação:",
+            options=lideres_disponiveis,
+            default=lideres_com_tg,
+            key="sel_lideres_tg",
+            help="Apenas líderes com chat_id configurado receberão pelo Telegram"
+        )
+        if lideres_sem_tg:
+            st.caption(f"⚠️ Sem Telegram configurado: {', '.join(lideres_sem_tg)}")
+    else:
+        lideres_selecionados = []
+        st.caption("⚠️ Configure os chat_ids dos líderes nos secrets do Streamlit para habilitar o Telegram.")
+
     c_toggle, c_email_btn, c_tg_btn = st.columns([1, 1, 1])
 
     with c_toggle:
@@ -552,10 +571,7 @@ def render_comissionamento(df, lideres, meta_dict):
     with c_tg_btn:
         enviar_tg = st.button("✈️ Enviar pelo Telegram", type="secondary",
             use_container_width=True, key="btn_tg_comiss",
-            disabled=len(telegram_lideres) == 0)
-
-    if len(telegram_lideres) == 0:
-        st.caption("⚠️ Configure os chat_ids dos líderes nos secrets do Streamlit para habilitar o Telegram.")
+            disabled=len(lideres_selecionados) == 0)
 
     # ── E-mail ────────────────────────────────────────────────────
     if enviar_email:
@@ -628,10 +644,13 @@ def render_comissionamento(df, lideres, meta_dict):
                 st.error(f"❌ Erro ao enviar e-mail: {e}")
 
     # ── Telegram ──────────────────────────────────────────────────
-    if enviar_tg and telegram_lideres:
+    if enviar_tg and lideres_selecionados:
         resultados_tg = {}
         with st.spinner("Enviando pelo Telegram..."):
-            for lider, d in dados.items():
+            for lider in lideres_selecionados:
+                d = dados.get(lider)
+                if not d:
+                    continue
                 chat_id = telegram_lideres.get(lider)
                 if not chat_id:
                     resultados_tg[lider] = "⚠️ chat_id não configurado"
@@ -666,15 +685,14 @@ def render_comissionamento(df, lideres, meta_dict):
                             cobre = "✅ cobre a meta!" if pip_vend >= falta else f"⚡ cobre {min(int(pip_vend/falta*100),100)}% do que falta"
                             linhas_pip += f"\n  ⏳ <b>{v['vendedor']}</b>: R$ {pip_vend:,.2f} tramitando → {cobre}"
 
-                pip_section = ""
                 if linhas_pip:
-                    pip_section = f"""
-
-⏳ <b>Pipeline que pode fechar a meta:</b>{linhas_pip}"""
+                    pip_section = f"\n\n⏳ <b>Pipeline que pode fechar a meta:</b>{linhas_pip}"
                 elif rec_pip_total > 0:
                     pip_section = f"\n\n⏳ <b>Pipeline da equipe:</b> R$ {rec_pip_total:,.2f} ({n_pip} acessos tramitando)"
+                else:
+                    pip_section = "\n\n⏳ <i>Sem pedidos tramitando no momento.</i>"
 
-                # Quanto falta para a equipe bater a meta total
+                # Status da equipe
                 falta_equipe = max(d["meta_lider"] - d["rec_lider"], 0)
                 pct_eq = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
                 status_equipe = "✅ Meta atingida!" if falta_equipe == 0 else f"🎯 Falta R$ {falta_equipe:,.2f} para meta da equipe"
