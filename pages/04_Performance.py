@@ -25,14 +25,12 @@ username = require_login("performance")
 registrar_acesso("performance", username=username)
 
 MES_ALVO = datetime.now().strftime("%m/%Y")
-META_VENDEDOR_PAD = 850  # fallback se não encontrar na planilha
+META_VENDEDOR_PAD = 850
 
 def _meta_vend(nome: str, meta_dict: dict) -> float:
-    """Retorna a meta do vendedor da planilha Colaboradores. Fallback: META_VENDEDOR_PAD."""
     return meta_dict.get(nome, META_VENDEDOR_PAD)
 
 DESTINATARIOS_TESTE = ["hugo@connectgroup.solutions"]
-
 DESTINATARIOS_FULL = [
     "bko2@connectbrasil.tech",
     "bko@connectbrasil.tech",
@@ -41,7 +39,41 @@ DESTINATARIOS_FULL = [
     "andrey.albuquerque@connectgroup.solutions",
 ]
 
+# ── Telegram ──────────────────────────────────────────────────────
+# Token do bot e chat_ids dos líderes
+# Configurar nos secrets do Streamlit:
+# [telegram]
+# token = "7776803920:AAE4ZYll8iakct7pIRGfszVgeF659kPywy0"
+# [telegram.lideres]
+# "Nome Lider" = "chat_id"
 
+def _telegram_token():
+    try:
+        return st.secrets["telegram"]["token"]
+    except Exception:
+        return "7776803920:AAE4ZYll8iakct7pIRGfszVgeF659kPywy0"
+
+def _telegram_lideres():
+    """Retorna dict {nome_lider: chat_id} dos secrets."""
+    try:
+        return dict(st.secrets["telegram"]["lideres"])
+    except Exception:
+        return {}
+
+def enviar_telegram(chat_id: str, mensagem: str) -> bool:
+    """Envia mensagem individual via Telegram Bot API."""
+    import requests as _req
+    try:
+        token = _telegram_token()
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        resp = _req.post(url, json={
+            "chat_id": chat_id,
+            "text": mensagem,
+            "parse_mode": "HTML"
+        }, timeout=10)
+        return resp.status_code == 200
+    except Exception:
+        return False
 
 
 st.markdown("""
@@ -69,6 +101,7 @@ st.markdown("""
   .kpi-mini.red::before    { background: linear-gradient(90deg, #ef4444, #dc2626); }
   .kpi-mini.amber::before  { background: linear-gradient(90deg, #f59e0b, #d97706); }
   .kpi-mini.purple::before { background: linear-gradient(90deg, #8b5cf6, #6d28d9); }
+  .kpi-mini.gold::before   { background: linear-gradient(90deg, #f59e0b, #b45309); }
   .kpi-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; font-weight: 600; margin-bottom: 6px; }
   .kpi-value { font-size: 1.7rem; font-weight: 800; color: #f1f5f9; line-height: 1; }
   .kpi-sub   { font-size: 0.72rem; color: #64748b; margin-top: 4px; }
@@ -92,6 +125,16 @@ st.markdown("""
   .divider { border: none; border-top: 1px solid #1e293b; margin: 28px 0; }
   .vis-card { background: #1a1f2e; border-radius: 14px; padding: 20px 24px; border: 1px solid #2d3748; }
   .vis-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; font-weight: 600; margin-bottom: 16px; }
+  .comiss-card { background: #1a1f2e; border-radius: 14px; padding: 20px 24px; border: 1px solid #2d3748; margin-bottom: 16px; }
+  .comiss-lider { font-size: 1rem; font-weight: 800; color: #fbbf24; margin-bottom: 12px; }
+  .comiss-row { display:flex; justify-content:space-between; align-items:center; padding: 8px 0; border-bottom: 1px solid #1e293b; }
+  .comiss-vend { font-size: 0.82rem; color: #e2e8f0; }
+  .comiss-val  { font-size: 0.82rem; font-weight: 700; }
+  .comiss-ok   { color: #22c55e; }
+  .comiss-no   { color: #ef4444; }
+  .comiss-total { display:flex; justify-content:space-between; padding: 10px 0 0 0; margin-top: 8px; }
+  .comiss-total-label { font-size: 0.78rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; }
+  .comiss-total-val   { font-size: 1.1rem; font-weight: 800; color: #fbbf24; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -148,12 +191,10 @@ def render_visual(df, lideres, lider_sel, meta_dict):
 
     c_gauge, c_eq, c_vend = st.columns([1, 2, 2])
 
-    # Gauge
     with c_gauge:
         rec_atv = df_atv_all["preco_oferta"].sum()
         rec_pip = df_pip_all["preco_oferta"].sum()
         rec_g   = rec_atv + rec_pip if incluir_pipeline else rec_atv
-        # Meta total = soma das metas individuais dos vendedores
         meta    = sum(_meta_vend(v, meta_dict) for v in df["vendedor_real"].unique()) if meta_dict else df["vendedor_real"].nunique() * META_VENDEDOR_PAD
         pct     = min(int(rec_g / meta * 100), 999) if meta > 0 else 0
         cor     = _cor(pct)
@@ -167,7 +208,6 @@ def render_visual(df, lideres, lider_sel, meta_dict):
           <div class="gauge-sub" style="margin-top:4px">{df["vendedor_real"].nunique()} vendedor(es)</div>
         </div>""", unsafe_allow_html=True)
 
-    # Ranking equipes
     with c_eq:
         st.markdown('<div class="vis-card">', unsafe_allow_html=True)
         lbl_eq = "Ativ. + Pipeline" if incluir_pipeline else "Receita Ativada"
@@ -178,7 +218,6 @@ def render_visual(df, lideres, lider_sel, meta_dict):
             r    = _vend_rec(dl)
             ratv = dl[dl["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
             rpip = dl[dl["mes_ativacao"].isna()]["preco_oferta"].sum()
-            # Meta da equipe = soma das metas individuais
             meta_eq = sum(_meta_vend(v, meta_dict) for v in dl["vendedor_real"].unique()) if meta_dict else dl["vendedor_real"].nunique() * META_VENDEDOR_PAD
             nv = dl["vendedor_real"].nunique()
             rows.append({"lider":l,"rec":r,"ratv":ratv,"rpip":rpip,"meta":meta_eq,"nv":nv})
@@ -199,7 +238,6 @@ def render_visual(df, lideres, lider_sel, meta_dict):
         st.markdown(html, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Ranking vendedores
     with c_vend:
         st.markdown('<div class="vis-card">', unsafe_allow_html=True)
         lbl_v = f"👤 Top Vendedores{' — '+lider_sel if lider_sel != 'Todos' else ''} — {'Ativ. + Pipeline' if incluir_pipeline else 'Ativação'}"
@@ -237,7 +275,6 @@ def render_visual(df, lideres, lider_sel, meta_dict):
         st.markdown(html_v, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Segunda linha — distribuição pipeline
     st.markdown("")
     c_status, c_pip_vend = st.columns(2)
 
@@ -281,6 +318,348 @@ def render_visual(df, lideres, lider_sel, meta_dict):
         else:
             st.info("Nenhum pipeline.")
         st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────
+#  NOVA VISÃO: COMISSIONAMENTO
+# ─────────────────────────────────────────────────────────────────
+
+def calcular_comissionamento(df, lideres, meta_dict):
+    """
+    Calcula comissionamento de vendedores e líderes.
+    Regra:
+      - Vendedor: recebe 100% da receita ativada SE receita >= meta (padrão R$850)
+      - Líder: recebe 50% da receita de cada vendedor que bateu a meta
+    Retorna dict por líder com dados de cada vendedor.
+    """
+    df_atv = df[df["mes_ativacao"] == MES_ALVO].copy()
+
+    # Receita ativada por vendedor
+    rec_por_vend = df_atv.groupby("vendedor_real")["preco_oferta"].sum()
+
+    resultado = {}
+    for lider in lideres:
+        if lider == "Sem Equipe":
+            continue
+        dl = df[df["lider"] == lider]
+        vendedores = [v for v in dl["vendedor_real"].unique() if v != "Sem Vendedor"]
+
+        vendedores_data = []
+        total_comiss_lider = 0.0
+
+        for vend in sorted(vendedores):
+            meta = _meta_vend(vend, meta_dict)
+            receita = rec_por_vend.get(vend, 0.0)
+            bateu   = receita >= meta
+
+            comiss_vend  = receita if bateu else 0.0
+            comiss_lider = receita * 0.5 if bateu else 0.0
+            total_comiss_lider += comiss_lider
+
+            vendedores_data.append({
+                "vendedor":      vend,
+                "meta":          meta,
+                "receita":       receita,
+                "bateu":         bateu,
+                "pct":           min(int(receita / meta * 100), 100) if meta > 0 else 0,
+                "comiss_vend":   comiss_vend,
+                "comiss_lider":  comiss_lider,
+            })
+
+        # Meta do líder = soma das metas dos vendedores
+        meta_lider = sum(_meta_vend(v, meta_dict) for v in vendedores) if vendedores else 0
+        rec_lider  = sum(d["receita"] for d in vendedores_data)
+        n_bateram  = sum(1 for d in vendedores_data if d["bateu"])
+
+        resultado[lider] = {
+            "vendedores":        vendedores_data,
+            "total_comiss_lider": total_comiss_lider,
+            "meta_lider":        meta_lider,
+            "rec_lider":         rec_lider,
+            "n_vendedores":      len(vendedores),
+            "n_bateram":         n_bateram,
+        }
+
+    return resultado
+
+
+def render_comissionamento(df, lideres, meta_dict):
+    st.markdown('<p class="section-title">💰 Projeção de Comissionamento — Meta x Realizado</p>', unsafe_allow_html=True)
+
+    st.info(f"""
+    **Regras de Comissionamento — {MES_ALVO}:**
+    • **Vendedor:** recebe 100% da receita ativada se ≥ R$ 850 (meta individual)
+    • **Líder:** recebe 50% da receita de cada vendedor que atingiu a meta
+    • Baseado apenas em **ativações do mês** (mes_ativacao == {MES_ALVO})
+    """)
+
+    dados = calcular_comissionamento(df, lideres, meta_dict)
+
+    if not dados:
+        st.warning("Nenhum dado de comissionamento disponível.")
+        return
+
+    # ── KPIs Globais ──────────────────────────────────────────────
+    total_vend_all  = sum(sum(v["comiss_vend"] for v in d["vendedores"]) for d in dados.values())
+    total_lider_all = sum(d["total_comiss_lider"] for d in dados.values())
+    total_bateram   = sum(d["n_bateram"] for d in dados.values())
+    total_vends     = sum(d["n_vendedores"] for d in dados.values())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f"""<div class="kpi-mini green">
+          <div class="kpi-label">💰 Comiss. Vendedores</div>
+          <div class="kpi-value" style="font-size:1.3rem">R$ {total_vend_all:,.2f}</div>
+          <div class="kpi-sub">total projetado</div>
+        </div>""", unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"""<div class="kpi-mini gold">
+          <div class="kpi-label">🏆 Comiss. Líderes</div>
+          <div class="kpi-value" style="font-size:1.3rem">R$ {total_lider_all:,.2f}</div>
+          <div class="kpi-sub">50% dos vendedores que bateram</div>
+        </div>""", unsafe_allow_html=True)
+    with k3:
+        st.markdown(f"""<div class="kpi-mini blue">
+          <div class="kpi-label">✅ Bateram a Meta</div>
+          <div class="kpi-value">{total_bateram}</div>
+          <div class="kpi-sub">de {total_vends} vendedores</div>
+        </div>""", unsafe_allow_html=True)
+    with k4:
+        taxa = round(total_bateram / total_vends * 100) if total_vends > 0 else 0
+        st.markdown(f"""<div class="kpi-mini {'green' if taxa >= 70 else 'amber' if taxa >= 40 else 'red'}">
+          <div class="kpi-label">📊 Taxa de Atingimento</div>
+          <div class="kpi-value">{taxa}%</div>
+          <div class="kpi-sub">vendedores acima da meta</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("")
+    st.markdown("---")
+
+    # ── Visão por Equipe ──────────────────────────────────────────
+    tab_equipes, tab_consolidado = st.tabs([
+        "👥 Por Equipe (Líder + Vendedores)",
+        "📊 Consolidado Geral"
+    ])
+
+    with tab_equipes:
+        for lider, d in dados.items():
+            pct_lider = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
+            cor_lider = _cor(pct_lider)
+            icon_lider = "✅" if pct_lider >= 100 else "⚠️" if pct_lider >= 70 else "🔴"
+
+            st.markdown(f"""
+            <div class="comiss-card">
+              <div class="comiss-lider">
+                {icon_lider} {lider}
+                <span style="font-size:0.75rem;color:#94a3b8;font-weight:400;margin-left:12px">
+                  {d['n_bateram']}/{d['n_vendedores']} vendedores bateram a meta
+                </span>
+              </div>
+            """, unsafe_allow_html=True)
+
+            # Linha por vendedor
+            rows_html = ""
+            for v in d["vendedores"]:
+                cor_v  = "#22c55e" if v["bateu"] else "#ef4444"
+                icon_v = "✅" if v["bateu"] else "❌"
+                bar    = _bar(v["receita"], v["meta"], cor_v, 6)
+                rows_html += f"""
+                <div class="comiss-row">
+                  <div style="flex:1">
+                    <div class="comiss-vend">{icon_v} {v['vendedor']}</div>
+                    <div style="margin:4px 0 2px">{bar}</div>
+                    <div style="font-size:0.67rem;color:#64748b">
+                      R$ {v['receita']:,.2f} / meta R$ {v['meta']:,.0f} · {v['pct']}%
+                    </div>
+                  </div>
+                  <div style="text-align:right;padding-left:16px;min-width:180px">
+                    <div style="font-size:0.72rem;color:#94a3b8">Comiss. Vendedor</div>
+                    <div class="comiss-val {'comiss-ok' if v['bateu'] else 'comiss-no'}">
+                      R$ {v['comiss_vend']:,.2f}
+                    </div>
+                    <div style="font-size:0.72rem;color:#94a3b8;margin-top:4px">Repasse Líder (50%)</div>
+                    <div class="comiss-val {'comiss-ok' if v['bateu'] else 'comiss-no'}">
+                      R$ {v['comiss_lider']:,.2f}
+                    </div>
+                  </div>
+                </div>"""
+
+            st.markdown(rows_html, unsafe_allow_html=True)
+
+            # Total do líder
+            st.markdown(f"""
+              <div class="comiss-total">
+                <span class="comiss-total-label">💰 Total Comissão do Líder {lider}</span>
+                <span class="comiss-total-val">R$ {d['total_comiss_lider']:,.2f}</span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown("")
+
+    with tab_consolidado:
+        # Tabela consolidada
+        rows_consolidado = []
+        for lider, d in dados.items():
+            for v in d["vendedores"]:
+                rows_consolidado.append({
+                    "Líder":           lider,
+                    "Vendedor":        v["vendedor"],
+                    "Meta (R$)":       v["meta"],
+                    "Receita (R$)":    v["receita"],
+                    "% Atingimento":   v["pct"],
+                    "Bateu":           "✅" if v["bateu"] else "❌",
+                    "Comiss. Vend.":   v["comiss_vend"],
+                    "Repasse Líder":   v["comiss_lider"],
+                })
+
+        if rows_consolidado:
+            df_cons = pd.DataFrame(rows_consolidado)
+            st.dataframe(
+                df_cons,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Meta (R$)":     st.column_config.NumberColumn("Meta (R$)",    format="R$ %.2f"),
+                    "Receita (R$)":  st.column_config.NumberColumn("Receita (R$)", format="R$ %.2f"),
+                    "% Atingimento": st.column_config.NumberColumn("% Meta",       format="%d%%"),
+                    "Comiss. Vend.": st.column_config.NumberColumn("Comiss. Vend.",format="R$ %.2f"),
+                    "Repasse Líder": st.column_config.NumberColumn("Repasse Líder",format="R$ %.2f"),
+                }
+            )
+
+            csv = df_cons.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Exportar CSV", csv,
+                f"comissionamento_{MES_ALVO.replace('/','_')}.csv", "text/csv")
+
+    st.markdown("---")
+
+    # ── Notificações ──────────────────────────────────────────────
+    st.markdown('<p class="section-title">📣 Notificar Líderes</p>', unsafe_allow_html=True)
+
+    telegram_lideres = _telegram_lideres()
+
+    c_toggle, c_email_btn, c_tg_btn = st.columns([1, 1, 1])
+
+    with c_toggle:
+        modo_teste = st.toggle("🧪 Só para mim", value=True, key="toggle_comiss",
+            help="Ativado = envia só para hugo@connectgroup.solutions | Desativado = envia para os líderes")
+
+    with c_email_btn:
+        enviar_email = st.button("📧 Enviar por E-mail", type="primary",
+            use_container_width=True, key="btn_email_comiss")
+
+    with c_tg_btn:
+        enviar_tg = st.button("✈️ Enviar pelo Telegram", type="secondary",
+            use_container_width=True, key="btn_tg_comiss",
+            disabled=len(telegram_lideres) == 0)
+
+    if len(telegram_lideres) == 0:
+        st.caption("⚠️ Configure os chat_ids dos líderes nos secrets do Streamlit para habilitar o Telegram.")
+
+    # ── E-mail ────────────────────────────────────────────────────
+    if enviar_email:
+        dest_lista = DESTINATARIOS_TESTE if modo_teste else DESTINATARIOS_FULL
+        with st.spinner("Enviando e-mail..."):
+            try:
+                import smtplib
+                from email.mime.multipart import MIMEMultipart as _MM
+                from email.mime.text import MIMEText as _MT
+                from datetime import datetime as _dt
+
+                agora = _dt.now().strftime("%d/%m/%Y às %H:%M")
+
+                # Monta HTML do e-mail
+                rows_html_email = ""
+                for lider, d in dados.items():
+                    rows_html_email += f"""
+                    <tr style="background:#f0fdf4">
+                      <td colspan="5" style="padding:8px 10px;font-weight:bold;color:#15803d;border:1px solid #ddd">
+                        👤 {lider} — Comissão Total: R$ {d['total_comiss_lider']:,.2f}
+                      </td>
+                    </tr>"""
+                    for v in d["vendedores"]:
+                        cor_e = "#15803d" if v["bateu"] else "#dc2626"
+                        rows_html_email += f"""
+                        <tr>
+                          <td style="padding:6px 10px;border:1px solid #ddd">{v['vendedor']}</td>
+                          <td style="padding:6px 10px;border:1px solid #ddd;text-align:right">R$ {v['meta']:,.2f}</td>
+                          <td style="padding:6px 10px;border:1px solid #ddd;text-align:right">R$ {v['receita']:,.2f}</td>
+                          <td style="padding:6px 10px;border:1px solid #ddd;text-align:center;color:{cor_e};font-weight:bold">{'✅' if v['bateu'] else '❌'} {v['pct']}%</td>
+                          <td style="padding:6px 10px;border:1px solid #ddd;text-align:right;font-weight:bold;color:{cor_e}">R$ {v['comiss_lider']:,.2f}</td>
+                        </tr>"""
+
+                html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
+                  <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
+                    <h2 style="color:#fff;margin:0">💰 Projeção de Comissionamento — Connect Group</h2>
+                    <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">{MES_ALVO} · Gerado em {agora}</p>
+                  </div>
+                  <table style="border-collapse:collapse;width:100%;font-size:13px">
+                    <tr style="background:#14532d;color:#fff">
+                      <th style="padding:8px 10px;text-align:left">Vendedor</th>
+                      <th style="padding:8px 10px;text-align:right">Meta</th>
+                      <th style="padding:8px 10px;text-align:right">Receita</th>
+                      <th style="padding:8px 10px;text-align:center">Atingimento</th>
+                      <th style="padding:8px 10px;text-align:right">Repasse Líder (50%)</th>
+                    </tr>
+                    {rows_html_email}
+                  </table>
+                  <br>
+                  <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px;margin-top:16px">
+                    <strong>💰 Total Comissão Vendedores: R$ {total_vend_all:,.2f}</strong><br>
+                    <strong>🏆 Total Repasse Líderes: R$ {total_lider_all:,.2f}</strong>
+                  </div>
+                  <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
+                </body></html>"""
+
+                cfg = st.secrets["email"]
+                msg = _MM("alternative")
+                msg["Subject"] = f"[Connect Group] Comissionamento {MES_ALVO}"
+                msg["From"]    = cfg.get("from", cfg["user"])
+                msg["To"]      = ", ".join(dest_lista)
+                msg.attach(_MT(html, "html"))
+
+                with smtplib.SMTP_SSL(cfg["host"], int(cfg["port"]), timeout=20) as sv:
+                    sv.login(cfg["user"], cfg["password"])
+                    sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+
+                st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
+            except Exception as e:
+                st.error(f"❌ Erro ao enviar e-mail: {e}")
+
+    # ── Telegram ──────────────────────────────────────────────────
+    if enviar_tg and telegram_lideres:
+        resultados_tg = {}
+        with st.spinner("Enviando pelo Telegram..."):
+            for lider, d in dados.items():
+                chat_id = telegram_lideres.get(lider)
+                if not chat_id:
+                    resultados_tg[lider] = "⚠️ chat_id não configurado"
+                    continue
+
+                # Monta mensagem individual para o líder
+                linhas_vend = ""
+                for v in d["vendedores"]:
+                    icon = "✅" if v["bateu"] else "❌"
+                    linhas_vend += f"\n  {icon} <b>{v['vendedor']}</b>: R$ {v['receita']:,.2f} ({v['pct']}%) → repasse R$ {v['comiss_lider']:,.2f}"
+
+                mensagem = f"""💰 <b>Comissionamento {MES_ALVO} — {lider}</b>
+
+📊 <b>Resumo da sua equipe:</b>
+• Vendedores: {d['n_vendedores']} | Bateram meta: {d['n_bateram']}
+• Receita total: R$ {d['rec_lider']:,.2f}
+• 🏆 <b>Sua comissão estimada: R$ {d['total_comiss_lider']:,.2f}</b>
+
+👥 <b>Detalhes por vendedor:</b>{linhas_vend}
+
+📅 <i>Referência: {MES_ALVO} · Connect Group</i>"""
+
+                ok = enviar_telegram(str(chat_id), mensagem)
+                resultados_tg[lider] = "✅ Enviado" if ok else "❌ Falha no envio"
+
+        # Exibe resultados
+        for lider, status in resultados_tg.items():
+            st.caption(f"{status} → {lider}")
 
 
 def render_equipe(df_eq, lider, meta_dict):
@@ -403,291 +782,261 @@ def main():
     if "Sem Equipe" in df["lider"].unique():
         lideres += ["Sem Equipe"]
 
-    # Dicionário de metas individuais por vendedor (da aba Colaboradores)
     meta_dict = dict(zip(colab["vendedor"], colab["meta"])) if not colab.empty else {}
 
-    # KPIs globais
-    st.markdown('<p class="section-title">📈 Visão Consolidada</p>', unsafe_allow_html=True)
-    atv_g  = df[df["mes_ativacao"] == MES_ALVO]
-    ac_g   = int(atv_g["acessos"].sum())
-    rec_g  = atv_g["preco_oferta"].sum()
-    pip_g  = int(df[df["mes_ativacao"].isna()]["acessos"].sum())
-    nv_g   = df["vendedor_real"].nunique()
-    meta_g = sum(_meta_vend(v, meta_dict) for v in df["vendedor_real"].unique()) if meta_dict else nv_g * META_VENDEDOR_PAD
-    pct_g  = min(int(rec_g / meta_g * 100), 999) if meta_g > 0 else 0
+    # ── TABS PRINCIPAIS ───────────────────────────────────────────
+    tab_perf, tab_comiss = st.tabs([
+        "🏆 Performance",
+        "💰 Comissionamento"
+    ])
 
-    g1,g2,g3,g4,g5 = st.columns(5)
-    with g1:
-        st.markdown(f"""<div class="kpi-mini blue"><div class="kpi-label">🎯 Acessos Ativados</div>
-          <div class="kpi-value">{ac_g:,}</div><div class="kpi-sub">no mês</div></div>""", unsafe_allow_html=True)
-    with g2:
-        st.markdown(f"""<div class="kpi-mini green"><div class="kpi-label">💰 Receita Ativada</div>
-          <div class="kpi-value">R$ {rec_g:,.2f}</div><div class="kpi-sub">{pct_g}% da meta</div></div>""", unsafe_allow_html=True)
-    with g3:
-        st.markdown(f"""<div class="kpi-mini amber"><div class="kpi-label">⏳ Pipeline</div>
-          <div class="kpi-value">{pip_g:,}</div><div class="kpi-sub">em tramitação</div></div>""", unsafe_allow_html=True)
-    with g4:
-        st.markdown(f"""<div class="kpi-mini purple"><div class="kpi-label">👥 Vendedores</div>
-          <div class="kpi-value">{nv_g}</div><div class="kpi-sub">meta R$ {meta_g:,.2f}</div></div>""", unsafe_allow_html=True)
-    with g5:
-        neq = len([l for l in lideres if l != "Sem Equipe"])
-        st.markdown(f"""<div class="kpi-mini red"><div class="kpi-label">🏆 Equipes</div>
-          <div class="kpi-value">{neq}</div><div class="kpi-sub">em exibição</div></div>""", unsafe_allow_html=True)
+    with tab_perf:
+        # KPIs globais
+        st.markdown('<p class="section-title">📈 Visão Consolidada</p>', unsafe_allow_html=True)
+        atv_g  = df[df["mes_ativacao"] == MES_ALVO]
+        ac_g   = int(atv_g["acessos"].sum())
+        rec_g  = atv_g["preco_oferta"].sum()
+        pip_g  = int(df[df["mes_ativacao"].isna()]["acessos"].sum())
+        nv_g   = df["vendedor_real"].nunique()
+        meta_g = sum(_meta_vend(v, meta_dict) for v in df["vendedor_real"].unique()) if meta_dict else nv_g * META_VENDEDOR_PAD
+        pct_g  = min(int(rec_g / meta_g * 100), 999) if meta_g > 0 else 0
 
-    st.markdown("")
-    render_visual(df, lideres, lider_sel, meta_dict)
-
-    st.markdown('<p class="section-title">👤 Desempenho por Equipe — Kanban</p>', unsafe_allow_html=True)
-    for lider in lideres:
-        render_equipe(df[df["lider"] == lider].copy(), lider, meta_dict)
-
-    # ── Pendências de cadastro ──
-    # ── Vendedores zerados ────────────────────────────────────────────────────
-    st.markdown('<p class="section-title">🔴 Vendedores Sem Ativação no Mês</p>', unsafe_allow_html=True)
-
-    if not colab.empty:
-        # Filtra colaboradores da equipe/parceiro selecionado
-        colab_fil = colab.copy()
-        if lider_sel != "Todos":
-            colab_fil = colab_fil[colab_fil["lider"] == lider_sel]
-
-        # Receita ativada por vendedor real no mês
-        ser_atv = df[df["mes_ativacao"] == MES_ALVO].groupby("vendedor_real")["preco_oferta"].sum()
-
-        # Cruza colaboradores ativos com ativações
-        colab_fil["receita"] = colab_fil["vendedor"].map(ser_atv).fillna(0)
-        zerados   = colab_fil[colab_fil["receita"] == 0].sort_values("vendedor")
-        parciais  = colab_fil[(colab_fil["receita"] > 0) & (colab_fil["receita"] < colab_fil["meta"])].sort_values("receita")
-        bateram   = colab_fil[colab_fil["receita"] >= colab_fil["meta"]].sort_values("receita", ascending=False)
-
-        z1, z2, z3 = st.columns(3)
-        with z1:
-            st.markdown(f"""<div class="kpi-mini red">
-              <div class="kpi-label">🔴 Zerados</div>
-              <div class="kpi-value">{len(zerados)}</div>
-              <div class="kpi-sub">sem nenhuma ativação</div>
-            </div>""", unsafe_allow_html=True)
-        with z2:
-            st.markdown(f"""<div class="kpi-mini amber">
-              <div class="kpi-label">🟡 Abaixo da Meta</div>
-              <div class="kpi-value">{len(parciais)}</div>
-              <div class="kpi-sub">ativaram mas não bateram</div>
-            </div>""", unsafe_allow_html=True)
-        with z3:
-            st.markdown(f"""<div class="kpi-mini green">
-              <div class="kpi-label">🟢 Bateram a Meta</div>
-              <div class="kpi-value">{len(bateram)}</div>
-              <div class="kpi-sub">acima de R$ {META_VENDEDOR_PAD:,}</div>
-            </div>""", unsafe_allow_html=True)
+        g1,g2,g3,g4,g5 = st.columns(5)
+        with g1:
+            st.markdown(f"""<div class="kpi-mini blue"><div class="kpi-label">🎯 Acessos Ativados</div>
+              <div class="kpi-value">{ac_g:,}</div><div class="kpi-sub">no mês</div></div>""", unsafe_allow_html=True)
+        with g2:
+            st.markdown(f"""<div class="kpi-mini green"><div class="kpi-label">💰 Receita Ativada</div>
+              <div class="kpi-value">R$ {rec_g:,.2f}</div><div class="kpi-sub">{pct_g}% da meta</div></div>""", unsafe_allow_html=True)
+        with g3:
+            st.markdown(f"""<div class="kpi-mini amber"><div class="kpi-label">⏳ Pipeline</div>
+              <div class="kpi-value">{pip_g:,}</div><div class="kpi-sub">em tramitação</div></div>""", unsafe_allow_html=True)
+        with g4:
+            st.markdown(f"""<div class="kpi-mini purple"><div class="kpi-label">👥 Vendedores</div>
+              <div class="kpi-value">{nv_g}</div><div class="kpi-sub">meta R$ {meta_g:,.2f}</div></div>""", unsafe_allow_html=True)
+        with g5:
+            neq = len([l for l in lideres if l != "Sem Equipe"])
+            st.markdown(f"""<div class="kpi-mini red"><div class="kpi-label">🏆 Equipes</div>
+              <div class="kpi-value">{neq}</div><div class="kpi-sub">em exibição</div></div>""", unsafe_allow_html=True)
 
         st.markdown("")
+        render_visual(df, lideres, lider_sel, meta_dict)
 
-        tab_z1, tab_z2, tab_z3 = st.tabs([
-            f"🔴 Zerados ({len(zerados)})",
-            f"🟡 Abaixo da Meta ({len(parciais)})",
-            f"🟢 Bateram ({len(bateram)})"
-        ])
+        st.markdown('<p class="section-title">👤 Desempenho por Equipe — Kanban</p>', unsafe_allow_html=True)
+        for lider in lideres:
+            render_equipe(df[df["lider"] == lider].copy(), lider, meta_dict)
 
-        def _render_vend_table(dff):
-            if dff.empty:
-                st.success("Nenhum vendedor nesta categoria.")
-                return
-            rows_html = ""
-            for _, row in dff.iterrows():
-                pct = min(int(row["receita"] / row["meta"] * 100), 100) if row["meta"] > 0 else 0
-                cor = _cor(pct)
-                bar = _bar(row["receita"], row["meta"], cor, 8)
-                rows_html += f"""
-                <div style="padding:10px 0;border-bottom:1px solid #1e293b">
-                  <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-                    <span style="font-size:0.85rem;font-weight:600;color:#e2e8f0">{row['vendedor']}</span>
-                    <span style="font-size:0.82rem;color:{cor};font-weight:700">R$ {row['receita']:,.2f} <span style="color:#64748b">({pct}%)</span></span>
-                  </div>
-                  {bar}
-                  <div style="font-size:0.68rem;color:#64748b;margin-top:2px">{row['lider'] if row['lider'] else '—'} · meta R$ {row['meta']:,.0f}</div>
-                </div>"""
-            st.markdown(f'<div style="max-height:400px;overflow-y:auto">{rows_html}</div>', unsafe_allow_html=True)
+        # Vendedores zerados
+        st.markdown('<p class="section-title">🔴 Vendedores Sem Ativação no Mês</p>', unsafe_allow_html=True)
 
-        with tab_z1:
-            _render_vend_table(zerados)
-        with tab_z2:
-            _render_vend_table(parciais)
-        with tab_z3:
-            _render_vend_table(bateram)
-    else:
-        st.info("Aba Colaboradores não encontrada ou sem dados.")
+        if not colab.empty:
+            colab_fil = colab.copy()
+            if lider_sel != "Todos":
+                colab_fil = colab_fil[colab_fil["lider"] == lider_sel]
 
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+            ser_atv = df[df["mes_ativacao"] == MES_ALVO].groupby("vendedor_real")["preco_oferta"].sum()
 
-    # ── Pendências de Cadastro no BKO ──────────────────────────────────────────
-    st.markdown('<p class="section-title">⚠️ Pendências de Cadastro no BKO</p>', unsafe_allow_html=True)
+            colab_fil["receita"] = colab_fil["vendedor"].map(ser_atv).fillna(0)
+            zerados   = colab_fil[colab_fil["receita"] == 0].sort_values("vendedor")
+            parciais  = colab_fil[(colab_fil["receita"] > 0) & (colab_fil["receita"] < colab_fil["meta"])].sort_values("receita")
+            bateram   = colab_fil[colab_fil["receita"] >= colab_fil["meta"]].sort_values("receita", ascending=False)
 
-    # Reconstrói df completo sem filtro de líder para pegar todos os pedidos
-    df_full = apply_filters(raw.copy(), MES_ALVO, ["NOVO","ADITIVO"], parceiro_sel)
-    if not bko.empty and "pedido" in df_full.columns:
-        df_full["pedido"] = df_full["pedido"].apply(_norm_pedido)
-        bk2 = bko.copy()
-        bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
-        df_full = df_full.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
-        df_full["vendedor_real"] = df_full["vendedor_real"].fillna("")
-        df_full["lider"]         = df_full["lider"].fillna("")
-    else:
-        df_full["vendedor_real"] = ""
-        df_full["lider"]         = ""
+            z1, z2, z3 = st.columns(3)
+            with z1:
+                st.markdown(f"""<div class="kpi-mini red">
+                  <div class="kpi-label">🔴 Zerados</div>
+                  <div class="kpi-value">{len(zerados)}</div>
+                  <div class="kpi-sub">sem nenhuma ativação</div>
+                </div>""", unsafe_allow_html=True)
+            with z2:
+                st.markdown(f"""<div class="kpi-mini amber">
+                  <div class="kpi-label">🟡 Abaixo da Meta</div>
+                  <div class="kpi-value">{len(parciais)}</div>
+                  <div class="kpi-sub">ativaram mas não bateram</div>
+                </div>""", unsafe_allow_html=True)
+            with z3:
+                st.markdown(f"""<div class="kpi-mini green">
+                  <div class="kpi-label">🟢 Bateram a Meta</div>
+                  <div class="kpi-value">{len(bateram)}</div>
+                  <div class="kpi-sub">acima de R$ {META_VENDEDOR_PAD:,}</div>
+                </div>""", unsafe_allow_html=True)
 
-    COLS_SHOW = [c for c in ["pedido","razao_social","fila_atual","status_dash","acessos","preco_oferta","mes_ativacao"] if c in df_full.columns]
-    COL_CFG = {
-        "pedido":       "Pedido",
-        "razao_social": "Razão Social",
-        "fila_atual":   "Fila Atual",
-        "status_dash":  "Status",
-        "acessos":      st.column_config.NumberColumn("Acessos", format="%d"),
-        "preco_oferta": st.column_config.NumberColumn("R$", format="R$ %.2f"),
-        "mes_ativacao": "Mês Ativação",
-    }
+            st.markdown("")
 
-    # Deduplica pelo pedido antes de exibir — um pedido pode ter várias linhas no DadosRadar
-    df_nan = (df_full[df_full["vendedor_real"] == ""][COLS_SHOW]
-              .drop_duplicates(subset=["pedido"]).copy()) if "pedido" in df_full.columns else pd.DataFrame()
-    df_seq = (df_full[df_full["lider"] == "Sem Equipe"][COLS_SHOW + ["vendedor_real"]]
-              .drop_duplicates(subset=["pedido"]).copy()) if "Sem Equipe" in df_full["lider"].values and "pedido" in df_full.columns else pd.DataFrame()
+            tab_z1, tab_z2, tab_z3 = st.tabs([
+                f"🔴 Zerados ({len(zerados)})",
+                f"🟡 Abaixo da Meta ({len(parciais)})",
+                f"🟢 Bateram ({len(bateram)})"
+            ])
 
-    tab_nan, tab_seq = st.tabs(["❓ Não cadastrados no BKO", "👤 Sem Equipe (BKO sem Líder)"])
+            def _render_vend_table(dff):
+                if dff.empty:
+                    st.success("Nenhum vendedor nesta categoria.")
+                    return
+                rows_html = ""
+                for _, row in dff.iterrows():
+                    pct = min(int(row["receita"] / row["meta"] * 100), 100) if row["meta"] > 0 else 0
+                    cor = _cor(pct)
+                    bar = _bar(row["receita"], row["meta"], cor, 8)
+                    rows_html += f"""
+                    <div style="padding:10px 0;border-bottom:1px solid #1e293b">
+                      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                        <span style="font-size:0.85rem;font-weight:600;color:#e2e8f0">{row['vendedor']}</span>
+                        <span style="font-size:0.82rem;color:{cor};font-weight:700">R$ {row['receita']:,.2f} <span style="color:#64748b">({pct}%)</span></span>
+                      </div>
+                      {bar}
+                      <div style="font-size:0.68rem;color:#64748b;margin-top:2px">{row['lider'] if row['lider'] else '—'} · meta R$ {row['meta']:,.0f}</div>
+                    </div>"""
+                st.markdown(f'<div style="max-height:400px;overflow-y:auto">{rows_html}</div>', unsafe_allow_html=True)
 
-    with tab_nan:
-        if df_nan.empty:
-            st.success("✅ Todos os pedidos estão cadastrados no BKO!")
+            with tab_z1:
+                _render_vend_table(zerados)
+            with tab_z2:
+                _render_vend_table(parciais)
+            with tab_z3:
+                _render_vend_table(bateram)
         else:
-            st.warning(f"**{len(df_nan)} pedido(s)** sem cadastro no BKO-VENDEDOR-REAL.")
-            st.dataframe(df_nan, use_container_width=True, hide_index=True, column_config=COL_CFG)
-            csv = df_nan.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Exportar (.csv)", data=csv,
-                file_name=f"sem_bko_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
+            st.info("Aba Colaboradores não encontrada ou sem dados.")
 
-    with tab_seq:
-        if df_seq.empty:
-            st.success("✅ Todos os pedidos cadastrados no BKO têm equipe definida!")
+        st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+        # Pendências BKO
+        st.markdown('<p class="section-title">⚠️ Pendências de Cadastro no BKO</p>', unsafe_allow_html=True)
+
+        df_full = apply_filters(raw.copy(), MES_ALVO, ["NOVO","ADITIVO"], parceiro_sel)
+        if not bko.empty and "pedido" in df_full.columns:
+            df_full["pedido"] = df_full["pedido"].apply(_norm_pedido)
+            bk2 = bko.copy()
+            bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
+            df_full = df_full.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+            df_full["vendedor_real"] = df_full["vendedor_real"].fillna("")
+            df_full["lider"]         = df_full["lider"].fillna("")
         else:
-            st.warning(f"**{len(df_seq)} pedido(s)** com vendedor no BKO mas sem líder definido.")
-            st.dataframe(df_seq, use_container_width=True, hide_index=True,
-                column_config={**COL_CFG, "vendedor_real": "Vendedor Real"})
-            csv2 = df_seq.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Exportar (.csv)", data=csv2,
-                file_name=f"sem_equipe_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
+            df_full["vendedor_real"] = ""
+            df_full["lider"]         = ""
 
-    # ── Botão de envio de e-mail ──
-    st.markdown("")
-    total_pend = len(df_nan) + len(df_seq) if 'df_nan' in dir() and 'df_seq' in dir() else 0
-    st.markdown("---")
-    if total_pend > 0:
-        c_toggle, c_btn, c_info = st.columns([1, 1, 3])
-        with c_toggle:
-            modo_teste = st.toggle("🧪 Só para mim", value=True,
-                help="Ativado = envia só para hugo@connectgroup.solutions | Desativado = envia para toda a lista")
-        with c_btn:
-            enviar = st.button("📧 Notificar por E-mail", type="primary", use_container_width=True)
-        with c_info:
-            dest_lista = DESTINATARIOS_TESTE if modo_teste else DESTINATARIOS_FULL
-            st.markdown(f"""<div style="padding:8px 0;color:#94a3b8;font-size:0.8rem">
-              {'🧪 Modo teste — ' if modo_teste else '📢 Envio completo — '}
-              <strong style="color:#e2e8f0">{' · '.join(dest_lista)}</strong><br>
-              <span style="color:#64748b">Inclui tabelas HTML e CSVs em anexo.</span>
-            </div>""", unsafe_allow_html=True)
-        if enviar:
-            with st.spinner("Enviando e-mail..."):
-                df_nan_e = df_nan if not df_nan.empty else pd.DataFrame()
-                df_seq_e = df_seq if not df_seq.empty else pd.DataFrame()
-                try:
-                    import requests as _req
-                    cfg = st.secrets["email"]
+        COLS_SHOW = [c for c in ["pedido","razao_social","fila_atual","status_dash","acessos","preco_oferta","mes_ativacao"] if c in df_full.columns]
+        COL_CFG = {
+            "pedido":       "Pedido",
+            "razao_social": "Razão Social",
+            "fila_atual":   "Fila Atual",
+            "status_dash":  "Status",
+            "acessos":      st.column_config.NumberColumn("Acessos", format="%d"),
+            "preco_oferta": st.column_config.NumberColumn("R$", format="R$ %.2f"),
+            "mes_ativacao": "Mês Ativação",
+        }
 
-                    def _tab(df, titulo, cor):
-                        if df.empty:
-                            return f"<h3 style='color:{cor}'>{titulo}</h3><p>✅ Nenhuma pendência.</p>"
-                        lns = "".join(f"<tr>{''.join(f'<td style=padding:6px 10px;border:1px solid #ddd>{v}</td>' for v in r)}</tr>" for r in df.values)
-                        ths = "".join(f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>" for c in df.columns)
-                        return f"<h3 style='color:{cor};margin-top:24px'>{titulo} ({len(df)})</h3><table style='border-collapse:collapse;width:100%;font-size:13px'><tr>{ths}</tr>{lns}</table>"
+        df_nan = (df_full[df_full["vendedor_real"] == ""][COLS_SHOW]
+                  .drop_duplicates(subset=["pedido"]).copy()) if "pedido" in df_full.columns else pd.DataFrame()
+        df_seq = (df_full[df_full["lider"] == "Sem Equipe"][COLS_SHOW + ["vendedor_real"]]
+                  .drop_duplicates(subset=["pedido"]).copy()) if "Sem Equipe" in df_full["lider"].values and "pedido" in df_full.columns else pd.DataFrame()
 
-                    from datetime import datetime as _dt
-                    agora = _dt.now().strftime("%d/%m/%Y às %H:%M")
+        tab_nan, tab_seq = st.tabs(["❓ Não cadastrados no BKO", "👤 Sem Equipe (BKO sem Líder)"])
 
-                    BKO_URL = "https://docs.google.com/spreadsheets/d/1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg/edit?gid=2090275960#gid=2090275960"
+        with tab_nan:
+            if df_nan.empty:
+                st.success("✅ Todos os pedidos estão cadastrados no BKO!")
+            else:
+                st.warning(f"**{len(df_nan)} pedido(s)** sem cadastro no BKO-VENDEDOR-REAL.")
+                st.dataframe(df_nan, use_container_width=True, hide_index=True, column_config=COL_CFG)
+                csv = df_nan.to_csv(index=False).encode("utf-8")
+                st.download_button("⬇️ Exportar (.csv)", data=csv,
+                    file_name=f"sem_bko_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
 
-                    # Monta lista de vendedores sem cadastro
-                    vendedores_nan = ""
-                    if not df_nan_e.empty and "razao_social" in df_nan_e.columns:
-                        itens = "".join(
-                            f"<li><strong>{row.get('pedido','')}</strong> — {row.get('razao_social','')}</li>"
-                            for row in df_nan_e.to_dict("records")
-                        )
-                        vendedores_nan = f"<ul style='margin:8px 0 0 0;font-size:13px'>{itens}</ul>"
+        with tab_seq:
+            if df_seq.empty:
+                st.success("✅ Todos os pedidos cadastrados no BKO têm equipe definida!")
+            else:
+                st.warning(f"**{len(df_seq)} pedido(s)** com vendedor no BKO mas sem líder definido.")
+                st.dataframe(df_seq, use_container_width=True, hide_index=True,
+                    column_config={**COL_CFG, "vendedor_real": "Vendedor Real"})
+                csv2 = df_seq.to_csv(index=False).encode("utf-8")
+                st.download_button("⬇️ Exportar (.csv)", data=csv2,
+                    file_name=f"sem_equipe_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
 
-                    html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
-                      <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
-                        <h2 style="color:#fff;margin:0">⚠️ Pendências BKO — Connect Group</h2>
-                        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">{MES_ALVO} · Gerado em {agora}</p>
-                      </div>
-                      <p style="font-size:15px">Olá, identificamos <strong>pendência de nome do VENDEDOR REAL</strong> na planilha online em <strong>{agora}</strong>:</p>
-                      <ul>
-                        <li><strong>{len(df_nan_e)}</strong> pedido(s) aguardando cadastro do Vendedor Real no BKO</li>
-                        <li><strong>{len(df_seq_e)}</strong> pedido(s) com vendedor cadastrado mas sem líder definido</li>
-                      </ul>
-                      {_tab(df_nan_e,"❓ Pedidos sem Vendedor Real no BKO","#dc2626")}
-                      {_tab(df_seq_e,"👤 Pedidos sem Líder definido","#d97706")}
-                      <br>
-                      <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:16px 20px;margin:16px 0">
-                        <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:#92400e">❓ COMO RESOLVER?</p>
-                        <p style="margin:0;font-size:14px;color:#78350f">
-                          Basta apenas entrar na planilha e colocar o <strong>VENDEDOR REAL</strong> da venda —
-                          as informações do pedido já estão lá preenchidas automaticamente.
-                        </p>
-                      </div>
-                      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 20px;margin:16px 0">
-                        <p style="margin:0;font-size:14px">
-                          📋 <strong>Acesse a planilha BKO diretamente para preencher:</strong><br><br>
-                          <a href="{BKO_URL}" style="color:#15803d;font-weight:bold;font-size:14px">
-                            👉 Clique aqui para abrir o BKO-VENDEDOR-REAL
-                          </a>
-                        </p>
-                      </div>
-                      <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
-                    </body></html>"""
+        st.markdown("")
+        total_pend = len(df_nan) + len(df_seq)
+        st.markdown("---")
+        if total_pend > 0:
+            c_toggle, c_btn, c_info = st.columns([1, 1, 3])
+            with c_toggle:
+                modo_teste_bko = st.toggle("🧪 Só para mim", value=True,
+                    help="Ativado = envia só para hugo@connectgroup.solutions")
+            with c_btn:
+                enviar_bko = st.button("📧 Notificar por E-mail", type="primary", use_container_width=True)
+            with c_info:
+                dest_lista_bko = DESTINATARIOS_TESTE if modo_teste_bko else DESTINATARIOS_FULL
+                st.markdown(f"""<div style="padding:8px 0;color:#94a3b8;font-size:0.8rem">
+                  {'🧪 Modo teste — ' if modo_teste_bko else '📢 Envio completo — '}
+                  <strong style="color:#e2e8f0">{' · '.join(dest_lista_bko)}</strong>
+                </div>""", unsafe_allow_html=True)
+            if enviar_bko:
+                with st.spinner("Enviando e-mail..."):
+                    df_nan_e = df_nan if not df_nan.empty else pd.DataFrame()
+                    df_seq_e = df_seq if not df_seq.empty else pd.DataFrame()
+                    try:
+                        import requests as _req
+                        cfg = st.secrets["email"]
 
-                    # Titan SMTP via SSL
-                    import smtplib
-                    from email.mime.multipart import MIMEMultipart as _MM
-                    from email.mime.text import MIMEText as _MT
+                        def _tab(df, titulo, cor):
+                            if df.empty:
+                                return f"<h3 style='color:{cor}'>{titulo}</h3><p>✅ Nenhuma pendência.</p>"
+                            lns = "".join(f"<tr>{''.join(f'<td style=padding:6px 10px;border:1px solid #ddd>{v}</td>' for v in r)}</tr>" for r in df.values)
+                            ths = "".join(f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>" for c in df.columns)
+                            return f"<h3 style='color:{cor};margin-top:24px'>{titulo} ({len(df)})</h3><table style='border-collapse:collapse;width:100%;font-size:13px'><tr>{ths}</tr>{lns}</table>"
 
-                    cfg = st.secrets["email"]
-                    msg = _MM("alternative")
-                    msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)"
-                    msg["From"]    = cfg.get("from", cfg["user"])
-                    msg["To"]      = ", ".join(dest_lista)
-                    msg.attach(_MT(html, "html"))
+                        from datetime import datetime as _dt
+                        agora = _dt.now().strftime("%d/%m/%Y às %H:%M")
+                        BKO_URL = "https://docs.google.com/spreadsheets/d/1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg/edit?gid=2090275960#gid=2090275960"
 
-                    with smtplib.SMTP_SSL(cfg["host"], int(cfg["port"]), timeout=20) as sv:
-                        sv.login(cfg["user"], cfg["password"])
-                        sv.sendmail(cfg["user"], dest_lista, msg.as_string())
+                        html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">
+                          <div style="background:linear-gradient(135deg,#0d2b1a,#15803d);padding:20px 30px;border-radius:10px;margin-bottom:24px">
+                            <h2 style="color:#fff;margin:0">⚠️ Pendências BKO — Connect Group</h2>
+                            <p style="color:rgba(255,255,255,0.75);margin:6px 0 0">{MES_ALVO} · Gerado em {agora}</p>
+                          </div>
+                          {_tab(df_nan_e,"❓ Pedidos sem Vendedor Real no BKO","#dc2626")}
+                          {_tab(df_seq_e,"👤 Pedidos sem Líder definido","#d97706")}
+                          <br>
+                          <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:16px 20px;margin:16px 0">
+                            <a href="{BKO_URL}" style="color:#15803d;font-weight:bold">👉 Clique aqui para abrir o BKO-VENDEDOR-REAL</a>
+                          </div>
+                          <hr><p style="font-size:11px;color:#999">Mensagem automática — dashboard Connect Group</p>
+                        </body></html>"""
 
-                    st.success(f"✅ E-mail enviado para: {', '.join(dest_lista)}")
+                        import smtplib
+                        from email.mime.multipart import MIMEMultipart as _MM
+                        from email.mime.text import MIMEText as _MT
 
-                    # Insere automaticamente no BKO os pedidos pendentes
-                    if not df_nan_e.empty and "pedido" in df_nan_e.columns:
-                        cols_bko = [c for c in ["pedido", "razao_social"] if c in df_nan_e.columns]
-                        ok_bko, msg_bko = inserir_pendentes_bko(
-                            df_nan_e[cols_bko].copy(), MES_ALVO
-                        )
-                        # Limpa cache para o BKO recarregar com os novos dados
-                        st.cache_data.clear()
-                        if ok_bko:
-                            st.info(f"📋 {msg_bko}")
-                        else:
-                            st.warning(f"⚠️ {msg_bko}")
+                        cfg = st.secrets["email"]
+                        msg = _MM("alternative")
+                        msg["Subject"] = f"[Connect Group] Pendências BKO — {MES_ALVO} ({total_pend} itens)"
+                        msg["From"]    = cfg.get("from", cfg["user"])
+                        msg["To"]      = ", ".join(dest_lista_bko)
+                        msg.attach(_MT(html, "html"))
 
-                except Exception as e:
-                    st.error(f"❌ Erro ao enviar: {e}")
-    else:
-        st.success("✅ Sem pendências — nenhum e-mail necessário.")
+                        with smtplib.SMTP_SSL(cfg["host"], int(cfg["port"]), timeout=20) as sv:
+                            sv.login(cfg["user"], cfg["password"])
+                            sv.sendmail(cfg["user"], dest_lista_bko, msg.as_string())
+
+                        st.success(f"✅ E-mail enviado para: {', '.join(dest_lista_bko)}")
+
+                        if not df_nan_e.empty and "pedido" in df_nan_e.columns:
+                            cols_bko = [c for c in ["pedido", "razao_social"] if c in df_nan_e.columns]
+                            ok_bko, msg_bko = inserir_pendentes_bko(df_nan_e[cols_bko].copy(), MES_ALVO)
+                            st.cache_data.clear()
+                            if ok_bko:
+                                st.info(f"📋 {msg_bko}")
+                            else:
+                                st.warning(f"⚠️ {msg_bko}")
+
+                    except Exception as e:
+                        st.error(f"❌ Erro ao enviar: {e}")
+        else:
+            st.success("✅ Sem pendências — nenhum e-mail necessário.")
+
+    # ── TAB COMISSIONAMENTO ───────────────────────────────────────
+    with tab_comiss:
+        render_comissionamento(df, lideres, meta_dict)
 
 
 main()
