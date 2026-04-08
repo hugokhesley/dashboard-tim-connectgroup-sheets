@@ -1,6 +1,5 @@
 """
-07_Comissoes.py — Comissão de Parceiros (Versão Estável)
-Connect Group | TIM Empresas
+07_Comissoes.py — Comissão de Parceiros (Versão Estável - Etapas 1 e 2 funcionando)
 """
 
 import streamlit as st
@@ -8,14 +7,12 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 import sys
 import os
-import tempfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from auth import require_login
 from data_loader import get_gspread_client, registrar_acesso
 
-# ==================== CONFIG ====================
 st.set_page_config(
     page_title="Connect Group | Comissões Parceiros",
     page_icon="💰",
@@ -26,7 +23,7 @@ st.set_page_config(
 username = require_login("comissoes")
 registrar_acesso("Comissões Parceiros", username=username)
 
-# ==================== WEASYPRINT ====================
+# ==================== WEASYPRINT (opcional por enquanto) ====================
 try:
     from weasyprint import HTML
     WEASYPRINT_AVAILABLE = True
@@ -34,24 +31,6 @@ except Exception:
     WEASYPRINT_AVAILABLE = False
 
 # ==================== CONSTANTES ====================
-FATORES_PADRAO = {
-    "Black — Fidelizado Novo (5,80)": 5.80,
-    "Platinum — Fidelizado (5,00)": 5.00,
-    "Black — Dados/Plug In (4,80)": 4.80,
-    "Silver — Fidelizado Novo (4,50)": 4.50,
-    "Platinum — Dados/Plug In (4,00)": 4.00,
-    "Silver — Aditivo (3,50)": 3.50,
-    "Blue — Qualquer (3,00)": 3.00,
-    "Portabilidade (1,25)": 1.25,
-    "Não fidelizado (0,30)": 0.30,
-    "⚙️ Personalizado": None,
-}
-
-TIPOS_PRODUTO = ["Plano Voz (Móvel)", "Plano Dados (Móvel)", "Plug In", "M2M", "TIM Office Fixo",
-                 "Ultra Fibra (CNPJ)", "VAS", "Migração Pré→Pós Corporate", "Outro"]
-
-ALIQUOTAS_SIMPLES = [6.00, 6.84, 7.54, 8.04, 10.26, 11.31, 13.50]
-
 MESES_PT = {"01":"Jan","02":"Fev","03":"Mar","04":"Abr","05":"Mai","06":"Jun","07":"Jul","08":"Ago",
             "09":"Set","10":"Out","11":"Nov","12":"Dez"}
 
@@ -63,26 +42,23 @@ def fmt_comp(ym: str) -> str:
     y, m = ym[:4], ym[5:7]
     return f"{MESES_PT.get(m, m)}/{y}"
 
-# ==================== FUNÇÃO DE CARREGAMENTO DE PARCEIROS ====================
+# ==================== CARREGAR PARCEIROS ====================
 @st.cache_data(ttl=60)
 def load_parceiros_sheet() -> pd.DataFrame:
-    """Carrega a aba 'Parceiros' do Google Sheets"""
     try:
         client = get_gspread_client()
         ss = client.open_by_url(st.secrets["sheets"]["url"])
         ws = ss.worksheet("Parceiros")
         vals = ws.get_all_values()
         if not vals or len(vals) < 2:
-            return pd.DataFrame(columns=["nome", "cnpj_cpf", "email", "pix_chave", "pix_tipo", "ativo"])
-        
+            return pd.DataFrame()
         df = pd.DataFrame(vals[1:], columns=vals[0])
-        # Filtra apenas parceiros ativos
         if "ativo" in df.columns:
             df = df[df["ativo"].str.upper() != "NÃO"].copy()
         return df.reset_index(drop=True)
     except Exception as e:
-        st.warning(f"Erro ao carregar aba Parceiros: {e}")
-        return pd.DataFrame(columns=["nome", "cnpj_cpf", "email", "pix_chave", "pix_tipo"])
+        st.warning(f"Erro ao carregar Parceiros: {e}")
+        return pd.DataFrame()
 
 # ==================== SESSION STATE ====================
 if "com_step" not in st.session_state:
@@ -97,7 +73,6 @@ if "com_step" not in st.session_state:
         "com_vencimento": (date.today() + timedelta(days=10)).isoformat(),
         "com_pix_tipo": "CNPJ",
         "com_pix_chave": "",
-        "com_canal": "E-mail",
     })
 
 # ==================== SIDEBAR ====================
@@ -128,9 +103,9 @@ if step == 1:
 
     with tab1:
         if df_parc.empty:
-            st.info("Nenhum parceiro cadastrado ainda.")
+            st.info("Nenhum parceiro cadastrado.")
         else:
-            nomes = ["— Selecione um parceiro —"] + df_parc["nome"].dropna().unique().tolist()
+            nomes = ["— Selecione um parceiro —"] + df_parc["nome"].dropna().tolist()
             sel = st.selectbox("Escolha o parceiro", nomes)
             
             if sel != "— Selecione um parceiro —":
@@ -162,48 +137,56 @@ if step == 1:
                         "nome": nome, "cnpj_cpf": cnpj, "email": email,
                         "pix_chave": pix_chave, "pix_tipo": pix_tipo
                     }
-                    st.session_state.com_pix_chave = pix_chave
-                    st.session_state.com_pix_tipo = pix_tipo
                     st.session_state.com_step = 2
                     st.rerun()
                 else:
                     st.error("Nome, CNPJ/CPF e Chave PIX são obrigatórios.")
 
-# ==================== ETAPA 4: TESTE PDF ====================
-elif step == 4:
-    st.subheader("4. Teste de Geração de PDF")
-    
+# ==================== ETAPA 2: VENDAS ====================
+elif step == 2:
     if not st.session_state.com_parceiro:
-        st.warning("Por favor, volte e selecione um parceiro primeiro.")
+        st.error("Parceiro não selecionado. Volte para a Etapa 1.")
+        if st.button("Voltar para Etapa 1"):
+            st.session_state.com_step = 1
+            st.rerun()
     else:
         p = st.session_state.com_parceiro
-        html_test = f"""
-        <html><head><meta charset="utf-8">
-        <style>body {{ font-family: Arial; margin: 40px; }}</style>
-        </head>
-        <body>
-            <h1>Teste de PDF - WeasyPrint</h1>
-            <p><strong>Parceiro:</strong> {p.get('nome', '—')}</p>
-            <p><strong>CNPJ/CPF:</strong> {p.get('cnpj_cpf', '—')}</p>
-            <p>Data: {date.today().strftime('%d/%m/%Y')}</p>
-        </body></html>
-        """
+        st.subheader(f"2. Vendas — {p.get('nome', 'Parceiro')}")
 
-        if WEASYPRINT_AVAILABLE:
-            try:
-                pdf_bytes = HTML(string=html_test).write_pdf()
-                st.success("✅ WeasyPrint funcionando corretamente!")
-                st.download_button(
-                    "⬇️ Baixar PDF de Teste",
-                    data=pdf_bytes,
-                    file_name="teste_comissao.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"Erro ao gerar PDF: {e}")
+        with st.form("add_venda", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 1.5])
+            desc = c1.text_input("Produto / Descrição *")
+            comp = c2.text_input("Competência (MM/AAAA)", value=fmt_comp(st.session_state.com_comp))
+            valor = c3.number_input("Valor da Venda (R$)", min_value=0.0, step=0.01, format="%.2f")
+            tipo = c4.selectbox("Tipo de Produto", TIPOS_PRODUTO)
+            
+            if st.form_submit_button("➕ Adicionar Venda"):
+                if desc and valor > 0:
+                    st.session_state.com_vendas.append({
+                        "desc": desc, 
+                        "comp": comp, 
+                        "valor": valor, 
+                        "tipo": tipo
+                    })
+                    st.rerun()
+
+        # Mostrar vendas adicionadas
+        if st.session_state.com_vendas:
+            df_v = pd.DataFrame(st.session_state.com_vendas)
+            st.dataframe(df_v, use_container_width=True, hide_index=True)
+            st.metric("Total Base de Vendas", fmt_brl(df_v["valor"].sum()))
+
+        col1, col2 = st.columns([1, 3])
+        if col1.button("← Voltar"):
+            st.session_state.com_step = 1
+            st.rerun()
+        if col2.button("Próximo →", type="primary", disabled=len(st.session_state.com_vendas) == 0):
+            st.session_state.com_step = 3
+            st.rerun()
         else:
-            st.error("WeasyPrint não disponível.")
+            st.info("Adicione pelo menos uma venda para continuar.")
 
-# Rodapé
-st.caption("Sistema de Comissões Connect Group • Versão Corrigida")
+else:
+    st.info(f"Etapa {step} em desenvolvimento.")
+
+st.caption("Sistema de Comissões Connect Group • Versão Estável")
