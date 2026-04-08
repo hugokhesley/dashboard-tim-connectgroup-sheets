@@ -697,6 +697,32 @@ def render_comissionamento(df, lideres, meta_dict):
         for lider, status in resultados_tg.items():
             st.caption(f"{status} → {lider}")
 
+        # Envia resumo consolidado para o admin
+        try:
+            admin_lideres = dict(st.secrets.get("telegram", {}).get("admin", {}))
+        except Exception:
+            admin_lideres = {}
+
+        if admin_lideres:
+            linhas_admin = ""
+            total_comiss_geral = 0
+            for lider, d in dados.items():
+                pct_eq = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
+                icon   = "✅" if pct_eq >= 100 else "⚠️" if pct_eq >= 70 else "🔴"
+                total_comiss_geral += d["total_comiss_lider"]
+                linhas_admin += f"\n{icon} <b>{lider}</b>: {d['n_bateram']}/{d['n_vendedores']} · R$ {d['rec_lider']:,.2f} ({pct_eq}%) · comiss. R$ {d['total_comiss_lider']:,.2f}"
+
+            msg_admin = f"""📋 <b>Resumo Geral Comissionamento {MES_ALVO}</b>
+
+👥 <b>Por equipe:</b>{linhas_admin}
+
+💰 <b>Total repasse líderes: R$ {total_comiss_geral:,.2f}</b>
+📅 <i>{MES_ALVO} · Connect Group</i>"""
+
+            for nome_admin, chat_admin in admin_lideres.items():
+                ok_admin = enviar_telegram(str(chat_admin), msg_admin)
+                st.caption(f"{'✅' if ok_admin else '❌'} Resumo admin enviado → {nome_admin}")
+
 
 def render_equipe(df_eq, lider, meta_dict):
     ac_ativ  = int(df_eq[df_eq["mes_ativacao"] == MES_ALVO]["acessos"].sum())
