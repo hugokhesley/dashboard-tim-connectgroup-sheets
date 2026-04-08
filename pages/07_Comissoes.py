@@ -1,5 +1,5 @@
 """
-07_Comissoes.py — Comissão de Parceiros (Versão Corrigida)
+07_Comissoes.py — Comissão de Parceiros (Versão Estável)
 Connect Group | TIM Empresas
 """
 
@@ -13,7 +13,7 @@ import tempfile
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from auth import require_login
-from data_loader import get_gspread_client, registrar_acesso, _s, _to_num
+from data_loader import get_gspread_client, registrar_acesso
 
 # ==================== CONFIG ====================
 st.set_page_config(
@@ -35,11 +35,16 @@ except Exception:
 
 # ==================== CONSTANTES ====================
 FATORES_PADRAO = {
-    "Black — Fidelizado Novo (5,80)": 5.80, "Platinum — Fidelizado (5,00)": 5.00,
-    "Black — Dados/Plug In (4,80)": 4.80, "Silver — Fidelizado Novo (4,50)": 4.50,
-    "Platinum — Dados/Plug In (4,00)": 4.00, "Silver — Aditivo (3,50)": 3.50,
-    "Blue — Qualquer (3,00)": 3.00, "Portabilidade (1,25)": 1.25,
-    "Não fidelizado (0,30)": 0.30, "⚙️ Personalizado": None,
+    "Black — Fidelizado Novo (5,80)": 5.80,
+    "Platinum — Fidelizado (5,00)": 5.00,
+    "Black — Dados/Plug In (4,80)": 4.80,
+    "Silver — Fidelizado Novo (4,50)": 4.50,
+    "Platinum — Dados/Plug In (4,00)": 4.00,
+    "Silver — Aditivo (3,50)": 3.50,
+    "Blue — Qualquer (3,00)": 3.00,
+    "Portabilidade (1,25)": 1.25,
+    "Não fidelizado (0,30)": 0.30,
+    "⚙️ Personalizado": None,
 }
 
 TIPOS_PRODUTO = ["Plano Voz (Móvel)", "Plano Dados (Móvel)", "Plug In", "M2M", "TIM Office Fixo",
@@ -57,6 +62,27 @@ def fmt_comp(ym: str) -> str:
     if not ym or len(ym) < 7: return ym
     y, m = ym[:4], ym[5:7]
     return f"{MESES_PT.get(m, m)}/{y}"
+
+# ==================== FUNÇÃO DE CARREGAMENTO DE PARCEIROS ====================
+@st.cache_data(ttl=60)
+def load_parceiros_sheet() -> pd.DataFrame:
+    """Carrega a aba 'Parceiros' do Google Sheets"""
+    try:
+        client = get_gspread_client()
+        ss = client.open_by_url(st.secrets["sheets"]["url"])
+        ws = ss.worksheet("Parceiros")
+        vals = ws.get_all_values()
+        if not vals or len(vals) < 2:
+            return pd.DataFrame(columns=["nome", "cnpj_cpf", "email", "pix_chave", "pix_tipo", "ativo"])
+        
+        df = pd.DataFrame(vals[1:], columns=vals[0])
+        # Filtra apenas parceiros ativos
+        if "ativo" in df.columns:
+            df = df[df["ativo"].str.upper() != "NÃO"].copy()
+        return df.reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Erro ao carregar aba Parceiros: {e}")
+        return pd.DataFrame(columns=["nome", "cnpj_cpf", "email", "pix_chave", "pix_tipo"])
 
 # ==================== SESSION STATE ====================
 if "com_step" not in st.session_state:
@@ -104,11 +130,12 @@ if step == 1:
         if df_parc.empty:
             st.info("Nenhum parceiro cadastrado ainda.")
         else:
-            nomes = ["— Selecione um parceiro —"] + df_parc["nome"].tolist()
+            nomes = ["— Selecione um parceiro —"] + df_parc["nome"].dropna().unique().tolist()
             sel = st.selectbox("Escolha o parceiro", nomes)
             
             if sel != "— Selecione um parceiro —":
                 p = df_parc[df_parc["nome"] == sel].iloc[0].to_dict()
+                
                 col1, col2, col3 = st.columns(3)
                 col1.metric("CNPJ/CPF", p.get("cnpj_cpf", "—"))
                 col2.metric("E-mail", p.get("email", "—"))
@@ -142,15 +169,12 @@ if step == 1:
                 else:
                     st.error("Nome, CNPJ/CPF e Chave PIX são obrigatórios.")
 
-# ==================== ETAPA 4: TESTE PDF (para quando avançar) ====================
+# ==================== ETAPA 4: TESTE PDF ====================
 elif step == 4:
     st.subheader("4. Teste de Geração de PDF")
     
     if not st.session_state.com_parceiro:
-        st.warning("Volte e selecione um parceiro primeiro.")
-        if st.button("Voltar para Etapa 1"):
-            st.session_state.com_step = 1
-            st.rerun()
+        st.warning("Por favor, volte e selecione um parceiro primeiro.")
     else:
         p = st.session_state.com_parceiro
         html_test = f"""
@@ -158,16 +182,17 @@ elif step == 4:
         <style>body {{ font-family: Arial; margin: 40px; }}</style>
         </head>
         <body>
-            <h1>Termo de Comissionamento - Teste</h1>
+            <h1>Teste de PDF - WeasyPrint</h1>
             <p><strong>Parceiro:</strong> {p.get('nome', '—')}</p>
-            <p><strong>Data:</strong> {date.today().strftime('%d/%m/%Y')}</p>
+            <p><strong>CNPJ/CPF:</strong> {p.get('cnpj_cpf', '—')}</p>
+            <p>Data: {date.today().strftime('%d/%m/%Y')}</p>
         </body></html>
         """
 
         if WEASYPRINT_AVAILABLE:
             try:
                 pdf_bytes = HTML(string=html_test).write_pdf()
-                st.success("✅ PDF gerado com sucesso!")
+                st.success("✅ WeasyPrint funcionando corretamente!")
                 st.download_button(
                     "⬇️ Baixar PDF de Teste",
                     data=pdf_bytes,
