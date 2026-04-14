@@ -129,11 +129,13 @@ def _bar(valor, maximo, cor="#6366f1", h=12):
 
 
 def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_mes_atual, tema_sel):
-    """Visão Gestão à Vista — para impressão e colagem no quadro físico."""
-    from data_loader import load_colaboradores  # importa metas se disponível
+    """Visão Gestão à Vista — para impressão e colagem no quadro físico.
+    Foco em RECEITA CONTRATADA (preco_oferta), não acessos.
+    Meta = meta_individual × nº de vendedores ativos no parceiro filtrado.
+    """
+    from data_loader import load_colaboradores
     t = TEMAS[tema_sel]
 
-    # ── Cabeçalho da aba ────────────────────────────────────────────────────
     mes_num, ano_num = int(mes_sel[:2]), int(mes_sel[3:])
     nome_mes = MESES_PT.get(f"{mes_num:02d}", mes_sel)
     agora    = datetime.now().strftime("%d/%m/%Y às %H:%M")
@@ -145,10 +147,10 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
           🖨️ GESTÃO À VISTA — {nome_mes.upper()} {ano_num}
         </p>
         <p style="font-size:0.78rem;color:#64748b;margin:4px 0 0 0">
-          Atualizado em {agora} · Para impressão e quadro físico
+          Atualizado em {agora} · Receita Contratada · Para impressão e quadro físico
         </p>
       </div>
-      <div style="display:flex;gap:10px;align-items:center">
+      <div>
         <span style="background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px;padding:6px 14px;font-size:0.72rem;color:#93c5fd;font-weight:600">
           🟢 &lt;70% · 🟡 70–89% · 🔴 ≥90%
         </span>
@@ -156,66 +158,83 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Tenta carregar metas da planilha Colaboradores ───────────────────────
-    metas_por_vendedor = {}
+    # ── Garante coluna preco_oferta existe ──────────────────────────────────
+    for df in [df_mes_atv, df_mes_input, df_base]:
+        if "preco_oferta" not in df.columns:
+            df["preco_oferta"] = 0.0
+        if "vendedor_real" not in df.columns:
+            df["vendedor_real"] = "Sem Vendedor"
+        if "lider" not in df.columns:
+            df["lider"] = "Sem Equipe"
+
+    # ── Carrega meta individual da planilha Colaboradores ───────────────────
+    # meta_individual é o valor por vendedor (ex: R$ 850)
+    meta_individual = 0.0
+    metas_por_vendedor = {}  # fallback por nome se quiser metas diferentes por pessoa
     try:
         colab = load_colaboradores()
         if not colab.empty:
             for _, row in colab.iterrows():
                 nome_v = _s(row.get("vendedor", row.get("nome", "")))
-                meta_v = _to_num(row.get("meta", row.get("meta_acessos", 0)))
+                meta_v = _to_num(row.get("meta", row.get("meta_receita", row.get("meta_acessos", 0))))
                 if nome_v and meta_v:
                     metas_por_vendedor[nome_v.upper()] = meta_v
+            # Usa a meta mais comum como padrão individual
+            if metas_por_vendedor:
+                from collections import Counter
+                meta_individual = Counter(metas_por_vendedor.values()).most_common(1)[0][0]
     except Exception:
-        pass  # sem metas cadastradas, mostra "—"
+        pass
 
-    # ── Monta base de ativados por vendedor ────────────────────────────────
-    cols_needed = ["vendedor_real", "lider", "acessos"]
-    for c in cols_needed:
-        if c not in df_mes_atv.columns:
-            df_mes_atv[c] = "" if c != "acessos" else 0
-
+    # ── Real Ativado: receita dos pedidos ativados no mês ──────────────────
     atv_por_vend = (
         df_mes_atv.groupby(["vendedor_real", "lider"])
-        .agg(real_ativo=("acessos", "sum"))
+        .agg(real_ativo=("preco_oferta", "sum"))
         .reset_index()
     )
 
-    # ── Tramitando: input do mês que ainda NÃO foi ativado ─────────────────
+    # ── Tramitando: input do mês SEM ativação ainda (pipeline) ─────────────
     df_tram = df_base[
         (df_base["dt_input"].dt.month == mes_num) &
         (df_base["dt_input"].dt.year  == ano_num) &
         (df_base["dt_ativacao"].isna())
     ].copy()
-    for c in ["vendedor_real", "lider", "acessos"]:
-        if c not in df_tram.columns:
-            df_tram[c] = "" if c != "acessos" else 0
 
     tram_por_vend = (
         df_tram.groupby(["vendedor_real", "lider"])
-        .agg(tramitando=("acessos", "sum"))
+        .agg(tramitando=("preco_oferta", "sum"))
         .reset_index()
     )
 
-    # ── Merge ───────────────────────────────────────────────────────────────
-    # Garante que todos os vendedores apareçam (mesmo sem ativação)
-    todos_vend = pd.concat([
-        df_mes_atv[["vendedor_real", "lider"]].drop_duplicates(),
-        df_mes_input[["vendedor_real", "lider"]].drop_duplicates() if "vendedor_real" in df_mes_input.columns else pd.DataFrame()
-    ]).drop_duplicates(subset=["vendedor_real"])
+    # ── Consolida todos os vendedores (atv + input, sem duplicar) ───────────
+    vend_atv   = df_mes_atv[["vendedor_real", "lider"]].drop_duplicates()
+    vend_input = df_mes_input[["vendedor_real", "lider"]].drop_duplicates() if "vendedor_real" in df_mes_input.columns else pd.DataFrame()
+    todos_vend = pd.concat([vend_atv, vend_input]).drop_duplicates(subset=["vendedor_real"])
 
     tabela = todos_vend.merge(atv_por_vend, on=["vendedor_real", "lider"], how="left")
     tabela = tabela.merge(tram_por_vend[["vendedor_real", "tramitando"]], on="vendedor_real", how="left")
-    tabela["real_ativo"]  = tabela["real_ativo"].fillna(0).astype(int)
-    tabela["tramitando"]  = tabela["tramitando"].fillna(0).astype(int)
-    tabela["projecao"]    = tabela["real_ativo"] + tabela["tramitando"]
+    tabela["real_ativo"] = tabela["real_ativo"].fillna(0.0)
+    tabela["tramitando"] = tabela["tramitando"].fillna(0.0)
+    tabela["projecao"]   = tabela["real_ativo"] + tabela["tramitando"]
 
-    # Meta individual
+    # Remove linhas sem vendedor
+    tabela = tabela[~tabela["vendedor_real"].isin(["Sem Vendedor", ""])].copy()
+
+    if tabela.empty:
+        st.info("Nenhum dado disponível para o período selecionado.")
+        return
+
+    # ── Meta por vendedor = meta_individual (ou específica se houver) ───────
+    # Meta TOTAL = meta_individual × nº de vendedores presentes no filtro atual
+    n_vendedores = len(tabela)
     tabela["meta"] = tabela["vendedor_real"].apply(
-        lambda v: metas_por_vendedor.get(_s(v).upper(), 0)
+        lambda v: metas_por_vendedor.get(_s(v).upper(), meta_individual)
     )
+    # Meta total correta: soma das metas individuais dos vendedores filtrados
+    # (se todos têm a mesma meta → meta_individual × n_vendedores)
+    total_meta = tabela["meta"].sum()
 
-    # Percentual de atingimento (sobre projeção, mais útil para gestão)
+    # % atingimento individual
     def _pct(row):
         if row["meta"] <= 0:
             return None
@@ -223,116 +242,75 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     tabela["pct_ating"] = tabela.apply(_pct, axis=1)
 
-    # Status semáforo
+    # Semáforo
     def _status(row):
         if row["meta"] <= 0 or row["pct_ating"] is None:
-            return "⚪", "#64748b", "Sem meta"
+            return "⚪", "#64748b"
         p = row["pct_ating"]
-        if p >= 90:
-            return "🔴", "#ef4444", f"{p:.1f}%"
-        elif p >= 70:
-            return "🟡", "#f59e0b", f"{p:.1f}%"
-        else:
-            return "🟢", "#10b981", f"{p:.1f}%"
+        if p >= 90:   return "🔴", "#ef4444"
+        elif p >= 70: return "🟡", "#f59e0b"
+        else:         return "🟢", "#10b981"
 
-    tabela["_semaforo"], tabela["_cor_pct"], tabela["_pct_txt"] = zip(*tabela.apply(_status, axis=1))
+    tabela["_semaforo"], tabela["_cor_pct"] = zip(*tabela.apply(_status, axis=1))
 
-    # Ordena por líder, depois por real_ativo desc
+    # Ordena por líder → real_ativo desc
     tabela = tabela.sort_values(["lider", "real_ativo"], ascending=[True, False]).reset_index(drop=True)
 
-    # Remove "Sem Vendedor" / "Sem Equipe"
-    tabela = tabela[~tabela["vendedor_real"].isin(["Sem Vendedor", ""])].copy()
+    # ── KPIs gerais ─────────────────────────────────────────────────────────
+    total_ativo = tabela["real_ativo"].sum()
+    total_tram  = tabela["tramitando"].sum()
+    total_proj  = total_ativo + total_tram
+    pct_geral   = round(total_ativo / total_meta * 100, 1) if total_meta > 0 else 0
 
-    if tabela.empty:
-        st.info("Nenhum dado disponível para o período selecionado.")
-        return
-
-    # ── Totais gerais ───────────────────────────────────────────────────────
-    total_meta   = int(tabela["meta"].sum())
-    total_ativo  = int(tabela["real_ativo"].sum())
-    total_tram   = int(tabela["tramitando"].sum())
-    total_proj   = total_ativo + total_tram
-    pct_geral    = round(total_ativo / total_meta * 100, 1) if total_meta > 0 else 0
+    def _fmt_r(v): return f"R$ {v:,.2f}"
 
     g1, g2, g3, g4, g5 = st.columns(5)
     _mini = lambda bg, lbl, val, sub="": f"""<div style="background:{bg};border-radius:10px;padding:12px 16px;border:1px solid #2d3748;margin-bottom:12px">
       <div style="font-size:0.65rem;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">{lbl}</div>
-      <div style="font-size:1.6rem;font-weight:800;color:#f1f5f9">{val}</div>
-      {"<div style='font-size:0.7rem;color:#64748b;margin-top:2px'>" + sub + "</div>" if sub else ""}
+      <div style="font-size:1.35rem;font-weight:800;color:#f1f5f9;line-height:1.2">{val}</div>
+      {"<div style='font-size:0.68rem;color:#64748b;margin-top:4px'>" + sub + "</div>" if sub else ""}
     </div>"""
 
-    with g1: st.markdown(_mini("#1e1b4b", "🎯 Meta Total", f"{total_meta:,}"), unsafe_allow_html=True)
-    with g2: st.markdown(_mini("#064e3b", "✅ Real Ativado", f"{total_ativo:,}"), unsafe_allow_html=True)
-    with g3: st.markdown(_mini("#1e3a5f", "🔄 Tramitando", f"{total_tram:,}"), unsafe_allow_html=True)
-    with g4: st.markdown(_mini("#1c1917", "📈 Projeção", f"{total_proj:,}", f"ativo + tramitando"), unsafe_allow_html=True)
+    with g1: st.markdown(_mini("#1e1b4b", f"🎯 Meta Total ({n_vendedores} vend.)", _fmt_r(total_meta), f"R$ {meta_individual:,.2f} × {n_vendedores}"), unsafe_allow_html=True)
+    with g2: st.markdown(_mini("#064e3b", "✅ Real Ativado", _fmt_r(total_ativo), "receita contratada"), unsafe_allow_html=True)
+    with g3: st.markdown(_mini("#1e3a5f", "🔄 Tramitando", _fmt_r(total_tram), "pipeline sem ativação"), unsafe_allow_html=True)
+    with g4: st.markdown(_mini("#1c1917", "📈 Projeção", _fmt_r(total_proj), "ativo + tramitando"), unsafe_allow_html=True)
     with g5:
         cor_geral = "#10b981" if pct_geral < 70 else ("#f59e0b" if pct_geral < 90 else "#ef4444")
         st.markdown(f"""<div style="background:#0f1117;border-radius:10px;padding:12px 16px;border:2px solid {cor_geral};margin-bottom:12px">
           <div style="font-size:0.65rem;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">⚡ % Atingimento</div>
-          <div style="font-size:1.6rem;font-weight:800;color:{cor_geral}">{pct_geral:.1f}%</div>
-          <div style="font-size:0.7rem;color:#64748b;margin-top:2px">real / meta</div>
+          <div style="font-size:1.35rem;font-weight:800;color:{cor_geral};line-height:1.2">{pct_geral:.1f}%</div>
+          <div style="font-size:0.68rem;color:#64748b;margin-top:4px">real / meta</div>
         </div>""", unsafe_allow_html=True)
 
-    # ── Tabela principal ────────────────────────────────────────────────────
-    # Opção de agrupamento
+    # ── Opções de tabela ────────────────────────────────────────────────────
     col_opt1, col_opt2 = st.columns([3, 1])
     with col_opt2:
         agrupar = st.checkbox("Agrupar por Líder", value=True, key="gav_agrupar")
 
-    # CSS print-friendly
+    # ── CSS ─────────────────────────────────────────────────────────────────
     st.markdown("""
     <style>
       @media print {
-        section[data-testid="stSidebar"],
-        [data-testid="stHeader"],
+        section[data-testid="stSidebar"], [data-testid="stHeader"],
         button, .stRadio, .stCheckbox, .stSelectbox { display: none !important; }
-        .gav-table { font-size: 12px !important; }
+        .gav-table { font-size: 11px !important; }
       }
       .gav-table { border-collapse: collapse; width: 100%; font-family: 'Inter', sans-serif; }
       .gav-table th {
-        background: #1e1b4b;
-        color: #c7d2fe;
-        font-size: 0.7rem;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        padding: 10px 14px;
-        text-align: left;
-        border-bottom: 2px solid #6366f1;
-        font-weight: 700;
+        background: #1e1b4b; color: #c7d2fe; font-size: 0.7rem;
+        text-transform: uppercase; letter-spacing: 1px; padding: 10px 14px;
+        text-align: left; border-bottom: 2px solid #6366f1; font-weight: 700;
       }
-      .gav-table td {
-        padding: 10px 14px;
-        font-size: 0.82rem;
-        border-bottom: 1px solid #1e293b;
-        color: #e2e8f0;
-        vertical-align: middle;
-      }
+      .gav-table td { padding: 10px 14px; font-size: 0.82rem; border-bottom: 1px solid #1e293b; color: #e2e8f0; vertical-align: middle; }
       .gav-table tr:hover td { background: #1a1f2e; }
       .gav-lider-row td {
-        background: #1e293b !important;
-        color: #93c5fd !important;
-        font-weight: 700;
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        padding: 6px 14px;
-        border-top: 2px solid #334155;
+        background: #1e293b !important; color: #93c5fd !important;
+        font-weight: 700; font-size: 0.75rem; text-transform: uppercase;
+        letter-spacing: 1px; padding: 6px 14px; border-top: 2px solid #334155;
       }
-      .gav-total-row td {
-        background: #1e1b4b !important;
-        color: #c7d2fe !important;
-        font-weight: 800;
-        border-top: 2px solid #6366f1;
-      }
-      .pct-badge {
-        display: inline-block;
-        border-radius: 6px;
-        padding: 2px 8px;
-        font-size: 0.75rem;
-        font-weight: 700;
-        min-width: 52px;
-        text-align: center;
-      }
+      .gav-total-row td { background: #1e1b4b !important; color: #c7d2fe !important; font-weight: 800; border-top: 2px solid #6366f1; }
+      .pct-badge { display: inline-block; border-radius: 6px; padding: 2px 8px; font-size: 0.75rem; font-weight: 700; min-width: 52px; text-align: center; }
       .bar-mini { height: 6px; border-radius: 3px; background: #1e293b; }
       .bar-mini-fill { height: 6px; border-radius: 3px; }
     </style>
@@ -342,29 +320,25 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
         if meta <= 0 or pct is None:
             return "<span style='color:#475569'>—</span>"
         p = float(pct)
-        if p >= 90:
-            bg, clr = "#450a0a", "#f87171"
-        elif p >= 70:
-            bg, clr = "#451a03", "#fbbf24"
-        else:
-            bg, clr = "#022c22", "#34d399"
+        if p >= 90:   bg, clr = "#450a0a", "#f87171"
+        elif p >= 70: bg, clr = "#451a03", "#fbbf24"
+        else:         bg, clr = "#022c22", "#34d399"
         return f"<span class='pct-badge' style='background:{bg};color:{clr}'>{p:.1f}%</span>"
 
     def _minibar(val, meta, cor):
-        if meta <= 0:
-            return ""
+        if meta <= 0: return ""
         pct = min(int(val / meta * 100), 100)
         return f"<div class='bar-mini'><div class='bar-mini-fill' style='width:{pct}%;background:{cor}'></div></div>"
 
-    # Monta HTML da tabela
+    # ── Monta HTML ──────────────────────────────────────────────────────────
     html = """<div style='overflow-x:auto'><table class='gav-table'>
     <thead><tr>
       <th>Vendedor</th>
       <th>Líder / Equipe</th>
-      <th style='text-align:center'>Meta</th>
-      <th style='text-align:center'>✅ Real Ativado</th>
-      <th style='text-align:center'>🔄 Tramitando</th>
-      <th style='text-align:center'>📈 Projeção</th>
+      <th style='text-align:right'>Meta (R$)</th>
+      <th style='text-align:right'>✅ Real Ativado</th>
+      <th style='text-align:right'>🔄 Tramitando</th>
+      <th style='text-align:right'>📈 Projeção</th>
       <th style='text-align:center'>% Atingimento</th>
       <th style='text-align:center'>Status</th>
     </tr></thead><tbody>"""
@@ -373,90 +347,79 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     for _, row in tabela.iterrows():
         lider_nome = row["lider"] or "Sem Equipe"
-        vend       = row["vendedor_real"]
-        meta       = int(row["meta"])
-        real       = int(row["real_ativo"])
-        tram       = int(row["tramitando"])
-        proj       = int(row["projecao"])
-        semaf      = row["_semaforo"]
-        cor_pct    = row["_cor_pct"]
-        pct        = row["pct_ating"]
-        badge      = _pct_badge(pct, meta)
-        bar_real   = _minibar(real, meta, "#10b981")
-        bar_proj   = _minibar(proj, meta, "#6366f1")
+        vend  = row["vendedor_real"]
+        meta  = row["meta"]
+        real  = row["real_ativo"]
+        tram  = row["tramitando"]
+        proj  = row["projecao"]
+        semaf = row["_semaforo"]
+        pct   = row["pct_ating"]
+        badge = _pct_badge(pct, meta)
+        bar_real = _minibar(real, meta, "#10b981")
+        bar_proj = _minibar(proj, meta, "#6366f1")
 
-        # Linha de separação por líder
         if agrupar and lider_nome not in lideres_vistos:
             lideres_vistos.add(lider_nome)
-            # Subtotais do líder
-            grp = tabela[tabela["lider"] == lider_nome]
-            g_meta  = int(grp["meta"].sum())
-            g_real  = int(grp["real_ativo"].sum())
-            g_tram  = int(grp["tramitando"].sum())
-            g_proj  = g_real + g_tram
-            g_pct   = f"{g_real/g_meta*100:.1f}%" if g_meta > 0 else "—"
+            grp    = tabela[tabela["lider"] == lider_nome]
+            g_meta = grp["meta"].sum()
+            g_real = grp["real_ativo"].sum()
+            g_tram = grp["tramitando"].sum()
+            g_proj = g_real + g_tram
+            g_n    = len(grp)
+            g_pct  = f"{g_real/g_meta*100:.1f}%" if g_meta > 0 else "—"
             html += f"""<tr class='gav-lider-row'>
-              <td colspan='2'>👥 {lider_nome}</td>
-              <td style='text-align:center'>{g_meta:,} ac.</td>
-              <td style='text-align:center'>{g_real:,} ac.</td>
-              <td style='text-align:center'>{g_tram:,} ac.</td>
-              <td style='text-align:center'>{g_proj:,} ac.</td>
+              <td colspan='2'>👥 {lider_nome} &nbsp;<span style='font-weight:400;font-size:0.7rem;color:#64748b'>({g_n} vendedor{'es' if g_n > 1 else ''})</span></td>
+              <td style='text-align:right'>R$ {g_meta:,.2f}</td>
+              <td style='text-align:right'>R$ {g_real:,.2f}</td>
+              <td style='text-align:right'>R$ {g_tram:,.2f}</td>
+              <td style='text-align:right'>R$ {g_proj:,.2f}</td>
               <td style='text-align:center'>{g_pct}</td>
               <td></td>
             </tr>"""
 
-        meta_txt = f"{meta:,}" if meta > 0 else "—"
+        meta_txt = f"R$ {meta:,.2f}" if meta > 0 else "—"
         html += f"""<tr>
           <td><span style='font-weight:600'>{vend}</span></td>
           <td style='color:#94a3b8;font-size:0.75rem'>{lider_nome}</td>
-          <td style='text-align:center;color:#94a3b8'>{meta_txt}</td>
-          <td style='text-align:center'>
-            <span style='font-weight:700;font-size:0.95rem;color:#34d399'>{real:,}</span>
+          <td style='text-align:right;color:#94a3b8'>{meta_txt}</td>
+          <td style='text-align:right'>
+            <span style='font-weight:700;font-size:0.95rem;color:#34d399'>R$ {real:,.2f}</span>
             <div style='margin-top:3px'>{bar_real}</div>
           </td>
-          <td style='text-align:center;color:#60a5fa;font-weight:600'>{tram:,}</td>
-          <td style='text-align:center'>
-            <span style='font-weight:700;color:#a78bfa'>{proj:,}</span>
+          <td style='text-align:right;color:#60a5fa;font-weight:600'>R$ {tram:,.2f}</td>
+          <td style='text-align:right'>
+            <span style='font-weight:700;color:#a78bfa'>R$ {proj:,.2f}</span>
             <div style='margin-top:3px'>{bar_proj}</div>
           </td>
           <td style='text-align:center'>{badge}</td>
           <td style='text-align:center;font-size:1.1rem'>{semaf}</td>
         </tr>"""
 
-    # Linha de total geral
     pct_geral_txt = f"{pct_geral:.1f}%" if total_meta > 0 else "—"
     html += f"""<tr class='gav-total-row'>
-      <td colspan='2'>🏁 TOTAL GERAL</td>
-      <td style='text-align:center'>{total_meta:,}</td>
-      <td style='text-align:center'>{total_ativo:,}</td>
-      <td style='text-align:center'>{total_tram:,}</td>
-      <td style='text-align:center'>{total_proj:,}</td>
+      <td colspan='2'>🏁 TOTAL GERAL ({n_vendedores} vendedores)</td>
+      <td style='text-align:right'>R$ {total_meta:,.2f}</td>
+      <td style='text-align:right'>R$ {total_ativo:,.2f}</td>
+      <td style='text-align:right'>R$ {total_tram:,.2f}</td>
+      <td style='text-align:right'>R$ {total_proj:,.2f}</td>
       <td style='text-align:center'>{pct_geral_txt}</td>
       <td style='text-align:center'>{'🔴' if pct_geral >= 90 else ('🟡' if pct_geral >= 70 else '🟢')}</td>
     </tr>"""
 
     html += "</tbody></table></div>"
 
-    # Rodapé de impressão
     html += f"""<div style='margin-top:16px;padding:10px 16px;background:#0f1117;border-radius:8px;
       border:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center'>
-      <span style='font-size:0.7rem;color:#475569'>
-        🖨️ Connect Group · TIM Empresas · Gerado em {agora}
-      </span>
-      <span style='font-size:0.7rem;color:#475569'>
-        Período: {nome_mes} {ano_num} · Quadro de Gestão à Vista
-      </span>
+      <span style='font-size:0.7rem;color:#475569'>🖨️ Connect Group · TIM Empresas · Gerado em {agora}</span>
+      <span style='font-size:0.7rem;color:#475569'>Período: {nome_mes} {ano_num} · Receita Contratada · Gestão à Vista</span>
     </div>"""
 
     st.markdown(html, unsafe_allow_html=True)
 
-    # Botão de instrução de impressão
     st.markdown("""
     <div style='margin-top:14px;padding:10px 16px;background:#1e3a2e;border-radius:8px;
       border:1px solid #065f46;font-size:0.78rem;color:#6ee7b7'>
-      💡 <strong>Para imprimir:</strong> use <kbd>Ctrl+P</kbd> (ou ⌘P no Mac) e selecione
-      "Salvar como PDF" ou envie direto para a impressora.
-      Recomendamos orientação <strong>paisagem</strong> para melhor visualização.
+      💡 <strong>Para imprimir:</strong> use <kbd>Ctrl+P</kbd> e selecione orientação <strong>paisagem</strong>.
     </div>
     """, unsafe_allow_html=True)
 
