@@ -408,13 +408,105 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     html += "</tbody></table></div>"
 
-    html += f"""<div style='margin-top:16px;padding:10px 16px;background:#0f1117;border-radius:8px;
+    st.markdown(html, unsafe_allow_html=True)
+
+    # ── Tabela por Líder ────────────────────────────────────────────────────
+    st.markdown("""
+    <div style='margin-top:32px;margin-bottom:10px;display:flex;align-items:center;gap:10px'>
+      <div style='height:2px;flex:1;background:linear-gradient(90deg,#6366f1,transparent)'></div>
+      <span style='font-size:0.72rem;text-transform:uppercase;letter-spacing:2px;color:#6366f1;font-weight:700'>Consolidado por Líder</span>
+      <div style='height:2px;flex:1;background:linear-gradient(270deg,#6366f1,transparent)'></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Agrupa por líder
+    lideres_tab = (
+        tabela.groupby("lider")
+        .agg(
+            n_vendedores=("vendedor_real", "count"),
+            meta=("meta", "sum"),
+            real_ativo=("real_ativo", "sum"),
+            tramitando=("tramitando", "sum"),
+        )
+        .reset_index()
+    )
+    lideres_tab["projecao"]  = lideres_tab["real_ativo"] + lideres_tab["tramitando"]
+    lideres_tab["pct_ating"] = lideres_tab.apply(
+        lambda r: round(r["real_ativo"] / r["meta"] * 100, 1) if r["meta"] > 0 else None, axis=1
+    )
+    lideres_tab = lideres_tab.sort_values("real_ativo", ascending=False).reset_index(drop=True)
+
+    html_l = """<div style='overflow-x:auto'><table class='gav-table'>
+    <thead><tr>
+      <th>Líder / Equipe</th>
+      <th style='text-align:center'>Vendedores</th>
+      <th style='text-align:right'>Meta (R$)</th>
+      <th style='text-align:right'>✅ Real Ativado</th>
+      <th style='text-align:right'>🔄 Tramitando</th>
+      <th style='text-align:right'>📈 Projeção</th>
+      <th style='text-align:center'>% Atingimento</th>
+      <th style='text-align:center'>Status</th>
+    </tr></thead><tbody>"""
+
+    for _, row in lideres_tab.iterrows():
+        lnome = row["lider"] or "Sem Equipe"
+        l_n   = int(row["n_vendedores"])
+        l_meta = row["meta"]
+        l_real = row["real_ativo"]
+        l_tram = row["tramitando"]
+        l_proj = row["projecao"]
+        l_pct  = row["pct_ating"]
+
+        l_badge = _pct_badge(l_pct, l_meta)
+        l_bar_real = _minibar(l_real, l_meta, "#10b981")
+        l_bar_proj = _minibar(l_proj, l_meta, "#6366f1")
+
+        if l_pct is None:    l_semaf = "⚪"
+        elif l_pct >= 90:    l_semaf = "🟢"
+        elif l_pct >= 70:    l_semaf = "🟡"
+        else:                l_semaf = "🔴"
+
+        meta_txt = f"R$ {l_meta:,.2f}" if l_meta > 0 else "—"
+        html_l += f"""<tr>
+          <td><span style='font-weight:700;font-size:0.9rem'>{lnome}</span></td>
+          <td style='text-align:center;color:#94a3b8'>{l_n} vendedor{'es' if l_n > 1 else ''}</td>
+          <td style='text-align:right;color:#94a3b8'>{meta_txt}</td>
+          <td style='text-align:right'>
+            <span style='font-weight:700;font-size:0.95rem;color:#34d399'>R$ {l_real:,.2f}</span>
+            <div style='margin-top:3px'>{l_bar_real}</div>
+          </td>
+          <td style='text-align:right;color:#60a5fa;font-weight:600'>R$ {l_tram:,.2f}</td>
+          <td style='text-align:right'>
+            <span style='font-weight:700;color:#a78bfa'>R$ {l_proj:,.2f}</span>
+            <div style='margin-top:3px'>{l_bar_proj}</div>
+          </td>
+          <td style='text-align:center'>{l_badge}</td>
+          <td style='text-align:center;font-size:1.1rem'>{l_semaf}</td>
+        </tr>"""
+
+    # Total geral na tabela de líderes
+    html_l += f"""<tr class='gav-total-row'>
+      <td>🏁 TOTAL GERAL</td>
+      <td style='text-align:center'>{n_vendedores}</td>
+      <td style='text-align:right'>R$ {total_meta:,.2f}</td>
+      <td style='text-align:right'>R$ {total_ativo:,.2f}</td>
+      <td style='text-align:right'>R$ {total_tram:,.2f}</td>
+      <td style='text-align:right'>R$ {total_proj:,.2f}</td>
+      <td style='text-align:center'>{pct_geral_txt}</td>
+      <td style='text-align:center'>{'🟢' if pct_geral >= 90 else ('🟡' if pct_geral >= 70 else '🔴')}</td>
+    </tr>"""
+
+    html_l += "</tbody></table></div>"
+
+    st.markdown(html_l, unsafe_allow_html=True)
+
+    html_footer = f"""<div style='margin-top:16px;padding:10px 16px;background:#0f1117;border-radius:8px;
       border:1px solid #1e293b;display:flex;justify-content:space-between;align-items:center'>
       <span style='font-size:0.7rem;color:#475569'>🖨️ Connect Group · TIM Empresas · Gerado em {agora}</span>
       <span style='font-size:0.7rem;color:#475569'>Período: {nome_mes} {ano_num} · Receita Contratada · Gestão à Vista</span>
     </div>"""
 
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(html_footer, unsafe_allow_html=True)
 
     st.markdown("""
     <div style='margin-top:14px;padding:10px 16px;background:#1e3a2e;border-radius:8px;
