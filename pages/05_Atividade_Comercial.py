@@ -152,7 +152,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
       </div>
       <div>
         <span style="background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px;padding:6px 14px;font-size:0.72rem;color:#93c5fd;font-weight:600">
-          🟢 &lt;70% · 🟡 70–89% · 🔴 ≥90%
+          🔴 &lt;70% · 🟡 70–89% · 🟢 ≥90%
         </span>
       </div>
     </div>
@@ -242,14 +242,14 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     tabela["pct_ating"] = tabela.apply(_pct, axis=1)
 
-    # Semáforo
+    # Semáforo — vermelho = longe da meta (ruim), verde = batendo (bom)
     def _status(row):
         if row["meta"] <= 0 or row["pct_ating"] is None:
             return "⚪", "#64748b"
         p = row["pct_ating"]
-        if p >= 90:   return "🔴", "#ef4444"
+        if p >= 90:   return "🟢", "#10b981"
         elif p >= 70: return "🟡", "#f59e0b"
-        else:         return "🟢", "#10b981"
+        else:         return "🔴", "#ef4444"
 
     tabela["_semaforo"], tabela["_cor_pct"] = zip(*tabela.apply(_status, axis=1))
 
@@ -276,7 +276,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     with g3: st.markdown(_mini("#1e3a5f", "🔄 Tramitando", _fmt_r(total_tram), "pipeline sem ativação"), unsafe_allow_html=True)
     with g4: st.markdown(_mini("#1c1917", "📈 Projeção", _fmt_r(total_proj), "ativo + tramitando"), unsafe_allow_html=True)
     with g5:
-        cor_geral = "#10b981" if pct_geral < 70 else ("#f59e0b" if pct_geral < 90 else "#ef4444")
+        cor_geral = "#ef4444" if pct_geral < 70 else ("#f59e0b" if pct_geral < 90 else "#10b981")
         st.markdown(f"""<div style="background:#0f1117;border-radius:10px;padding:12px 16px;border:2px solid {cor_geral};margin-bottom:12px">
           <div style="font-size:0.65rem;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">⚡ % Atingimento</div>
           <div style="font-size:1.35rem;font-weight:800;color:{cor_geral};line-height:1.2">{pct_geral:.1f}%</div>
@@ -320,9 +320,9 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
         if meta <= 0 or pct is None:
             return "<span style='color:#475569'>—</span>"
         p = float(pct)
-        if p >= 90:   bg, clr = "#450a0a", "#f87171"
-        elif p >= 70: bg, clr = "#451a03", "#fbbf24"
-        else:         bg, clr = "#022c22", "#34d399"
+        if p >= 90:   bg, clr = "#022c22", "#34d399"   # verde — batendo meta
+        elif p >= 70: bg, clr = "#451a03", "#fbbf24"   # amarelo — no caminho
+        else:         bg, clr = "#450a0a", "#f87171"   # vermelho — longe
         return f"<span class='pct-badge' style='background:{bg};color:{clr}'>{p:.1f}%</span>"
 
     def _minibar(val, meta, cor):
@@ -403,7 +403,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
       <td style='text-align:right'>R$ {total_tram:,.2f}</td>
       <td style='text-align:right'>R$ {total_proj:,.2f}</td>
       <td style='text-align:center'>{pct_geral_txt}</td>
-      <td style='text-align:center'>{'🔴' if pct_geral >= 90 else ('🟡' if pct_geral >= 70 else '🟢')}</td>
+      <td style='text-align:center'>{'🟢' if pct_geral >= 90 else ('🟡' if pct_geral >= 70 else '🔴')}</td>
     </tr>"""
 
     html += "</tbody></table></div>"
