@@ -239,11 +239,18 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     )
 
     # ── Base: TODOS os vendedores do Colaboradores (incluindo zerados) ─────────
-    # Garante que vendedores sem nenhum pedido no mês aparecem com zeros
+    # Filtra pelo parceiro: só entra lider que aparece no df_gav (já filtrado pelo parceiro)
     if metas_por_vendedor and colab is not None and not colab.empty:
-        # Monta base completa a partir do Colaboradores
+        # Descobre quais líderes pertencem ao parceiro filtrado
+        lideres_do_parceiro = set(df_gav["lider"].dropna().unique()) if not df_gav.empty else set()
+        # Remove "Sem Equipe" do conjunto
+        lideres_do_parceiro.discard("Sem Equipe")
+
         base_colab = colab[["vendedor", "lider"]].copy()
         base_colab = base_colab.rename(columns={"vendedor": "vendedor_real"})
+        # Mantém só vendedores cujo líder pertence ao parceiro filtrado
+        if lideres_do_parceiro:
+            base_colab = base_colab[base_colab["lider"].isin(lideres_do_parceiro)].copy()
         # Aplica filtro de líder se selecionado
         if lider_sel != "Todos":
             base_colab = base_colab[base_colab["lider"] == lider_sel]
