@@ -212,6 +212,17 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
         .reset_index()
     )
 
+    # ── DEBUG temporário — remover após confirmar convergência ──────────────
+    with st.expander("🔍 Debug: pedidos ativados no mês (Gestão à Vista)", expanded=False):
+        cols_debug = [c for c in ["pedido", "vendedor_real", "lider", "fila_atual",
+                                   "tipo_contratacao", "preco_oferta", "dt_ativacao", "_aba"]
+                      if c in df_atv_filtrado.columns]
+        st.dataframe(
+            df_atv_filtrado[cols_debug].sort_values("vendedor_real"),
+            use_container_width=True, hide_index=True
+        )
+        st.caption(f"Total pedidos: {len(df_atv_filtrado)} | Total receita: R$ {df_atv_filtrado['preco_oferta'].sum():,.2f}")
+
     # ── Tramitando: sem dt_ativacao E sem CANCELADO ─────────────────────────
     df_tram = df_base_ok[
         df_base_ok["dt_ativacao"].isna()
