@@ -128,7 +128,7 @@ def _bar(valor, maximo, cor="#6366f1", h=12):
     return f'<div class="day-bg"><div class="day-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'
 
 
-def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_mes_atual, tema_sel):
+def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_mes_atual, tema_sel, raw=None, bko=None, parceiro_sel='Todos', lider_sel='Todos'):
     """Visão Gestão à Vista — para impressão e colagem no quadro físico.
     Foco em RECEITA CONTRATADA (preco_oferta), não acessos.
     Meta = meta_individual × nº de vendedores ativos no parceiro filtrado.
@@ -186,47 +186,50 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     except Exception:
         pass
 
-    # ── Base limpa: exclui CANCELADO, garante NOVO/ADITIVO ─────────────────────
-    _fila_col = "fila_atual" if "fila_atual" in df_base.columns else None
-    df_base_ok = df_base.copy()
-    if _fila_col:
-        df_base_ok = df_base_ok[
-            ~df_base_ok[_fila_col].apply(lambda x: _s(x).upper() == "CANCELADO")
-        ].copy()
-    # Garante só NOVO/ADITIVO — mesma regra do apply_filters da Performance
-    if "tipo_contratacao" in df_base_ok.columns:
-        df_base_ok = df_base_ok[
-            df_base_ok["tipo_contratacao"].apply(lambda x: _s(x).upper() in ["NOVO", "ADITIVO"])
-        ].copy()
+    # ── Usa apply_filters — mesma fonte de verdade da Performance ──────────────
+    # Garante NOVO/ADITIVO, sem CANCELADO, filtra parceiro, gera mes_ativacao
+    from data_loader import apply_filters as _apply_filters
+    mes_alvo_str = mes_sel  # ex: "04/2026"
 
-    # ── Real Ativado: SOMENTE dt_ativacao dentro do mês/ano selecionado ────────
-    # Mesma lógica do apply_filters: filtra mes_ativacao == mes_alvo
-    df_atv_filtrado = df_base_ok[
-        (df_base_ok["dt_ativacao"].dt.month == mes_num) &
-        (df_base_ok["dt_ativacao"].dt.year  == ano_num)
-    ].copy()
+    if raw is None or raw.empty:
+        st.info("Dados brutos não disponíveis para Gestão à Vista.")
+        return
+
+    df_gav = _apply_filters(raw.copy(), mes_alvo_str, ["NOVO", "ADITIVO"], parceiro_sel)
+
+    # Join com BKO para ter vendedor_real e lider
+    if not bko.empty and "pedido" in df_gav.columns:
+        bk_gav = bko.copy()
+        df_gav["pedido"]  = df_gav["pedido"].apply(_norm_pedido)
+        bk_gav["pedido"]  = bk_gav["pedido"].apply(_norm_pedido)
+        df_gav = df_gav.merge(bk_gav[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+        df_gav["vendedor_real"] = df_gav["vendedor_real"].apply(lambda x: _s(x) if _s(x) else "Sem Vendedor")
+        df_gav["lider"]         = df_gav["lider"].apply(lambda x: _s(x) if _s(x) else "Sem Equipe")
+    else:
+        df_gav["vendedor_real"] = "Sem Vendedor"
+        df_gav["lider"]         = "Sem Equipe"
+
+    # Aplica filtro de líder se selecionado
+    if lider_sel != "Todos":
+        df_gav = df_gav[df_gav["lider"] == lider_sel]
+
+    # ── Real Ativado: pedidos com mes_ativacao == mês selecionado ────────────
+    # Deduplica por pedido (mesmo pedido pode ter múltiplas linhas)
+    df_atv_gav = df_gav[df_gav["mes_ativacao"] == mes_alvo_str].copy()
+    if "pedido" in df_atv_gav.columns:
+        df_atv_gav = (
+            df_atv_gav.groupby(["pedido", "vendedor_real", "lider"], as_index=False)
+            .agg(preco_oferta=("preco_oferta", "sum"))
+        )
 
     atv_por_vend = (
-        df_atv_filtrado.groupby(["vendedor_real", "lider"])
+        df_atv_gav.groupby(["vendedor_real", "lider"])
         .agg(real_ativo=("preco_oferta", "sum"))
         .reset_index()
     )
 
-    # ── DEBUG temporário — remover após confirmar convergência ──────────────
-    with st.expander("🔍 Debug: pedidos ativados no mês (Gestão à Vista)", expanded=False):
-        cols_debug = [c for c in ["pedido", "vendedor_real", "lider", "fila_atual",
-                                   "tipo_contratacao", "preco_oferta", "dt_ativacao", "_aba"]
-                      if c in df_atv_filtrado.columns]
-        st.dataframe(
-            df_atv_filtrado[cols_debug].sort_values("vendedor_real"),
-            use_container_width=True, hide_index=True
-        )
-        st.caption(f"Total pedidos: {len(df_atv_filtrado)} | Total receita: R$ {df_atv_filtrado['preco_oferta'].sum():,.2f}")
-
-    # ── Tramitando: sem dt_ativacao E sem CANCELADO ─────────────────────────
-    df_tram = df_base_ok[
-        df_base_ok["dt_ativacao"].isna()
-    ].copy()
+    # ── Tramitando: mes_ativacao nulo (pipeline) ─────────────────────────────
+    df_tram = df_gav[df_gav["mes_ativacao"].isna()].copy()
 
     tram_por_vend = (
         df_tram.groupby(["vendedor_real", "lider"])
@@ -235,10 +238,10 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     )
 
     # ── Consolida todos os vendedores (atv + input, sem duplicar) ───────────
-    # Usa df_atv_filtrado (ativados no mês) + df_mes_input (deram input no mês)
-    vend_atv   = df_atv_filtrado[["vendedor_real", "lider"]].drop_duplicates()
-    vend_input = df_mes_input[["vendedor_real", "lider"]].drop_duplicates() if "vendedor_real" in df_mes_input.columns else pd.DataFrame()
-    todos_vend = pd.concat([vend_atv, vend_input]).drop_duplicates(subset=["vendedor_real"])
+    # Todos os vendedores: ativados no mês + pipeline (qualquer um que aparece no df_gav)
+    vend_atv   = df_atv_gav[["vendedor_real", "lider"]].drop_duplicates() if not df_atv_gav.empty else pd.DataFrame()
+    vend_pip   = df_tram[["vendedor_real", "lider"]].drop_duplicates() if not df_tram.empty else pd.DataFrame()
+    todos_vend = pd.concat([vend_atv, vend_pip]).drop_duplicates(subset=["vendedor_real"])
 
     tabela = todos_vend.merge(atv_por_vend, on=["vendedor_real", "lider"], how="left")
     tabela = tabela.merge(tram_por_vend[["vendedor_real", "tramitando"]], on="vendedor_real", how="left")
@@ -990,7 +993,7 @@ def main():
         _render_diario(df_mes_atv, "dt_ativacao", "#10b981", "#34d399", "ativação")
 
     with tab_gestao:
-        _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_mes_atual, tema_sel)
+        _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_mes_atual, tema_sel, raw=raw, bko=bko, parceiro_sel=parceiro_sel, lider_sel=lider_sel)
 
     with tab_backlog:
         # BACKLOG CORRETO: pedidos cujo mês de input é DIFERENTE do mês analisado
