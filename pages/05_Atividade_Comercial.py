@@ -186,11 +186,24 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     except Exception:
         pass
 
-    # ── Real Ativado: SOMENTE pedidos com dt_ativacao dentro do mês/ano ──────
-    # Garante que não entra receita de ativações de meses anteriores ou futuros
-    df_atv_filtrado = df_base[
-        (df_base["dt_ativacao"].dt.month == mes_num) &
-        (df_base["dt_ativacao"].dt.year  == ano_num)
+    # ── Base limpa: exclui CANCELADO, garante NOVO/ADITIVO ─────────────────────
+    _fila_col = "fila_atual" if "fila_atual" in df_base.columns else None
+    df_base_ok = df_base.copy()
+    if _fila_col:
+        df_base_ok = df_base_ok[
+            ~df_base_ok[_fila_col].apply(lambda x: _s(x).upper() == "CANCELADO")
+        ].copy()
+    # Garante só NOVO/ADITIVO — mesma regra do apply_filters da Performance
+    if "tipo_contratacao" in df_base_ok.columns:
+        df_base_ok = df_base_ok[
+            df_base_ok["tipo_contratacao"].apply(lambda x: _s(x).upper() in ["NOVO", "ADITIVO"])
+        ].copy()
+
+    # ── Real Ativado: SOMENTE dt_ativacao dentro do mês/ano selecionado ────────
+    # Mesma lógica do apply_filters: filtra mes_ativacao == mes_alvo
+    df_atv_filtrado = df_base_ok[
+        (df_base_ok["dt_ativacao"].dt.month == mes_num) &
+        (df_base_ok["dt_ativacao"].dt.year  == ano_num)
     ].copy()
 
     atv_por_vend = (
@@ -199,10 +212,9 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
         .reset_index()
     )
 
-    # ── Tramitando: pedidos SEM dt_ativacao (pipeline real, qualquer mês de input)
-    # Não importa quando foi o input — o que tramita é o que AINDA não ativou
-    df_tram = df_base[
-        df_base["dt_ativacao"].isna()
+    # ── Tramitando: sem dt_ativacao E sem CANCELADO ─────────────────────────
+    df_tram = df_base_ok[
+        df_base_ok["dt_ativacao"].isna()
     ].copy()
 
     tram_por_vend = (
@@ -259,8 +271,8 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     tabela["_semaforo"], tabela["_cor_pct"] = zip(*tabela.apply(_status, axis=1))
 
-    # Ordena por líder → real_ativo desc
-    tabela = tabela.sort_values(["lider", "real_ativo"], ascending=[True, False]).reset_index(drop=True)
+    # Ordena: maior real_ativo primeiro (dentro do líder se agrupado)
+    tabela = tabela.sort_values(["real_ativo"], ascending=[False]).reset_index(drop=True)
 
     # ── KPIs gerais ─────────────────────────────────────────────────────────
     total_ativo = tabela["real_ativo"].sum()
