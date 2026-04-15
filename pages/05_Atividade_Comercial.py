@@ -186,18 +186,23 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     except Exception:
         pass
 
-    # ── Real Ativado: receita dos pedidos ativados no mês ──────────────────
+    # ── Real Ativado: SOMENTE pedidos com dt_ativacao dentro do mês/ano ──────
+    # Garante que não entra receita de ativações de meses anteriores ou futuros
+    df_atv_filtrado = df_base[
+        (df_base["dt_ativacao"].dt.month == mes_num) &
+        (df_base["dt_ativacao"].dt.year  == ano_num)
+    ].copy()
+
     atv_por_vend = (
-        df_mes_atv.groupby(["vendedor_real", "lider"])
+        df_atv_filtrado.groupby(["vendedor_real", "lider"])
         .agg(real_ativo=("preco_oferta", "sum"))
         .reset_index()
     )
 
-    # ── Tramitando: input do mês SEM ativação ainda (pipeline) ─────────────
+    # ── Tramitando: pedidos SEM dt_ativacao (pipeline real, qualquer mês de input)
+    # Não importa quando foi o input — o que tramita é o que AINDA não ativou
     df_tram = df_base[
-        (df_base["dt_input"].dt.month == mes_num) &
-        (df_base["dt_input"].dt.year  == ano_num) &
-        (df_base["dt_ativacao"].isna())
+        df_base["dt_ativacao"].isna()
     ].copy()
 
     tram_por_vend = (
@@ -207,7 +212,8 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     )
 
     # ── Consolida todos os vendedores (atv + input, sem duplicar) ───────────
-    vend_atv   = df_mes_atv[["vendedor_real", "lider"]].drop_duplicates()
+    # Usa df_atv_filtrado (ativados no mês) + df_mes_input (deram input no mês)
+    vend_atv   = df_atv_filtrado[["vendedor_real", "lider"]].drop_duplicates()
     vend_input = df_mes_input[["vendedor_real", "lider"]].drop_duplicates() if "vendedor_real" in df_mes_input.columns else pd.DataFrame()
     todos_vend = pd.concat([vend_atv, vend_input]).drop_duplicates(subset=["vendedor_real"])
 
