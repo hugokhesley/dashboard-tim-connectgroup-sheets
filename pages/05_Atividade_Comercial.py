@@ -171,6 +171,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     # meta_individual é o valor por vendedor (ex: R$ 850)
     meta_individual = 0.0
     metas_por_vendedor = {}  # fallback por nome se quiser metas diferentes por pessoa
+    colab = None
     try:
         colab = load_colaboradores()
         if not colab.empty:
@@ -237,11 +238,21 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
         .reset_index()
     )
 
-    # ── Consolida todos os vendedores (atv + input, sem duplicar) ───────────
-    # Todos os vendedores: ativados no mês + pipeline (qualquer um que aparece no df_gav)
-    vend_atv   = df_atv_gav[["vendedor_real", "lider"]].drop_duplicates() if not df_atv_gav.empty else pd.DataFrame()
-    vend_pip   = df_tram[["vendedor_real", "lider"]].drop_duplicates() if not df_tram.empty else pd.DataFrame()
-    todos_vend = pd.concat([vend_atv, vend_pip]).drop_duplicates(subset=["vendedor_real"])
+    # ── Base: TODOS os vendedores do Colaboradores (incluindo zerados) ─────────
+    # Garante que vendedores sem nenhum pedido no mês aparecem com zeros
+    if metas_por_vendedor and colab is not None and not colab.empty:
+        # Monta base completa a partir do Colaboradores
+        base_colab = colab[["vendedor", "lider"]].copy()
+        base_colab = base_colab.rename(columns={"vendedor": "vendedor_real"})
+        # Aplica filtro de líder se selecionado
+        if lider_sel != "Todos":
+            base_colab = base_colab[base_colab["lider"] == lider_sel]
+        todos_vend = base_colab.drop_duplicates(subset=["vendedor_real"])
+    else:
+        # Fallback: usa só quem tem pedido
+        vend_atv = df_atv_gav[["vendedor_real","lider"]].drop_duplicates() if not df_atv_gav.empty else pd.DataFrame()
+        vend_pip = df_tram[["vendedor_real","lider"]].drop_duplicates() if not df_tram.empty else pd.DataFrame()
+        todos_vend = pd.concat([vend_atv, vend_pip]).drop_duplicates(subset=["vendedor_real"])
 
     tabela = todos_vend.merge(atv_por_vend, on=["vendedor_real", "lider"], how="left")
     tabela = tabela.merge(tram_por_vend[["vendedor_real", "tramitando"]], on="vendedor_real", how="left")
@@ -251,14 +262,6 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     # Remove linhas sem vendedor
     tabela = tabela[~tabela["vendedor_real"].isin(["Sem Vendedor", ""])].copy()
-
-    # ── Filtra APENAS vendedores cadastrados na aba Colaboradores ────────────
-    # Garante que líderes/vendedores fora do parceiro não aparecem
-    if metas_por_vendedor:
-        vendedores_ativos = set(metas_por_vendedor.keys())
-        tabela = tabela[
-            tabela["vendedor_real"].apply(lambda v: _s(v).upper() in vendedores_ativos)
-        ].copy()
 
     if tabela.empty:
         st.info("Nenhum dado disponível para o período selecionado.")
