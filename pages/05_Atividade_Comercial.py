@@ -555,6 +555,267 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Envio manual por Telegram ────────────────────────────────────────────
+    st.markdown("")
+    st.markdown('<p class="section-title">📤 Enviar por Telegram</p>', unsafe_allow_html=True)
+
+    col_tg1, col_tg2 = st.columns([3, 1])
+    with col_tg1:
+        try:
+            _default_ids = st.secrets.get("telegram_gestao", {}).get("chat_ids", "")
+        except Exception:
+            _default_ids = ""
+        chat_ids_input = st.text_input(
+            "Chat IDs (separados por vírgula)",
+            value=_default_ids,
+            placeholder="123456789,987654321",
+            help="Seu chat_id e do gerente. Envie qualquer msg pro bot e acesse: api.telegram.org/bot<TOKEN>/getUpdates",
+            key="gav_chat_ids"
+        )
+    with col_tg2:
+        st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
+        enviar_tg = st.button("📤 Enviar PDF", type="primary", use_container_width=True, key="gav_enviar_tg")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    if enviar_tg:
+        chat_ids = [c.strip() for c in chat_ids_input.split(",") if c.strip()]
+        if not chat_ids:
+            st.warning("Informe ao menos um Chat ID.")
+        else:
+            with st.spinner("Gerando PDF e enviando..."):
+                try:
+                    import io
+                    import requests as _req
+                    from reportlab.lib import colors as _rc
+                    from reportlab.lib.pagesizes import A4, landscape as _ls
+                    from reportlab.lib.styles import ParagraphStyle as _PS
+                    from reportlab.lib.units import cm
+                    from reportlab.platypus import (
+                        SimpleDocTemplate, Table, TableStyle,
+                        Paragraph, Spacer, HRFlowable
+                    )
+                    from data_loader import load_colaboradores as _lc2, apply_filters as _af2
+
+                    # ── Recalcula dados usando a mesma lógica da tela ────────
+                    _df_g = _af2(raw.copy(), mes_sel, ["NOVO", "ADITIVO"], parceiro_sel)
+                    if not bko.empty and "pedido" in _df_g.columns:
+                        _bk = bko.copy()
+                        _df_g["pedido"] = _df_g["pedido"].apply(_norm_pedido)
+                        _bk["pedido"]   = _bk["pedido"].apply(_norm_pedido)
+                        _df_g = _df_g.merge(_bk[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+                        _df_g["vendedor_real"] = _df_g["vendedor_real"].apply(lambda x: _s(x) or "Sem Vendedor")
+                        _df_g["lider"]         = _df_g["lider"].apply(lambda x: _s(x) or "Sem Equipe")
+                    if lider_sel != "Todos":
+                        _df_g = _df_g[_df_g["lider"] == lider_sel]
+
+                    _atv = _df_g[_df_g["mes_ativacao"] == mes_sel].copy()
+                    if "pedido" in _atv.columns:
+                        _atv = _atv.groupby(["pedido","vendedor_real","lider"], as_index=False).agg(preco_oferta=("preco_oferta","sum"))
+                    _atv_pv = _atv.groupby(["vendedor_real","lider"]).agg(real_ativo=("preco_oferta","sum")).reset_index()
+
+                    _trm = _df_g[_df_g["mes_ativacao"].isna()].copy()
+                    _trm_pv = _trm.groupby(["vendedor_real","lider"]).agg(tramitando=("preco_oferta","sum")).reset_index()
+
+                    _todos = pd.concat([
+                        _atv[["vendedor_real","lider"]].drop_duplicates(),
+                        _trm[["vendedor_real","lider"]].drop_duplicates(),
+                    ]).drop_duplicates(subset=["vendedor_real"])
+                    _todos = _todos[~_todos["vendedor_real"].isin(["Sem Vendedor",""])].copy()
+
+                    _col2  = _lc2()
+                    _metas2 = dict(zip(_col2["vendedor"].str.upper(), _col2["meta"])) if not _col2.empty else {}
+
+                    # Filtra só quem está no Colaboradores
+                    if _metas2:
+                        _todos = _todos[_todos["vendedor_real"].apply(lambda v: _s(v).upper() in _metas2)].copy()
+
+                    tv = _todos.merge(_atv_pv, on=["vendedor_real","lider"], how="left")
+                    tv = tv.merge(_trm_pv[["vendedor_real","tramitando"]], on="vendedor_real", how="left")
+                    tv["real_ativo"] = tv["real_ativo"].fillna(0.0)
+                    tv["tramitando"] = tv["tramitando"].fillna(0.0)
+                    tv["projecao"]   = tv["real_ativo"] + tv["tramitando"]
+                    tv["meta"] = tv["vendedor_real"].apply(lambda v: _metas2.get(_s(v).upper(), 850.0))
+                    tv["pct"]  = tv.apply(lambda r: round(r["real_ativo"]/r["meta"]*100,1) if r["meta"]>0 else None, axis=1)
+                    tv = tv.sort_values("real_ativo", ascending=False).reset_index(drop=True)
+
+                    tl = tv.groupby("lider").agg(
+                        n=("vendedor_real","count"), meta=("meta","sum"),
+                        real_ativo=("real_ativo","sum"), tramitando=("tramitando","sum")
+                    ).reset_index()
+                    tl["projecao"] = tl["real_ativo"] + tl["tramitando"]
+                    tl["pct"] = tl.apply(lambda r: round(r["real_ativo"]/r["meta"]*100,1) if r["meta"]>0 else None, axis=1)
+                    tl = tl.sort_values("real_ativo", ascending=False).reset_index(drop=True)
+
+                    t_meta  = tv["meta"].sum()
+                    t_ativo = tv["real_ativo"].sum()
+                    t_tram  = tv["tramitando"].sum()
+                    t_proj  = t_ativo + t_tram
+                    pct_g   = round(t_ativo/t_meta*100,1) if t_meta > 0 else 0
+                    n_v     = len(tv)
+
+                    # ── Helpers ──────────────────────────────────────────────
+                    def _fr(v): return f"R$ {v:,.2f}".replace(",","X").replace(".",",").replace("X",".")
+                    def _sm(p):
+                        if p is None: return "⚪"
+                        return "🟢" if p>=90 else ("🟡" if p>=70 else "🔴")
+                    def _cp(p):
+                        if p is None: return _rc.HexColor("#94a3b8")
+                        return (_rc.HexColor("#34d399") if p>=90 else (_rc.HexColor("#fbbf24") if p>=70 else _rc.HexColor("#f87171")))
+
+                    CH = _rc.HexColor
+                    C = {"hb":CH("#1e1b4b"),"ht":CH("#c7d2fe"),"ra":CH("#0f1117"),"rb":CH("#1a1f2e"),
+                         "tb":CH("#1e1b4b"),"tt":CH("#c7d2fe"),"bd":CH("#2d3748"),
+                         "vd":CH("#34d399"),"az":CH("#60a5fa"),"rx":CH("#a78bfa"),
+                         "tx":CH("#e2e8f0"),"sb":CH("#94a3b8"),"ac":CH("#6366f1")}
+
+                    MESES = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
+                             7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
+                    nm = MESES.get(mes_num, str(mes_num))
+                    ag = datetime.now().strftime("%d/%m/%Y às %H:%M")
+
+                    # ── Gera PDF ─────────────────────────────────────────────
+                    buf = io.BytesIO()
+                    doc = SimpleDocTemplate(buf, pagesize=_ls(A4),
+                        leftMargin=1.2*cm, rightMargin=1.2*cm,
+                        topMargin=1.2*cm, bottomMargin=1.2*cm)
+
+                    st_tit = _PS("t", fontSize=15, textColor=_rc.white, fontName="Helvetica-Bold", spaceAfter=3)
+                    st_sub = _PS("s", fontSize=7,  textColor=C["sb"],   fontName="Helvetica", spaceAfter=10)
+                    st_sec = _PS("sc",fontSize=9,  textColor=C["ht"],   fontName="Helvetica-Bold", spaceBefore=12, spaceAfter=5)
+                    st_rod = _PS("r", fontSize=6,  textColor=C["sb"],   fontName="Helvetica", spaceBefore=3)
+
+                    story = []
+                    story.append(Paragraph(f"GESTÃO À VISTA — {nm.upper()} {ano_num}", st_tit))
+                    story.append(Paragraph(f"Connect Group · TIM Empresas · Receita Contratada · {ag}", st_sub))
+                    story.append(HRFlowable(width="100%", thickness=1, color=C["bd"], spaceAfter=8))
+
+                    # KPIs
+                    cg = _cp(pct_g)
+                    kd = [
+                        ["🎯 Meta Total","✅ Real Ativado","🔄 Tramitando","📈 Projeção","⚡ % Atingimento"],
+                        [_fr(t_meta),_fr(t_ativo),_fr(t_tram),_fr(t_proj),f"{pct_g:.1f}%"],
+                        [f"{n_v} vendedores","receita ativada","pipeline","ativo + pipeline","real / meta"],
+                    ]
+                    cw = doc.width/5
+                    kt = Table(kd, colWidths=[cw]*5, rowHeights=[16,22,12])
+                    kt.setStyle(TableStyle([
+                        ("BACKGROUND",(0,0),(-1,0),C["hb"]),("TEXTCOLOR",(0,0),(-1,0),C["ht"]),
+                        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),7),
+                        ("BACKGROUND",(0,1),(-1,1),C["rb"]),("TEXTCOLOR",(0,1),(-1,1),_rc.white),
+                        ("FONTNAME",(0,1),(-1,1),"Helvetica-Bold"),("FONTSIZE",(0,1),(-1,1),10),
+                        ("TEXTCOLOR",(4,1),(4,1),cg),
+                        ("BACKGROUND",(0,2),(-1,2),C["ra"]),("TEXTCOLOR",(0,2),(-1,2),C["sb"]),("FONTSIZE",(0,2),(-1,2),6),
+                        ("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                        ("BOX",(0,0),(-1,-1),0.5,C["bd"]),("INNERGRID",(0,0),(-1,-1),0.3,C["bd"]),
+                        ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+                    ]))
+                    story.append(kt)
+                    story.append(Spacer(1,10))
+
+                    def _tbl(rows, cws, sx):
+                        t = Table(rows, colWidths=cws)
+                        t.setStyle(TableStyle([
+                            ("BACKGROUND",(0,0),(-1,0),C["hb"]),("TEXTCOLOR",(0,0),(-1,0),C["ht"]),
+                            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),7),
+                            ("ALIGN",(0,0),(-1,0),"CENTER"),
+                            ("BOX",(0,0),(-1,-1),0.5,C["bd"]),("INNERGRID",(0,0),(-1,-1),0.3,C["bd"]),
+                            ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+                            ("FONTSIZE",(0,1),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+                        ] + sx))
+                        return t
+
+                    # Tabela vendedores
+                    story.append(Paragraph("👤  Por Vendedor", st_sec))
+                    cw_v = [6.5*cm,3.5*cm,2.8*cm,2.8*cm,2.8*cm,2.8*cm,2.2*cm,1.5*cm]
+                    rv = [["Vendedor","Líder / Equipe","Meta (R$)","✅ Real Ativado","🔄 Tramitando","📈 Projeção","% Ating.","Status"]]
+                    sv = []
+                    for i, row in tv.iterrows():
+                        ri = i+1; bg = C["ra"] if i%2==0 else C["rb"]; p = row["pct"]
+                        sv += [("BACKGROUND",(0,ri),(-1,ri),bg),("TEXTCOLOR",(0,ri),(-1,ri),C["tx"]),
+                               ("FONTNAME",(0,ri),(0,ri),"Helvetica-Bold"),
+                               ("TEXTCOLOR",(3,ri),(3,ri),C["vd"]),("TEXTCOLOR",(4,ri),(4,ri),C["az"]),
+                               ("TEXTCOLOR",(5,ri),(5,ri),C["rx"]),("TEXTCOLOR",(6,ri),(6,ri),_cp(p)),
+                               ("FONTNAME",(6,ri),(6,ri),"Helvetica-Bold"),("ALIGN",(2,ri),(-1,ri),"RIGHT")]
+                        rv.append([row["vendedor_real"],row["lider"],
+                                   _fr(row["meta"]) if row["meta"]>0 else "—",
+                                   _fr(row["real_ativo"]),_fr(row["tramitando"]),_fr(row["projecao"]),
+                                   f"{p:.1f}%" if p is not None else "—",_sm(p)])
+                    ri_t = len(rv)
+                    sv += [("BACKGROUND",(0,ri_t),(-1,ri_t),C["tb"]),("TEXTCOLOR",(0,ri_t),(-1,ri_t),C["tt"]),
+                           ("FONTNAME",(0,ri_t),(-1,ri_t),"Helvetica-Bold"),("ALIGN",(2,ri_t),(-1,ri_t),"RIGHT"),
+                           ("LINEABOVE",(0,ri_t),(-1,ri_t),1.5,C["ac"])]
+                    rv.append([f"🏁 TOTAL ({n_v} vend.)","",_fr(t_meta),_fr(t_ativo),_fr(t_tram),_fr(t_proj),f"{pct_g:.1f}%",_sm(pct_g)])
+                    story.append(_tbl(rv, cw_v, sv))
+                    story.append(Spacer(1,14))
+
+                    # Tabela líderes
+                    story.append(HRFlowable(width="100%",thickness=1,color=C["ac"],spaceAfter=6))
+                    story.append(Paragraph("👥  Consolidado por Líder", st_sec))
+                    cw_l = [6*cm,2.5*cm,3.2*cm,3.2*cm,3.2*cm,3.2*cm,2.5*cm,1.5*cm]
+                    rl = [["Líder / Equipe","Vendedores","Meta (R$)","✅ Real Ativado","🔄 Tramitando","📈 Projeção","% Ating.","Status"]]
+                    sl = []
+                    for i, row in tl.iterrows():
+                        ri = i+1; bg = C["ra"] if i%2==0 else C["rb"]; p = row["pct"]
+                        sl += [("BACKGROUND",(0,ri),(-1,ri),bg),("TEXTCOLOR",(0,ri),(-1,ri),C["tx"]),
+                               ("FONTNAME",(0,ri),(0,ri),"Helvetica-Bold"),
+                               ("TEXTCOLOR",(3,ri),(3,ri),C["vd"]),("TEXTCOLOR",(4,ri),(4,ri),C["az"]),
+                               ("TEXTCOLOR",(5,ri),(5,ri),C["rx"]),("TEXTCOLOR",(6,ri),(6,ri),_cp(p)),
+                               ("FONTNAME",(6,ri),(6,ri),"Helvetica-Bold"),("ALIGN",(1,ri),(-1,ri),"RIGHT")]
+                        rl.append([row["lider"],f"{int(row['n'])} vend.",
+                                   _fr(row["meta"]) if row["meta"]>0 else "—",
+                                   _fr(row["real_ativo"]),_fr(row["tramitando"]),_fr(row["projecao"]),
+                                   f"{p:.1f}%" if p is not None else "—",_sm(p)])
+                    ri_tl = len(rl)
+                    sl += [("BACKGROUND",(0,ri_tl),(-1,ri_tl),C["tb"]),("TEXTCOLOR",(0,ri_tl),(-1,ri_tl),C["tt"]),
+                           ("FONTNAME",(0,ri_tl),(-1,ri_tl),"Helvetica-Bold"),("ALIGN",(1,ri_tl),(-1,ri_tl),"RIGHT"),
+                           ("LINEABOVE",(0,ri_tl),(-1,ri_tl),1.5,C["ac"])]
+                    rl.append(["🏁 TOTAL GERAL",f"{n_v}",_fr(t_meta),_fr(t_ativo),_fr(t_tram),_fr(t_proj),f"{pct_g:.1f}%",_sm(pct_g)])
+                    story.append(_tbl(rl, cw_l, sl))
+
+                    story.append(Spacer(1,8))
+                    story.append(HRFlowable(width="100%",thickness=0.5,color=C["bd"]))
+                    story.append(Paragraph(f"Connect Group · TIM Empresas · {nm} {ano_num} · Gerado em {ag}", st_rod))
+
+                    doc.build(story)
+                    buf.seek(0)
+                    pdf_bytes = buf.getvalue()
+
+                    # ── Envia pelo Telegram ───────────────────────────────────
+                    try:
+                        token = st.secrets["telegram"]["token"]
+                    except Exception:
+                        token = ""
+
+                    if not token:
+                        st.error("❌ Token do Telegram não encontrado nos secrets.")
+                    else:
+                        semf_g = _sm(pct_g)
+                        caption = (
+                            f"{semf_g} *Gestão à Vista — {nm} {ano_num}*\n"
+                            f"📊 Ativado: *{_fr(t_ativo)}* de {_fr(t_meta)} ({pct_g:.1f}%)\n"
+                            f"_Connect Group · TIM Empresas_"
+                        )
+                        erros = []
+                        for cid in chat_ids:
+                            r = _req.post(
+                                f"https://api.telegram.org/bot{token}/sendDocument",
+                                data={"chat_id": cid, "caption": caption, "parse_mode": "Markdown"},
+                                files={"document": (f"gestao_vista_{nm.lower()}_{ano_num}.pdf",
+                                                    io.BytesIO(pdf_bytes), "application/pdf")},
+                                timeout=30
+                            )
+                            if r.status_code != 200:
+                                erros.append(f"{cid}: {r.text}")
+                        if erros:
+                            st.error(f"❌ Falha em {len(erros)} envio(s):\n" + "\n".join(erros))
+                        else:
+                            st.success(f"✅ PDF enviado com sucesso para {len(chat_ids)} destinatário(s)!")
+
+                except ImportError:
+                    st.error("❌ Instale a biblioteca `reportlab` no requirements.txt")
+                except Exception as e:
+                    st.error(f"❌ Erro: {e}")
+
 
 def main():
     st.markdown("""
