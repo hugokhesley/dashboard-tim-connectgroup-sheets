@@ -2,8 +2,8 @@ name: Connect Voice → Sheets Sync
 
 on:
   schedule:
-    - cron: '0 */2 * * *'   # a cada 2 horas (UTC)
-  workflow_dispatch:          # permite rodar manualmente pelo GitHub
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -28,10 +28,10 @@ jobs:
 
       - name: Executar sincronização
         env:
-          SPREADSHEET_ID:   ${{ secrets.SPREADSHEET_ID }}
-          CV_USUARIO:       ${{ secrets.CV_USUARIO }}
-          CV_SENHA:         ${{ secrets.CV_SENHA }}
-        run: python connectvoice_sync.py
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          CV_USUARIO: ${{ secrets.CV_USUARIO }}
+          CV_SENHA: ${{ secrets.CV_SENHA }}
+        run: python connectvoice_debug.py
 
       - name: Remover credentials.json
         if: always()
