@@ -10,16 +10,13 @@ import gspread
 import sys
 import os
 import re
-import json
 import logging
 from datetime import date
 from google.oauth2.service_account import Credentials
-
-# ─────────────────────────────────────────────────────────────────
-#  CONFIG
-# ─────────────────────────────────────────────────────────────────
+from html.parser import HTMLParser
 
 CONFIG = {
+    "cv_base_url":       "https://voice.connectgroup.solutions",
     "cv_login_url":      "https://voice.connectgroup.solutions",
     "cv_extrato_url":    "https://voice.connectgroup.solutions/Relatorios/buscaLog_chamadas",
     "cv_usuario":        os.getenv("CV_USUARIO", "hugonobrega@conectserra"),
@@ -38,10 +35,6 @@ COLUNAS_SHEETS = [
     "Duração", "Campanha", "Operadora", "Modo Disc."
 ]
 
-# ─────────────────────────────────────────────────────────────────
-#  LOGGING
-# ─────────────────────────────────────────────────────────────────
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -51,34 +44,106 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────
-#  LOGIN
+#  EXTRAI CSRF DO FORMULÁRIO DE LOGIN
 # ─────────────────────────────────────────────────────────────────
 
+class FormParser(HTMLParser):
+    """Extrai campos hidden de formulários HTML."""
+    def __init__(self):
+        super().__init__()
+        self.hidden = {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "input":
+            d = dict(attrs)
+            if d.get("type", "").lower() == "hidden" and d.get("name"):
+                self.hidden[d["name"]] = d.get("value", "")
+
+
 def cv_login(session: requests.Session) -> bool:
-    try:
-        r = session.post(
-            CONFIG["cv_login_url"],
-            data={
-                "txtAcao":    "",
-                "url":        "",
-                "txtusuario": CONFIG["cv_usuario"],
-                "pwSenha":    CONFIG["cv_senha"],
-            },
-            headers={
-                "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Referer":      CONFIG["cv_login_url"],
-                "Origin":       CONFIG["cv_login_url"],
-            },
-            allow_redirects=True,
-            timeout=30,
-        )
-        log.info(f"Login: status={r.status_code} url={r.url}")
-        log.info(f"Cookies: {dict(session.cookies)}")
-        return r.status_code == 200
-    except Exception as e:
-        log.error(f"Erro no login: {e}")
-        return False
+    """
+    Login em 2 passos:
+    1. GET na página de login → captura cookies iniciais + campos hidden (CSRF)
+    2. POST com credenciais + campos hidden
+    """
+    headers_base = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "pt-BR,pt;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+    }
+
+    # Passo 1: GET para pegar cookies e token CSRF
+    log.info("Passo 1: GET na página de login...")
+    r_get = session.get(
+        CONFIG["cv_login_url"],
+        headers=headers_base,
+        timeout=30,
+    )
+    log.info(f"GET login: status={r_get.status_code} cookies={dict(session.cookies)}")
+
+    # Extrai campos hidden do formulário
+    parser = FormParser()
+    parser.feed(r_get.text)
+    log.info(f"Campos hidden encontrados: {parser.hidden}")
+
+    # Monta payload com campos hidden + credenciais
+    payload = {
+        "txtAcao": "",
+        "url":     "",
+        "txtusuario": CONFIG["cv_usuario"],
+        "pwSenha":    CONFIG["cv_senha"],
+    }
+    # Adiciona campos CSRF se existirem
+    payload.update(parser.hidden)
+
+    # Passo 2: POST com credenciais
+    log.info("Passo 2: POST com credenciais...")
+    r_post = session.post(
+        CONFIG["cv_login_url"],
+        data=payload,
+        headers={
+            **headers_base,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer":      CONFIG["cv_login_url"],
+            "Origin":       CONFIG["cv_base_url"],
+        },
+        allow_redirects=True,
+        timeout=30,
+    )
+    log.info(f"POST login: status={r_post.status_code} url={r_post.url}")
+    log.info(f"Cookies pós-login: {dict(session.cookies)}")
+
+    # Verifica se está autenticado — página logada tem "logout" ou "Inicio"
+    autenticado = (
+        "logout" in r_post.text.lower() or
+        "/Inicio" in r_post.url or
+        "Inicio" in r_post.text or
+        r_post.url.rstrip("/") != CONFIG["cv_base_url"].rstrip("/")
+    )
+
+    if autenticado:
+        log.info("Login bem-sucedido!")
+        return True
+
+    # Tenta verificar acessando página protegida
+    log.info("Verificando acesso a página protegida...")
+    r_check = session.get(
+        f"{CONFIG['cv_base_url']}/Inicio",
+        headers=headers_base,
+        timeout=20,
+    )
+    log.info(f"Check /Inicio: status={r_check.status_code} url={r_check.url}")
+
+    if "login" not in r_check.url.lower() and r_check.status_code == 200:
+        log.info("Acesso confirmado via /Inicio")
+        return True
+
+    log.error("Login falhou — servidor retornou página de login")
+    # Salva preview para diagnóstico
+    log.info(f"Preview resposta login: {r_post.text[:800]}")
+    return False
 
 # ─────────────────────────────────────────────────────────────────
 #  EXTRATO
@@ -92,6 +157,15 @@ def periodo_mes_atual() -> str:
 
 def cv_buscar_extrato(session: requests.Session) -> list[dict]:
     periodo = periodo_mes_atual()
+
+    # Visita a página do relatório antes de chamar o endpoint
+    log.info("Acessando página de relatórios...")
+    session.get(
+        f"{CONFIG['cv_base_url']}/Relatorios/log_chamadas",
+        headers={"User-Agent": "Mozilla/5.0", "Referer": f"{CONFIG['cv_base_url']}/Inicio"},
+        timeout=20,
+    )
+
     payload = {
         "usuario":         CONFIG["cv_usuario_filtro"],
         "sentido":         CONFIG["cv_sentido"],
@@ -107,30 +181,28 @@ def cv_buscar_extrato(session: requests.Session) -> list[dict]:
         "User-Agent":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Content-Type":     "application/x-www-form-urlencoded; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
-        "Referer":          "https://voice.connectgroup.solutions/Relatorios/log_chamadas",
-        "Origin":           "https://voice.connectgroup.solutions",
+        "Referer":          f"{CONFIG['cv_base_url']}/Relatorios/log_chamadas",
+        "Origin":           CONFIG["cv_base_url"],
         "Accept":           "application/json, text/javascript, */*; q=0.01",
     }
+
     log.info(f"Buscando extrato: {periodo}")
     r = session.post(CONFIG["cv_extrato_url"], data=payload, headers=headers, timeout=60)
     r.raise_for_status()
 
     log.info(f"Resposta: status={r.status_code} content-type={r.headers.get('Content-Type')} tamanho={len(r.content)} bytes")
+    log.info(f"Preview: {r.text[:300].replace(chr(10), ' ')}")
 
-    # Mostra primeiros 500 chars para diagnóstico
-    preview = r.text[:500].replace("\n", " ").replace("\r", "")
-    log.info(f"Preview resposta: {preview}")
-
-    # Tenta JSON primeiro (independente do Content-Type)
+    # Tenta JSON
     try:
         data = r.json()
-        log.info(f"Resposta é JSON. Chaves: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        log.info(f"JSON válido. Tipo={type(data)} Chaves={list(data.keys()) if isinstance(data, dict) else 'lista'}")
         return _parse_json(data)
     except Exception:
         pass
 
-    # Fallback: HTML
-    log.info("Resposta não é JSON, tentando parse HTML...")
+    # Fallback HTML
+    log.info("Não é JSON — tentando parse HTML...")
     return _parse_html(r.text)
 
 
@@ -141,46 +213,29 @@ def _limpar(valor) -> str:
 def _parse_json(data) -> list[dict]:
     campos = COLUNAS_SHEETS
     rows = []
-
-    # Estrutura DataTables: {"data": [[...], [...]]}
-    if isinstance(data, dict):
-        registros = data.get("data", data.get("aaData", data.get("rows", [])))
-    elif isinstance(data, list):
-        registros = data
-    else:
-        log.warning(f"Estrutura JSON inesperada: {type(data)}")
-        return []
-
-    log.info(f"JSON: {len(registros)} registros brutos encontrados")
+    registros = (
+        data.get("data", data.get("aaData", data.get("rows", [])))
+        if isinstance(data, dict) else data
+    )
+    log.info(f"JSON: {len(registros)} registros brutos")
+    if registros:
+        log.info(f"Primeiro item: {str(registros[0])[:200]}")
 
     for item in registros:
         if isinstance(item, list):
-            row = {}
-            for i, campo in enumerate(campos):
-                row[campo] = _limpar(item[i]) if i < len(item) else ""
-            rows.append(row)
+            row = {campos[i]: _limpar(item[i]) for i in range(min(len(campos), len(item)))}
         elif isinstance(item, dict):
-            # tenta mapear pelas chaves mais comuns
-            row = {
-                "Data / Hora": _limpar(item.get("data_hora", item.get("data", item.get("DT_RowId", "")))),
-                "Usuário":     _limpar(item.get("usuario",   item.get("agente", ""))),
-                "Telefone":    _limpar(item.get("telefone",  item.get("numero", ""))),
-                "Resultado":   _limpar(item.get("resultado", item.get("status", ""))),
-                "Duração":     _limpar(item.get("duracao",   item.get("tempo",  ""))),
-                "Campanha":    _limpar(item.get("campanha",  "")),
-                "Operadora":   _limpar(item.get("operadora", "")),
-                "Modo Disc.":  _limpar(item.get("modo",      "")),
-            }
-            rows.append(row)
+            row = {c: _limpar(item.get(c, "")) for c in campos}
+        else:
+            continue
+        rows.append(row)
 
-    log.info(f"Parse JSON: {len(rows)} registros processados")
+    log.info(f"Parse JSON: {len(rows)} registros")
     return rows
 
 
 def _parse_html(html: str) -> list[dict]:
     try:
-        from html.parser import HTMLParser
-
         class TableParser(HTMLParser):
             def __init__(self):
                 super().__init__()
@@ -189,47 +244,36 @@ def _parse_html(html: str) -> list[dict]:
 
             def handle_starttag(self, tag, attrs):
                 tag = tag.lower()
-                if tag == "tbody":
-                    self.in_tbody = True
-                if tag == "tr" and self.in_tbody:
-                    self.in_tr = True
-                    self.current = []
-                if tag in ("td", "th") and self.in_tr:
-                    self.in_td = True
-                    self.cell = ""
+                if tag == "tbody": self.in_tbody = True
+                if tag == "tr" and self.in_tbody: self.in_tr = True; self.current = []
+                if tag in ("td", "th") and self.in_tr: self.in_td = True; self.cell = ""
 
             def handle_endtag(self, tag):
                 tag = tag.lower()
-                if tag == "tbody":
-                    self.in_tbody = False
+                if tag == "tbody": self.in_tbody = False
                 if tag == "tr" and self.in_tbody:
                     self.in_tr = False
-                    if self.current:
-                        self.rows.append(self.current[:])
+                    if self.current: self.rows.append(self.current[:])
                 if tag in ("td", "th") and self.in_tr:
-                    self.in_td = False
-                    self.current.append(self.cell.strip())
+                    self.in_td = False; self.current.append(self.cell.strip())
 
             def handle_data(self, data):
-                if self.in_td:
-                    self.cell += data
+                if self.in_td: self.cell += data
 
-        parser = TableParser()
-        parser.feed(html)
-
-        log.info(f"HTML: {len(parser.rows)} linhas encontradas na tabela")
+        p = TableParser()
+        p.feed(html)
+        log.info(f"HTML: {len(p.rows)} linhas na tabela")
 
         campos = COLUNAS_SHEETS
         rows = []
-        for cols in parser.rows:
+        for cols in p.rows:
             if len(cols) >= 4:
                 row = {campos[i]: _limpar(cols[i]) for i in range(min(len(campos), len(cols)))}
                 rows.append(row)
-
         log.info(f"Parse HTML: {len(rows)} registros válidos")
         return rows
     except Exception as e:
-        log.error(f"Erro no parse HTML: {e}")
+        log.error(f"Erro parse HTML: {e}")
         return []
 
 # ─────────────────────────────────────────────────────────────────
