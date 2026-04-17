@@ -1,0 +1,38 @@
+name: Connect Voice → Sheets Sync
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'   # a cada 2 horas (UTC)
+  workflow_dispatch:          # permite rodar manualmente pelo GitHub
+
+jobs:
+  sync:
+    name: Sincronizar Extrato de Ligações
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install requests gspread google-auth
+
+      - name: Criar credentials.json a partir do Secret
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Executar sincronização
+        env:
+          SPREADSHEET_ID:   ${{ secrets.SPREADSHEET_ID }}
+          CV_USUARIO:       ${{ secrets.CV_USUARIO }}
+          CV_SENHA:         ${{ secrets.CV_SENHA }}
+        run: python connectvoice_sync.py
+
+      - name: Remover credentials.json
+        if: always()
+        run: rm -f credentials.json
