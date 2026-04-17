@@ -31,7 +31,7 @@ jobs:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           CV_USUARIO: ${{ secrets.CV_USUARIO }}
           CV_SENHA: ${{ secrets.CV_SENHA }}
-        run: python connectvoice_debug.py
+        run: python connectvoice_sync.py
 
       - name: Remover credentials.json
         if: always()
