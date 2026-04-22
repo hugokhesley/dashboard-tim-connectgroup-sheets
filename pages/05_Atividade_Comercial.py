@@ -626,18 +626,24 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
                     _trm = _df_g[_df_g["mes_ativacao"].isna()].copy()
                     _trm_pv = _trm.groupby(["vendedor_real","lider"]).agg(tramitando=("preco_oferta","sum")).reset_index()
 
-                    _todos = pd.concat([
-                        _atv[["vendedor_real","lider"]].drop_duplicates(),
-                        _trm[["vendedor_real","lider"]].drop_duplicates(),
-                    ]).drop_duplicates(subset=["vendedor_real"])
-                    _todos = _todos[~_todos["vendedor_real"].isin(["Sem Vendedor",""])].copy()
-
                     _col2  = _lc2()
                     _metas2 = dict(zip(_col2["vendedor"].str.upper(), _col2["meta"])) if not _col2.empty else {}
 
-                    # Filtra só quem está no Colaboradores
-                    if _metas2:
-                        _todos = _todos[_todos["vendedor_real"].apply(lambda v: _s(v).upper() in _metas2)].copy()
+                    # Base = Colaboradores filtrado pelos líderes do parceiro (inclui zerados)
+                    if _metas2 and not _col2.empty:
+                        _lideres_parc = set(_df_g["lider"].dropna().unique()) - {"Sem Equipe"}
+                        _base = _col2[["vendedor","lider"]].copy().rename(columns={"vendedor":"vendedor_real"})
+                        if _lideres_parc:
+                            _base = _base[_base["lider"].isin(_lideres_parc)].copy()
+                        if lider_sel != "Todos":
+                            _base = _base[_base["lider"] == lider_sel]
+                        _todos = _base.drop_duplicates(subset=["vendedor_real"])
+                    else:
+                        _todos = pd.concat([
+                            _atv[["vendedor_real","lider"]].drop_duplicates(),
+                            _trm[["vendedor_real","lider"]].drop_duplicates(),
+                        ]).drop_duplicates(subset=["vendedor_real"])
+                        _todos = _todos[~_todos["vendedor_real"].isin(["Sem Vendedor",""])].copy()
 
                     tv = _todos.merge(_atv_pv, on=["vendedor_real","lider"], how="left")
                     tv = tv.merge(_trm_pv[["vendedor_real","tramitando"]], on="vendedor_real", how="left")
