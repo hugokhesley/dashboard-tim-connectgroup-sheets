@@ -1028,6 +1028,234 @@ def render_equipe(df_eq, lider, meta_dict):
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 
+def gerar_pdf_detalhado(df: "pd.DataFrame", meta_dict: dict, mes: str) -> bytes:
+    """
+    Gera um PDF da visão Detalhado usando ReportLab.
+    Retorna os bytes do PDF.
+    """
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    )
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=14*mm, rightMargin=14*mm,
+        topMargin=14*mm, bottomMargin=14*mm,
+    )
+
+    # ── Paleta ───────────────────────────────────────────────────
+    VERDE      = colors.HexColor("#22c55e")
+    VERDE_ESC  = colors.HexColor("#15803d")
+    AZUL       = colors.HexColor("#3b82f6")
+    AMBER      = colors.HexColor("#f59e0b")
+    CINZA      = colors.HexColor("#64748b")
+    CINZA_ESC  = colors.HexColor("#1e293b")
+    BRANCO     = colors.white
+    FUNDO_PAG  = colors.HexColor("#0f1117")
+    FUNDO_LIDER= colors.HexColor("#131f2e")
+    FUNDO_VEND = colors.HexColor("#0f1820")
+    FUNDO_CLI  = colors.HexColor("#080e15")
+    TEXTO      = colors.HexColor("#e2e8f0")
+    TEXTO_DIM  = colors.HexColor("#94a3b8")
+
+    FILAS_CANCEL = {"CANCELADO", "CANCELADA", "CANCEL"}
+
+    # ── Estilos ──────────────────────────────────────────────────
+    def s(name, **kw):
+        base = {
+            "fontName": "Helvetica", "fontSize": 9,
+            "textColor": TEXTO, "leading": 13,
+        }
+        base.update(kw)
+        return ParagraphStyle(name, **base)
+
+    sTitle  = s("Title",  fontSize=16, fontName="Helvetica-Bold",
+                textColor=BRANCO, spaceAfter=2)
+    sSub    = s("Sub",    fontSize=8,  textColor=CINZA)
+    sParceiro = s("Parceiro", fontSize=11, fontName="Helvetica-Bold",
+                  textColor=colors.HexColor("#93c5fd"))
+    sLider  = s("Lider",  fontSize=9,  fontName="Helvetica-Bold",
+                textColor=colors.HexColor("#86efac"))
+    sVend   = s("Vend",   fontSize=8,  fontName="Helvetica-Bold",
+                textColor=TEXTO)
+    sCli    = s("Cli",    fontSize=7,  textColor=TEXTO_DIM)
+    sKpi    = s("Kpi",    fontSize=7,  textColor=CINZA)
+    sRight  = s("Right",  fontSize=7,  textColor=TEXTO_DIM, alignment=TA_RIGHT)
+
+    story = []
+
+    # ── Cabeçalho ────────────────────────────────────────────────
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    header_data = [[
+        Paragraph(f"<b>CONNECT GROUP — Detalhado {mes}</b>", sTitle),
+        Paragraph(f"Gerado em {agora}", sRight),
+    ]]
+    header_tbl = Table(header_data, colWidths=["70%", "30%"])
+    header_tbl.setStyle(TableStyle([
+        ("BACKGROUND",   (0,0), (-1,-1), VERDE_ESC),
+        ("ROWPADDING",   (0,0), (-1,-1), 10),
+        ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
+        ("LINEBELOW",    (0,0), (-1,0),  1, VERDE),
+        ("ROUNDEDCORNERS", [6]),
+    ]))
+    story.append(header_tbl)
+    story.append(Spacer(1, 6*mm))
+
+    # ── Parceiros → Líderes → Vendedores ─────────────────────────
+    parceiros = sorted(df["parceiro"].dropna().unique()) if "parceiro" in df.columns else ["—"]
+
+    for parceiro in parceiros:
+        df_p = df[df["parceiro"] == parceiro] if "parceiro" in df.columns else df
+        if df_p.empty:
+            continue
+
+        # Excluir cancelados
+        if "fila_atual" in df_p.columns:
+            df_p = df_p[~df_p["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)]
+
+        lideres_p = sorted([l for l in df_p["lider"].unique()
+                            if l and l not in ("Sem Equipe", "")])
+
+        ac_p   = int(df_p[df_p["mes_ativacao"] == mes]["acessos"].sum())
+        rec_p  = df_p[df_p["mes_ativacao"] == mes]["preco_oferta"].sum()
+        pip_p  = int(df_p[df_p["mes_ativacao"].isna()]["acessos"].sum())
+        rpip_p = df_p[df_p["mes_ativacao"].isna()]["preco_oferta"].sum()
+
+        parc_row = [[
+            Paragraph(f"<b>{parceiro}</b>", sParceiro),
+            Paragraph(
+                f"{len(lideres_p)} equipe(s)   "
+                f"✔ {ac_p} ac / R$ {rec_p:,.2f}   "
+                f"◷ {pip_p} ac / R$ {rpip_p:,.2f}",
+                sRight
+            ),
+        ]]
+        parc_tbl = Table(parc_row, colWidths=["55%","45%"])
+        parc_tbl.setStyle(TableStyle([
+            ("BACKGROUND",  (0,0),(-1,-1), AZUL),
+            ("ROWPADDING",  (0,0),(-1,-1), 8),
+            ("VALIGN",      (0,0),(-1,-1), "MIDDLE"),
+            ("LINEBELOW",   (0,0),(-1,0),  2, colors.HexColor("#1d4ed8")),
+        ]))
+        story.append(parc_tbl)
+        story.append(Spacer(1, 2*mm))
+
+        for lider in lideres_p:
+            df_l = df_p[df_p["lider"] == lider]
+            ac_l   = int(df_l[df_l["mes_ativacao"] == mes]["acessos"].sum())
+            rec_l  = df_l[df_l["mes_ativacao"] == mes]["preco_oferta"].sum()
+            pip_l  = int(df_l[df_l["mes_ativacao"].isna()]["acessos"].sum())
+            rpip_l = df_l[df_l["mes_ativacao"].isna()]["preco_oferta"].sum()
+            vends  = sorted([v for v in df_l["vendedor_real"].unique()
+                             if v and v not in ("Sem Vendedor", "")])
+
+            lider_row = [[
+                Paragraph(f"  {lider}", sLider),
+                Paragraph(
+                    f"{len(vends)} vend.   "
+                    f"✔ {ac_l} ac / R$ {rec_l:,.2f}   "
+                    f"◷ {pip_l} ac / R$ {rpip_l:,.2f}",
+                    sRight
+                ),
+            ]]
+            lider_tbl = Table(lider_row, colWidths=["55%","45%"])
+            lider_tbl.setStyle(TableStyle([
+                ("BACKGROUND",  (0,0),(-1,-1), FUNDO_LIDER),
+                ("LINEBELOW",   (0,0),(-1,0),  1, VERDE),
+                ("ROWPADDING",  (0,0),(-1,-1), 6),
+                ("VALIGN",      (0,0),(-1,-1), "MIDDLE"),
+            ]))
+            story.append(lider_tbl)
+
+            for vend in vends:
+                df_v   = df_l[df_l["vendedor_real"] == vend]
+                ac_atv = int(df_v[df_v["mes_ativacao"] == mes]["acessos"].sum())
+                rec_atv= df_v[df_v["mes_ativacao"] == mes]["preco_oferta"].sum()
+                ac_pip = int(df_v[df_v["mes_ativacao"].isna()]["acessos"].sum())
+                rpip_v = df_v[df_v["mes_ativacao"].isna()]["preco_oferta"].sum()
+                meta_v = _meta_vend(vend, meta_dict)
+                pct_v  = min(int(rec_atv / meta_v * 100), 100) if meta_v > 0 else 0
+
+                cor_pct = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
+
+                # Cabeçalho do vendedor
+                vend_row = [[
+                    Paragraph(f"    {vend}", sVend),
+                    Paragraph(
+                        f"✔ {ac_atv} ac / R$ {rec_atv:,.2f} ({pct_v}%)   "
+                        f"◷ {ac_pip} ac / R$ {rpip_v:,.2f}",
+                        sRight
+                    ),
+                ]]
+                vend_tbl = Table(vend_row, colWidths=["55%","45%"])
+                vend_tbl.setStyle(TableStyle([
+                    ("BACKGROUND",  (0,0),(-1,-1), FUNDO_VEND),
+                    ("LINEBELOW",   (0,0),(-1,0),  0.5, CINZA_ESC),
+                    ("ROWPADDING",  (0,0),(-1,-1), 5),
+                    ("VALIGN",      (0,0),(-1,-1), "MIDDLE"),
+                    ("TEXTCOLOR",   (1,0),(1,0),   cor_pct),
+                ]))
+                story.append(vend_tbl)
+
+                # Clientes
+                cols_grp = [c for c in ["razao_social","fila_atual","status_dash"]
+                            if c in df_v.columns]
+                if cols_grp:
+                    cdf = (df_v.groupby(cols_grp, as_index=False)
+                           .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"),
+                                n_atv=("mes_ativacao", lambda x:(x==mes).sum()))
+                           .sort_values(["n_atv","ac"], ascending=[False,False]))
+                else:
+                    cdf = pd.DataFrame()
+
+                for _, crow in cdf.iterrows():
+                    razao = str(crow.get("razao_social","—"))
+                    razao = (razao[:60]+"…") if len(razao) > 60 else razao
+                    fila  = str(crow.get("fila_atual", crow.get("status_dash","—"))).upper()
+                    ac_c  = int(crow.get("ac", 0))
+                    rec_c = float(crow.get("rec", 0))
+
+                    cli_row = [[
+                        Paragraph(f"        {razao}", sCli),
+                        Paragraph(
+                            f"{ac_c} ac   R$ {rec_c:,.2f}   {fila}",
+                            sRight
+                        ),
+                    ]]
+                    cli_tbl = Table(cli_row, colWidths=["60%","40%"])
+                    cli_tbl.setStyle(TableStyle([
+                        ("BACKGROUND",  (0,0),(-1,-1), FUNDO_CLI),
+                        ("ROWPADDING",  (0,0),(-1,-1), 3),
+                        ("VALIGN",      (0,0),(-1,-1), "MIDDLE"),
+                        ("LINEBELOW",   (0,0),(-1,0),  0.3,
+                         colors.HexColor("#1a2333")),
+                    ]))
+                    story.append(cli_tbl)
+
+            story.append(Spacer(1, 3*mm))
+
+        story.append(Spacer(1, 4*mm))
+
+    # Rodapé
+    story.append(HRFlowable(width="100%", thickness=0.5, color=CINZA_ESC))
+    story.append(Spacer(1, 1*mm))
+    story.append(Paragraph(
+        f"Connect Group · Dashboard TIM · {mes} · gerado em {agora}",
+        s("footer", fontSize=6, textColor=CINZA, alignment=TA_CENTER)
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
 def _fila_badge_html(fila: str) -> str:
     fila_up = str(fila).strip().upper() if fila else "—"
     cfg = STATUS_COLORS.get(fila_up, {"border": "#64748b", "icon": "▪️"})
@@ -1105,6 +1333,35 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
                 f'<div style="padding:8px 0;color:#94a3b8;font-size:0.78rem">{modo_txt}</div>',
                 unsafe_allow_html=True,
             )
+
+    # ── Botão PDF ─────────────────────────────────────────────────
+    col_pdf1, col_pdf2 = st.columns([1, 5])
+    with col_pdf1:
+        gerar_pdf_btn = st.button("📄 Gerar PDF", use_container_width=True, key="det_pdf_btn")
+    with col_pdf2:
+        st.markdown(
+            '<div style="padding:9px 0;color:#64748b;font-size:0.77rem">'
+            'Exporta a visão completa com todos os parceiros, equipes e clientes'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    if gerar_pdf_btn:
+        with st.spinner("Gerando PDF..."):
+            try:
+                pdf_bytes = gerar_pdf_detalhado(df, meta_dict, MES_ALVO)
+                nome_arquivo = f"detalhado_{MES_ALVO.replace('/', '_')}.pdf"
+                st.download_button(
+                    label="⬇️ Baixar PDF",
+                    data=pdf_bytes,
+                    file_name=nome_arquivo,
+                    mime="application/pdf",
+                    key="det_pdf_download",
+                    type="primary",
+                )
+                st.success(f"✅ PDF gerado! Clique em **Baixar PDF** para salvar.")
+            except Exception as e:
+                st.error(f"❌ Erro ao gerar PDF: {e}")
 
     st.markdown("---")
 
