@@ -1335,31 +1335,55 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
             )
 
     # ── Botão PDF ─────────────────────────────────────────────────
-    col_pdf1, col_pdf2 = st.columns([1, 5])
+    col_pdf1, col_pdf2, col_pdf3 = st.columns([2, 2, 1])
     with col_pdf1:
-        gerar_pdf_btn = st.button("📄 Gerar PDF", use_container_width=True, key="det_pdf_btn")
-    with col_pdf2:
-        st.markdown(
-            '<div style="padding:9px 0;color:#64748b;font-size:0.77rem">'
-            'Exporta a visão completa com todos os parceiros, equipes e clientes'
-            '</div>',
-            unsafe_allow_html=True,
+        lideres_pdf_sel = st.multiselect(
+            "📄 Equipes para exportar no PDF",
+            options=lideres_validos,
+            default=lideres_validos,
+            key="det_pdf_lideres",
+            placeholder="Selecione as equipes...",
         )
+    with col_pdf2:
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        gerar_pdf_btn = st.button(
+            "📄 Gerar PDF",
+            use_container_width=True,
+            key="det_pdf_btn",
+            disabled=not lideres_pdf_sel,
+            type="secondary",
+        )
+        if lideres_pdf_sel:
+            n = len(lideres_pdf_sel)
+            total = len(lideres_validos)
+            st.markdown(
+                f'<div style="color:#64748b;font-size:0.73rem;margin-top:4px">'
+                f'{"Todas as equipes" if n == total else f"{n} de {total} equipe(s) selecionada(s)"}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
-    if gerar_pdf_btn:
+    if gerar_pdf_btn and lideres_pdf_sel:
         with st.spinner("Gerando PDF..."):
             try:
-                pdf_bytes = gerar_pdf_detalhado(df, meta_dict, MES_ALVO)
-                nome_arquivo = f"detalhado_{MES_ALVO.replace('/', '_')}.pdf"
-                st.download_button(
-                    label="⬇️ Baixar PDF",
-                    data=pdf_bytes,
-                    file_name=nome_arquivo,
-                    mime="application/pdf",
-                    key="det_pdf_download",
-                    type="primary",
-                )
-                st.success(f"✅ PDF gerado! Clique em **Baixar PDF** para salvar.")
+                # Filtra df apenas para os líderes selecionados
+                df_pdf = df[df["lider"].isin(lideres_pdf_sel)]
+                pdf_bytes = gerar_pdf_detalhado(df_pdf, meta_dict, MES_ALVO)
+                sufixo = "completo" if len(lideres_pdf_sel) == len(lideres_validos) \
+                         else "_".join(l.split()[0].lower() for l in lideres_pdf_sel[:3])
+                nome_arquivo = f"detalhado_{MES_ALVO.replace('/', '_')}_{sufixo}.pdf"
+                with col_pdf3:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    st.download_button(
+                        label="⬇️ Baixar",
+                        data=pdf_bytes,
+                        file_name=nome_arquivo,
+                        mime="application/pdf",
+                        key="det_pdf_download",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                st.success(f"✅ PDF pronto com {len(lideres_pdf_sel)} equipe(s). Clique em **Baixar** para salvar.")
             except Exception as e:
                 st.error(f"❌ Erro ao gerar PDF: {e}")
 
