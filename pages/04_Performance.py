@@ -252,24 +252,35 @@ st.markdown("""
   .det-lider-stats { font-size:0.75rem; color:#64748b; }
   .det-vendedor-wrap {
     background:#0f1820; border-left:3px solid #334155; border-radius:8px;
-    padding:10px 16px 6px 16px; margin:4px 0 4px 40px;
+    padding:10px 16px 8px 16px; margin:4px 0 4px 40px;
   }
   .det-vend-header {
-    display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:8px; flex-wrap:wrap; gap:6px;
   }
-  .det-vend-nome { font-size:0.83rem; font-weight:700; color:#cbd5e1; }
-  .det-vend-kpis { display:flex; gap:14px; font-size:0.75rem; color:#64748b; }
-  .det-vend-kpi-val { font-weight:700; color:#e2e8f0; }
+  .det-vend-nome { font-size:0.83rem; font-weight:700; color:#e2e8f0; }
+  .det-vend-kpis {
+    display:flex; gap:0; font-size:0.74rem;
+    background:#0a1018; border-radius:8px; overflow:hidden;
+    border:1px solid #1e293b;
+  }
+  .det-kpi-block {
+    display:flex; flex-direction:column; align-items:center;
+    padding:5px 14px; border-right:1px solid #1e293b; line-height:1.3;
+  }
+  .det-kpi-block:last-child { border-right:none; }
+  .det-kpi-label { font-size:0.62rem; text-transform:uppercase; letter-spacing:.7px; color:#475569; font-weight:600; }
+  .det-kpi-val   { font-size:0.82rem; font-weight:700; color:#e2e8f0; margin-top:1px; }
   .det-cliente-row {
     display:flex; align-items:center; justify-content:space-between;
     padding:5px 10px; border-radius:6px; margin:3px 0;
     background:#080e15; border:1px solid #1e293b; font-size:0.74rem;
   }
   .det-cli-nome { color:#94a3b8; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:12px; }
-  .det-cli-stats { display:flex; gap:12px; align-items:center; flex-shrink:0; }
-  .det-cli-ac  { color:#60a5fa; font-weight:600; }
-  .det-cli-rec { color:#4ade80; font-weight:600; }
-  .det-cli-fila { font-size:0.67rem; padding:2px 7px; border-radius:99px; font-weight:600; white-space:nowrap; }
+  .det-cli-stats { display:flex; gap:14px; align-items:center; flex-shrink:0; }
+  .det-cli-ac   { color:#60a5fa; font-weight:600; font-size:0.73rem; }
+  .det-cli-rec  { color:#4ade80; font-weight:600; font-size:0.73rem; }
+  .det-cli-fila { font-size:0.66rem; padding:2px 8px; border-radius:99px; font-weight:600; white-space:nowrap; }
   .det-empty { color:#475569; font-size:0.74rem; font-style:italic; padding:4px 6px; }
 </style>
 """, unsafe_allow_html=True)
@@ -1098,27 +1109,39 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
         if df_parc.empty:
             continue
 
+        # Excluir cancelados
+        _mask_p = (df_parc.get("fila_atual", pd.Series(dtype=str))
+                   .str.strip().str.upper()
+                   .isin({"CANCELADO", "CANCELADA", "CANCEL"}))
+        df_parc_ok = df_parc[~_mask_p] if "fila_atual" in df_parc.columns else df_parc
+
         lideres_parc = sorted([l for l in df_parc["lider"].unique()
                                 if l and l not in ("Sem Equipe", "")])
-        ac_parc  = int(df_parc["acessos"].sum())
-        rec_parc = df_parc[df_parc["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
-        pip_parc = int(df_parc[df_parc["mes_ativacao"].isna()]["acessos"].sum())
+        ac_parc      = int(df_parc_ok[df_parc_ok["mes_ativacao"] == MES_ALVO]["acessos"].sum())
+        rec_parc     = df_parc_ok[df_parc_ok["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
+        pip_parc     = int(df_parc_ok[df_parc_ok["mes_ativacao"].isna()]["acessos"].sum())
+        rec_pip_parc = df_parc_ok[df_parc_ok["mes_ativacao"].isna()]["preco_oferta"].sum()
 
         st.markdown(f"""<div class="det-parceiro">
           <span class="det-parceiro-nome">🏢 {parceiro}</span>
           <span class="det-parceiro-stats">
             {len(lideres_parc)} equipe(s) &nbsp;·&nbsp;
-            ✅ {ac_parc} ac &nbsp;·&nbsp;
-            ⏳ {pip_parc} pip &nbsp;·&nbsp;
-            💰 R$ {rec_parc:,.2f}
+            ✅ {ac_parc} ac / R$ {rec_parc:,.2f} &nbsp;·&nbsp;
+            ⏳ {pip_parc} ac / R$ {rec_pip_parc:,.2f}
           </span>
         </div>""", unsafe_allow_html=True)
 
         for lider in lideres_parc:
-            df_lid   = df_parc[df_parc["lider"] == lider]
-            ac_lid   = int(df_lid[df_lid["mes_ativacao"] == MES_ALVO]["acessos"].sum())
-            pip_lid  = int(df_lid[df_lid["mes_ativacao"].isna()]["acessos"].sum())
-            rec_lid  = df_lid[df_lid["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
+            df_lid = df_parc[df_parc["lider"] == lider]
+            # Excluir cancelados dos totais
+            _mask_cancel = (df_lid.get("fila_atual", pd.Series(dtype=str))
+                            .str.strip().str.upper()
+                            .isin({"CANCELADO", "CANCELADA", "CANCEL"}))
+            df_lid_ok = df_lid[~_mask_cancel] if "fila_atual" in df_lid.columns else df_lid
+            ac_lid   = int(df_lid_ok[df_lid_ok["mes_ativacao"] == MES_ALVO]["acessos"].sum())
+            pip_lid  = int(df_lid_ok[df_lid_ok["mes_ativacao"].isna()]["acessos"].sum())
+            rec_lid  = df_lid_ok[df_lid_ok["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
+            rec_pip_lid = df_lid_ok[df_lid_ok["mes_ativacao"].isna()]["preco_oferta"].sum()
             vends    = sorted([v for v in df_lid["vendedor_real"].unique()
                                if v and v not in ("Sem Vendedor", "")])
 
@@ -1126,9 +1149,8 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
               <span class="det-lider-nome">👤 {lider}</span>
               <span class="det-lider-stats">
                 {len(vends)} vend. &nbsp;·&nbsp;
-                ✅ {ac_lid} atv &nbsp;·&nbsp;
-                ⏳ {pip_lid} pip &nbsp;·&nbsp;
-                💰 R$ {rec_lid:,.2f}
+                ✅ {ac_lid} ac / R$ {rec_lid:,.2f} &nbsp;·&nbsp;
+                ⏳ {pip_lid} ac / R$ {rec_pip_lid:,.2f}
               </span>
             </div>""", unsafe_allow_html=True)
 
@@ -1137,34 +1159,56 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
             for vend in vends:
                 df_vend  = df_lid[df_lid["vendedor_real"] == vend]
                 ac_atv_v = int(df_vend[df_vend["mes_ativacao"] == MES_ALVO]["acessos"].sum())
-                ac_pip_v = int(df_vend[df_vend["mes_ativacao"].isna()]["acessos"].sum())
-                rec_v    = df_vend[df_vend["mes_ativacao"] == MES_ALVO]["preco_oferta"].sum()
-                meta_v   = _meta_vend(vend, meta_dict)
-                pct_v    = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
-                cor_v    = _cor(pct_v)
+                # ── Filtrar cancelados ────────────────────────────
+                FILAS_CANCEL = {"CANCELADO", "CANCELADA", "CANCEL"}
+                df_vend_ok = df_vend[
+                    ~df_vend.get("fila_atual", pd.Series(dtype=str))
+                    .str.strip().str.upper().isin(FILAS_CANCEL)
+                ] if "fila_atual" in df_vend.columns else df_vend
+
+                df_atv_v = df_vend_ok[df_vend_ok["mes_ativacao"] == MES_ALVO]
+                df_pip_v = df_vend_ok[df_vend_ok["mes_ativacao"].isna()]
+
+                ac_atv_v  = int(df_atv_v["acessos"].sum())
+                rec_atv_v = df_atv_v["preco_oferta"].sum()
+                ac_pip_v  = int(df_pip_v["acessos"].sum())
+                rec_pip_v = df_pip_v["preco_oferta"].sum()
+                meta_v    = _meta_vend(vend, meta_dict)
+                pct_v     = min(int(rec_atv_v / meta_v * 100), 100) if meta_v > 0 else 0
+                cor_v     = _cor(pct_v)
 
                 # ── Cabeçalho do vendedor ─────────────────────────
                 st.markdown(f"""<div class="det-vendedor-wrap">
                   <div class="det-vend-header">
                     <span class="det-vend-nome">📌 {vend}</span>
-                    <span class="det-vend-kpis">
-                      <span>✅ Atv: <span class="det-vend-kpi-val">{ac_atv_v}</span></span>
-                      <span>⏳ Pip: <span class="det-vend-kpi-val">{ac_pip_v}</span></span>
-                      <span>💰 <span class="det-vend-kpi-val" style="color:{cor_v}">
-                        R$ {rec_v:,.2f} ({pct_v}%)
-                      </span></span>
-                    </span>
+                    <div class="det-vend-kpis">
+                      <div class="det-kpi-block">
+                        <span class="det-kpi-label">✅ Ativado</span>
+                        <span class="det-kpi-val" style="color:{cor_v}">
+                          {ac_atv_v} ac &nbsp;·&nbsp; R$ {rec_atv_v:,.2f}
+                          <span style="color:#64748b;font-size:0.68rem"> ({pct_v}%)</span>
+                        </span>
+                      </div>
+                      <div class="det-kpi-block">
+                        <span class="det-kpi-label">⏳ Tramitando</span>
+                        <span class="det-kpi-val" style="color:#f59e0b">
+                          {ac_pip_v} ac &nbsp;·&nbsp; R$ {rec_pip_v:,.2f}
+                        </span>
+                      </div>
+                    </div>
                   </div>""", unsafe_allow_html=True)
 
                 # ── Lista de clientes ─────────────────────────────
-                # Agrupa por razao_social + fila
+                # Usa apenas os não-cancelados; agrupa por razao_social + fila
                 cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"]
-                            if c in df_vend.columns]
+                            if c in df_vend_ok.columns]
                 if cols_grp:
                     clientes_df = (
-                        df_vend.groupby(cols_grp, as_index=False)
-                        .agg(ac=("acessos", "sum"), rec=("preco_oferta", "sum"))
-                        .sort_values("ac", ascending=False)
+                        df_vend_ok.groupby(cols_grp, as_index=False)
+                        .agg(ac=("acessos", "sum"), rec=("preco_oferta", "sum"),
+                             n_atv=("mes_ativacao",
+                                    lambda x: (x == MES_ALVO).sum()))
+                        .sort_values(["n_atv", "ac"], ascending=[False, False])
                     )
                 else:
                     clientes_df = pd.DataFrame()
