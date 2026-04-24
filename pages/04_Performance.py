@@ -252,11 +252,11 @@ st.markdown("""
   .det-lider-stats { font-size:0.75rem; color:#64748b; }
   .det-vendedor-wrap {
     background:#0f1820; border-left:3px solid #334155; border-radius:8px;
-    padding:10px 16px 8px 16px; margin:4px 0 4px 40px;
+    padding:10px 16px 10px 16px; margin:4px 0 4px 40px;
   }
   .det-vend-header {
     display:flex; align-items:center; justify-content:space-between;
-    margin-bottom:8px; flex-wrap:wrap; gap:6px;
+    margin-bottom:10px; flex-wrap:wrap; gap:6px;
   }
   .det-vend-nome { font-size:0.83rem; font-weight:700; color:#e2e8f0; }
   .det-vend-kpis {
@@ -271,10 +271,16 @@ st.markdown("""
   .det-kpi-block:last-child { border-right:none; }
   .det-kpi-label { font-size:0.62rem; text-transform:uppercase; letter-spacing:.7px; color:#475569; font-weight:600; }
   .det-kpi-val   { font-size:0.82rem; font-weight:700; color:#e2e8f0; margin-top:1px; }
+  .det-clientes-wrap {
+    background:#060c12; border-radius:6px;
+    border:1px solid #1a2333; padding:6px 8px;
+    margin-left:4px;
+  }
   .det-cliente-row {
     display:flex; align-items:center; justify-content:space-between;
-    padding:5px 10px; border-radius:6px; margin:3px 0;
-    background:#080e15; border:1px solid #1e293b; font-size:0.74rem;
+    padding:5px 10px; border-radius:5px; margin:2px 0;
+    background:#0c1520; font-size:0.74rem;
+    border-left:2px solid #1e293b;
   }
   .det-cli-nome { color:#94a3b8; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:12px; }
   .det-cli-stats { display:flex; gap:14px; align-items:center; flex-shrink:0; }
@@ -1178,6 +1184,45 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
                 cor_v     = _cor(pct_v)
 
                 # ── Cabeçalho do vendedor ─────────────────────────
+                # ── Lista de clientes ─────────────────────────────
+                cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"]
+                            if c in df_vend_ok.columns]
+                if cols_grp:
+                    clientes_df = (
+                        df_vend_ok.groupby(cols_grp, as_index=False)
+                        .agg(ac=("acessos", "sum"), rec=("preco_oferta", "sum"),
+                             n_atv=("mes_ativacao",
+                                    lambda x: (x == MES_ALVO).sum()))
+                        .sort_values(["n_atv", "ac"], ascending=[False, False])
+                    )
+                else:
+                    clientes_df = pd.DataFrame()
+
+                # Monta HTML dos clientes
+                clientes_tg = []
+                clientes_html = ""
+                if clientes_df.empty:
+                    clientes_html = '<div class="det-empty">Sem pedidos no mês.</div>'
+                else:
+                    for _, crow in clientes_df.iterrows():
+                        razao = str(crow.get("razao_social", "—"))
+                        fila  = str(crow.get("fila_atual", crow.get("status_dash", "—")))
+                        ac_c  = int(crow.get("ac", 0))
+                        rec_c = float(crow.get("rec", 0.0))
+                        badge = _fila_badge_html(fila)
+                        razao_trunc = (razao[:52] + "…") if len(razao) > 52 else razao
+                        clientes_html += f"""<div class="det-cliente-row">
+                          <span class="det-cli-nome" title="{razao}">{razao_trunc}</span>
+                          <span class="det-cli-stats">
+                            <span class="det-cli-ac">🔢 {ac_c} ac</span>
+                            <span class="det-cli-rec">💰 R$ {rec_c:,.2f}</span>
+                            {badge}
+                          </span>
+                        </div>"""
+                        clientes_tg.append({"razao": razao_trunc, "ac": ac_c,
+                                            "rec": rec_c, "fila": fila})
+
+                # Tudo num único bloco — vendedor + clientes aninhados
                 st.markdown(f"""<div class="det-vendedor-wrap">
                   <div class="det-vend-header">
                     <span class="det-vend-nome">📌 {vend}</span>
@@ -1196,49 +1241,11 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
                         </span>
                       </div>
                     </div>
-                  </div>""", unsafe_allow_html=True)
-
-                # ── Lista de clientes ─────────────────────────────
-                # Usa apenas os não-cancelados; agrupa por razao_social + fila
-                cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"]
-                            if c in df_vend_ok.columns]
-                if cols_grp:
-                    clientes_df = (
-                        df_vend_ok.groupby(cols_grp, as_index=False)
-                        .agg(ac=("acessos", "sum"), rec=("preco_oferta", "sum"),
-                             n_atv=("mes_ativacao",
-                                    lambda x: (x == MES_ALVO).sum()))
-                        .sort_values(["n_atv", "ac"], ascending=[False, False])
-                    )
-                else:
-                    clientes_df = pd.DataFrame()
-
-                clientes_tg = []
-                if clientes_df.empty:
-                    st.markdown('<div class="det-empty">Sem pedidos no mês.</div>',
-                                unsafe_allow_html=True)
-                else:
-                    for _, crow in clientes_df.iterrows():
-                        razao = str(crow.get("razao_social", "—"))
-                        fila  = str(crow.get("fila_atual", crow.get("status_dash", "—")))
-                        ac_c  = int(crow.get("ac", 0))
-                        rec_c = float(crow.get("rec", 0.0))
-                        badge = _fila_badge_html(fila)
-                        # Cada linha é um st.markdown separado — sem nesting
-                        razao_trunc = (razao[:48] + "…") if len(razao) > 48 else razao
-                        st.markdown(f"""<div class="det-cliente-row">
-                          <span class="det-cli-nome" title="{razao}">{razao_trunc}</span>
-                          <span class="det-cli-stats">
-                            <span class="det-cli-ac">🔢 {ac_c} ac</span>
-                            <span class="det-cli-rec">💰 R$ {rec_c:,.2f}</span>
-                            {badge}
-                          </span>
-                        </div>""", unsafe_allow_html=True)
-                        clientes_tg.append({"razao": razao_trunc, "ac": ac_c,
-                                            "rec": rec_c, "fila": fila})
-
-                # Fecha o wrapper do vendedor
-                st.markdown("</div>", unsafe_allow_html=True)
+                  </div>
+                  <div class="det-clientes-wrap">
+                    {clientes_html}
+                  </div>
+                </div>""", unsafe_allow_html=True)
 
                 vendedores_data_tg.append({
                     "nome": vend, "ac_ativ": ac_atv_v,
