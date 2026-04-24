@@ -1242,7 +1242,7 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
 
                 vendedores_data_tg.append({
                     "nome": vend, "ac_ativ": ac_atv_v,
-                    "ac_pip": ac_pip_v, "rec": rec_v,
+                    "ac_pip": ac_pip_v, "rec": rec_atv_v,
                     "clientes": clientes_tg,
                 })
 
