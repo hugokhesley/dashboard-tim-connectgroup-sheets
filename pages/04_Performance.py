@@ -1208,7 +1208,10 @@ def gerar_pdf_detalhado(df: "pd.DataFrame", meta_dict: dict, mes: str) -> bytes:
                 cols_grp = [c for c in ["razao_social","fila_atual","status_dash"]
                             if c in df_v.columns]
                 if cols_grp:
-                    cdf = (df_v.groupby(cols_grp, as_index=False)
+                    df_grp_pdf = df_v.copy()
+                    for col in cols_grp:
+                        df_grp_pdf[col] = df_grp_pdf[col].fillna("—")
+                    cdf = (df_grp_pdf.groupby(cols_grp, as_index=False)
                            .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"),
                                 n_atv=("mes_ativacao", lambda x:(x==mes).sum()))
                            .sort_values(["n_atv","ac"], ascending=[False,False]))
@@ -1469,8 +1472,11 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
                 cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"]
                             if c in df_vend_ok.columns]
                 if cols_grp:
+                    df_grp = df_vend_ok.copy()
+                    for col in cols_grp:
+                        df_grp[col] = df_grp[col].fillna("—")
                     clientes_df = (
-                        df_vend_ok.groupby(cols_grp, as_index=False)
+                        df_grp.groupby(cols_grp, as_index=False)
                         .agg(ac=("acessos", "sum"), rec=("preco_oferta", "sum"),
                              n_atv=("mes_ativacao",
                                     lambda x: (x == MES_ALVO).sum()))
