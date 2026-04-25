@@ -1220,6 +1220,8 @@ def gerar_pdf_detalhado(df: "pd.DataFrame", meta_dict: dict, mes: str) -> bytes:
 
                 for _, crow in cdf.iterrows():
                     razao = str(crow.get("razao_social","—"))
+                    if razao.strip().startswith("#") or razao.strip() == "":
+                        razao = "— (razão social inválida no Sheets)"
                     razao = (razao[:60]+"…") if len(razao) > 60 else razao
                     fila  = str(crow.get("fila_atual", crow.get("status_dash","—"))).upper()
                     ac_c  = int(crow.get("ac", 0))
@@ -1493,6 +1495,9 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
                 else:
                     for _, crow in clientes_df.iterrows():
                         razao = str(crow.get("razao_social", "—"))
+                        # Sanitiza erros do Google Sheets (células começando com +, =, @)
+                        if razao.strip().startswith("#") or razao.strip() == "":
+                            razao = "— (razão social inválida no Sheets)"
                         fila  = str(crow.get("fila_atual", crow.get("status_dash", "—")))
                         ac_c  = int(crow.get("ac", 0))
                         rec_c = float(crow.get("rec", 0.0))
