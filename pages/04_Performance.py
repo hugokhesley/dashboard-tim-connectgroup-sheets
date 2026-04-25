@@ -1080,14 +1080,14 @@ def gerar_pdf_detalhado(df: "pd.DataFrame", meta_dict: dict, mes: str) -> bytes:
                 textColor=BRANCO, spaceAfter=2)
     sSub    = s("Sub",    fontSize=8,  textColor=CINZA)
     sParceiro = s("Parceiro", fontSize=11, fontName="Helvetica-Bold",
-                  textColor=colors.HexColor("#93c5fd"))
+                  textColor=colors.white)
     sLider  = s("Lider",  fontSize=9,  fontName="Helvetica-Bold",
-                textColor=colors.HexColor("#86efac"))
+                textColor=colors.white)
     sVend   = s("Vend",   fontSize=8,  fontName="Helvetica-Bold",
                 textColor=TEXTO)
     sCli    = s("Cli",    fontSize=7,  textColor=TEXTO_DIM)
     sKpi    = s("Kpi",    fontSize=7,  textColor=CINZA)
-    sRight  = s("Right",  fontSize=7,  textColor=TEXTO_DIM, alignment=TA_RIGHT)
+    sRight  = s("Right",  fontSize=7,  textColor=colors.white, alignment=TA_RIGHT)
 
     story = []
 
