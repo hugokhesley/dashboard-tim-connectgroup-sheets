@@ -292,9 +292,8 @@ def get_dash_mes(mes_alvo: str) -> dict:
                 lambda x: _sup(x) in ["NOVO", "ADITIVO"]
             )].copy()
 
-        # Deduplica por pedido
-        if "pedido" in ativ.columns:
-            ativ = ativ.drop_duplicates(subset=["pedido"]).copy()
+        # NÃO deduplica por pedido — na aba resultados cada linha = 1 acesso
+        # (um pedido com 12 linhas = 12 acessos distintos, todos devem ser contados)
 
         if ativ.empty:
             return {}
