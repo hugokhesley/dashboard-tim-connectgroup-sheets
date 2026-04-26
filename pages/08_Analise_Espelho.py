@@ -269,10 +269,28 @@ def get_dash_mes(mes_alvo: str) -> dict:
         all_cols = list(dict.fromkeys(c for d in dfs for c in d.columns))
         raw = pd.concat([d.reindex(columns=all_cols) for d in dfs], ignore_index=True)
 
-        # Usa apply_filters (mesmo padrão das outras páginas)
-        # depois filtra APENAS ativados no mês — exclui pipeline de outros meses
-        raw = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"])
+        # Normaliza e filtra diretamente — sem apply_filters
+        # pois a aba "resultados" só tem ativados (sem pipeline, sem cancelados)
+        raw = normalize_columns(raw)
+        raw = _dedup_columns(raw)
+
+        for col in ["acessos", "preco_oferta"]:
+            if col in raw.columns:
+                raw[col] = raw[col].apply(_to_num)
+
+        # Gera mes_ativacao
+        if "data_ativacao" not in raw.columns:
+            return {}
+        raw["mes_ativacao"] = parse_month(raw["data_ativacao"])
+
+        # Filtra só o mês alvo
         ativ = raw[raw["mes_ativacao"] == mes_alvo].copy()
+
+        # Filtra NOVO e ADITIVO — sem excluir por fila (resultados só tem ativos)
+        if "tipo_contratacao" in ativ.columns:
+            ativ = ativ[ativ["tipo_contratacao"].apply(
+                lambda x: _sup(x) in ["NOVO", "ADITIVO"]
+            )].copy()
 
         # Deduplica por pedido
         if "pedido" in ativ.columns:
@@ -281,6 +299,10 @@ def get_dash_mes(mes_alvo: str) -> dict:
         if ativ.empty:
             return {}
 
+        # Info de debug
+        total_antes = len(raw[raw["mes_ativacao"] == mes_alvo])
+        tipos_encontrados = raw[raw["mes_ativacao"] == mes_alvo]["tipo_contratacao"].value_counts().to_dict() if "tipo_contratacao" in raw.columns else {}
+
         if "cnpj" in ativ.columns:
             ativ["cnpj_norm"] = ativ["cnpj"].apply(norm_cnpj)
 
@@ -288,13 +310,15 @@ def get_dash_mes(mes_alvo: str) -> dict:
         aditivo = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "ADITIVO")]
 
         return {
-            "vol_total":   int(ativ["acessos"].sum()),
-            "vol_novo":    int(novo["acessos"].sum()),
-            "vol_aditivo": int(aditivo["acessos"].sum()),
-            "receita":     ativ["preco_oferta"].sum(),
-            "cnpjs":       set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
-            "df":          ativ,
-            "abas_lidas":  list(raw["_aba"].unique()),
+            "vol_total":        int(ativ["acessos"].sum()),
+            "vol_novo":         int(novo["acessos"].sum()),
+            "vol_aditivo":      int(aditivo["acessos"].sum()),
+            "receita":          ativ["preco_oferta"].sum(),
+            "cnpjs":            set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
+            "df":               ativ,
+            "abas_lidas":       list(raw["_aba"].unique()),
+            "total_antes":      total_antes,
+            "tipos_encontrados": tipos_encontrados,
         }
     except Exception as e:
         st.warning(f"Erro ao carregar dados do dashboard: {e}")
@@ -437,10 +461,13 @@ if dash:
     with st.expander("🔎 Debug — dados encontrados", expanded=False):
         st.write(f"**Abas lidas:** {dash.get('abas_lidas', [])}")
         st.write(f"**Mês buscado:** `{mes_dash}`")
-        st.write(f"**Acessos:** {dash.get('vol_total', 0)} | **Receita:** {fmt(dash.get('receita', 0))}")
+        st.write(f"**Total linhas antes filtro tipo:** {dash.get('total_antes', '?')}")
+        st.write(f"**Tipos encontrados:** {dash.get('tipos_encontrados', '?')}")
+        st.write(f"**Acessos NOVO+ADITIVO:** {dash.get('vol_total', 0)}")
+        st.write(f"**Receita:** {fmt(dash.get('receita', 0))}")
 elif mes_dash:
     with st.expander("🔎 Debug — nenhum dado encontrado", expanded=True):
-        st.warning(f"Buscou `{mes_dash}` em todas as abas — nenhum NOVO/ADITIVO ativado encontrado neste mês.")
+        st.warning(f"Buscou `{mes_dash}` — nenhum registro encontrado.")
 
 # Info do espelho
 custcode_label = CUSTCODES.get(res["custcode"], res["custcode"])
