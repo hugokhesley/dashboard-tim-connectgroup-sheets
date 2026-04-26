@@ -227,25 +227,40 @@ def resumo_espelho(df: pd.DataFrame) -> dict:
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=180, show_spinner=False)
 def get_dash_mes(mes_alvo: str) -> dict:
-    """Puxa acessos NOVO+ADITIVO do DadosRadar para o mês."""
+    """
+    Puxa acessos NOVO+ADITIVO para o mês informado.
+    Busca em todas as abas da planilha (DadosRadar + abas de histórico),
+    pois meses anteriores podem estar em abas separadas de Resultados.
+    """
     try:
         raw = load_data()
         if raw.empty:
             return {}
-        radar = raw[raw["_aba"] == "DadosRadar"].copy() if "_aba" in raw.columns else raw.copy()
-        df = apply_filters(radar, mes_alvo, ["NOVO", "ADITIVO"])
+
+        # Busca em todas as abas — não filtra por _aba para pegar histórico
+        df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"])
         ativ = df[df["mes_ativacao"] == mes_alvo].copy()
+
+        # Deduplica por pedido caso a mesma linha apareça em múltiplas abas
+        if "pedido" in ativ.columns:
+            ativ = ativ.drop_duplicates(subset=["pedido"]).copy()
+
+        if ativ.empty:
+            return {}
+
         if "cnpj" in ativ.columns:
             ativ["cnpj_norm"] = ativ["cnpj"].apply(norm_cnpj)
+
         novo    = ativ[ativ["tipo_contratacao"].str.upper() == "NOVO"]
         aditivo = ativ[ativ["tipo_contratacao"].str.upper() == "ADITIVO"]
+
         return {
-            "vol_total":    int(ativ["acessos"].sum()),
-            "vol_novo":     int(novo["acessos"].sum()),
-            "vol_aditivo":  int(aditivo["acessos"].sum()),
-            "receita":      ativ["preco_oferta"].sum(),
-            "cnpjs":        set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
-            "df":           ativ,
+            "vol_total":   int(ativ["acessos"].sum()),
+            "vol_novo":    int(novo["acessos"].sum()),
+            "vol_aditivo": int(aditivo["acessos"].sum()),
+            "receita":     ativ["preco_oferta"].sum(),
+            "cnpjs":       set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
+            "df":          ativ,
         }
     except Exception as e:
         st.warning(f"Erro ao carregar dashboard: {e}")
