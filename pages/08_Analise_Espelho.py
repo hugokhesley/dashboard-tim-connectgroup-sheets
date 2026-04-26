@@ -308,14 +308,23 @@ def get_dash_mes(mes_alvo: str) -> dict:
         if "cnpj" in ativ.columns:
             ativ["cnpj_norm"] = ativ["cnpj"].apply(norm_cnpj)
 
-        novo    = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "NOVO")]
-        aditivo = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "ADITIVO")]
+        novo  = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "NOVO")]
+        adic  = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "ADITIVO")]
+
+        # Renegociação — no mesmo raw, filtra tipo RENEGOCIAÇÃO no mês
+        reneg = _mes_raw[
+            _mes_raw["tipo_contratacao"].apply(lambda x: _sup(x) == "RENEGOCIAÇÃO")
+        ].copy() if "tipo_contratacao" in _mes_raw.columns else pd.DataFrame()
 
         return {
             "vol_total":        int(ativ["acessos"].sum()),
             "vol_novo":         int(novo["acessos"].sum()),
-            "vol_aditivo":      int(aditivo["acessos"].sum()),
+            "vol_aditivo":      int(adic["acessos"].sum()),
+            "vol_reneg":        int(reneg["acessos"].sum()) if not reneg.empty else 0,
             "receita":          ativ["preco_oferta"].sum(),
+            "receita_novo":     novo["preco_oferta"].sum(),
+            "receita_adic":     adic["preco_oferta"].sum(),
+            "receita_reneg":    reneg["preco_oferta"].sum() if not reneg.empty else 0,
             "cnpjs":            set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
             "df":               ativ,
             "abas_lidas":       list(raw["_aba"].unique()),
@@ -404,18 +413,38 @@ st.markdown("""
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Configurações")
-
-    # Mês vem automaticamente do espelho após upload
-    st.markdown("**Mês de referência**")
-    st.caption("Detectado automaticamente do espelho após upload.")
+    st.caption("Mês detectado automaticamente do espelho.")
     st.markdown("---")
-    st.markdown("**Fator esperado — VOZ**")
-    fator_voz = st.number_input(
-        "Fator (classificação TBP)",
-        min_value=0.1, max_value=10.0, value=4.5, step=0.1, format="%.1f",
+
+    st.markdown("**Fatores VOZ**")
+    fator_novo = st.number_input(
+        "Fator NOVO fidelizado",
+        min_value=0.1, max_value=10.0, value=5.0, step=0.1, format="%.1f",
         help="Platinum=5,0 | Silver=4,5 | Blue=4,0",
     )
+    fator_adic = st.number_input(
+        "Fator ADITIVO fidelizado",
+        min_value=0.1, max_value=10.0, value=4.0, step=0.1, format="%.1f",
+        help="Platinum=4,0 | Silver=3,5 | Blue=3,0",
+    )
     st.markdown("---")
+
+    st.markdown("**Fator Renegociação**")
+    fator_reneg = st.number_input(
+        "Fator Reneg.",
+        min_value=0.1, max_value=10.0, value=3.1, step=0.1, format="%.1f",
+        help="Varia por plano — use o fator médio negociado",
+    )
+    st.markdown("---")
+
+    st.markdown("**Bônus Meta**")
+    meta_receita = st.number_input(
+        "Meta Receita Corporate (R$)",
+        min_value=0.0, value=0.0, step=1000.0, format="%.2f",
+        help="Meta definida pela TIM para o mês do espelho",
+    )
+    st.markdown("---")
+
     if st.button("🔄 Atualizar dashboard", use_container_width=True):
         get_dash_mes.clear()
         st.rerun()
@@ -582,35 +611,45 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# SEÇÃO 2 — COMPARATIVO COM DASHBOARD (VOZ)
+# SEÇÃO 2 — COMPARATIVO VOZ (NOVO e ADITIVO separados)
 # ─────────────────────────────────────────────
 st.markdown("---")
 st.markdown("### 🔄 Comparativo VOZ — Dashboard × Espelho")
-st.caption("Apenas Comissão Básica VOZ (NOVO + ADITIVO). Renegociação tratada separadamente.")
+st.caption("NOVO e ADITIVO com fatores distintos. Renegociação na seção seguinte.")
 
 if dash:
-    exp_voz = dash.get("receita", 0) * fator_voz
-    diff_val = res["voz_valor"] - exp_voz
-    diff_pct = (diff_val / exp_voz * 100) if exp_voz else 0
+    rec_novo  = dash.get("receita_novo", 0)
+    rec_adic  = dash.get("receita_adic", 0)
+    exp_novo  = rec_novo * fator_novo
+    exp_adic  = rec_adic * fator_adic
+    exp_voz   = exp_novo + exp_adic
+    diff_val  = res["voz_valor"] - exp_voz
+    diff_pct  = (diff_val / exp_voz * 100) if exp_voz else 0
     fator_real = (res["voz_valor"] / res["voz_receita"]) if res["voz_receita"] else 0
 
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(f"""
         <div class="bloco">
-          <div class="bloco-title">Expectativa (Dashboard × Fator {fator_voz:.1f})</div>
+          <div class="bloco-title">Expectativa — Dashboard</div>
           <div class="valor-g azul">{fmt(exp_voz)}</div>
-          <div class="label-sm">Base: {fmt(dash.get('receita',0))} · {dash.get('vol_total',0)} acessos</div>
-          <div class="label-sm">🆕 {dash.get('vol_novo',0)} Novos · ➕ {dash.get('vol_aditivo',0)} Aditivos</div>
+          <div class="label-sm" style="margin-top:6px">
+            🆕 Novo: {fmt(rec_novo)} × {fator_novo:.1f} = <b>{fmt(exp_novo)}</b><br>
+            ➕ Adic: {fmt(rec_adic)} × {fator_adic:.1f} = <b>{fmt(exp_adic)}</b>
+          </div>
+          <div class="label-sm" style="margin-top:4px">{dash.get('vol_novo',0)} Novos · {dash.get('vol_aditivo',0)} Aditivos</div>
         </div>
         """, unsafe_allow_html=True)
     with c2:
         st.markdown(f"""
         <div class="bloco">
-          <div class="bloco-title">Pago TIM (Espelho)</div>
+          <div class="bloco-title">Pago TIM — Espelho</div>
           <div class="valor-g verde">{fmt(res['voz_valor'])}</div>
-          <div class="label-sm">Fator médio TIM: {fator_real:.2f} · {res['voz_linhas']} linhas</div>
-          <div class="label-sm">🆕 {fmt(res['voz_novo'])} Novo · ➕ {fmt(res['voz_aditivo'])} Aditivo</div>
+          <div class="label-sm" style="margin-top:6px">
+            🆕 Novo pago: <b>{fmt(res['voz_novo'])}</b><br>
+            ➕ Adic pago: <b>{fmt(res['voz_aditivo'])}</b>
+          </div>
+          <div class="label-sm" style="margin-top:4px">Fator médio TIM: {fator_real:.2f} · {res['voz_linhas']} linhas</div>
         </div>
         """, unsafe_allow_html=True)
     with c3:
@@ -618,18 +657,137 @@ if dash:
         cor = "verde" if diff_val >= 0 else "vermelho"
         sinal = "+" if diff_val >= 0 else ""
         st.markdown(f"""
-        <div class="{cls}" style="height:100%; min-height:90px; display:flex;
-             flex-direction:column; align-items:center; justify-content:center; margin-top:4px">
+        <div class="{cls}" style="height:100%;min-height:110px;display:flex;
+             flex-direction:column;align-items:center;justify-content:center;margin-top:4px">
           <div class="label-sm">TIM pagou vs esperado</div>
           <div class="valor-g {cor}" style="font-size:1.4rem">{sinal}{fmt(diff_val)}</div>
           <div class="label-sm">{sinal}{fmt_pct(diff_pct)}</div>
         </div>
         """, unsafe_allow_html=True)
 
-    if abs(fator_real - fator_voz) > 0.2:
-        st.warning(f"⚠️ Fator médio pago pela TIM ({fator_real:.2f}) difere do esperado ({fator_voz:.1f}). A TIM pode ter classificado o custcode em tier diferente neste mês.")
+    fator_esp_medio = (exp_voz / dash.get("receita",1)) if dash.get("receita",0) else 0
+    if abs(fator_real - fator_esp_medio) > 0.2:
+        st.warning(f"⚠️ Fator médio TIM ({fator_real:.2f}) difere do esperado ({fator_esp_medio:.2f}). Verifique a classificação do custcode.")
 else:
     st.info("Dados do dashboard não disponíveis para o mês selecionado.")
+
+# ─────────────────────────────────────────────
+# SEÇÃO 2b — RENEGOCIAÇÃO
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 🔁 Comparativo Renegociação — Dashboard × Espelho")
+st.caption("Pós-venda / Renegociação com fator próprio.")
+
+if dash:
+    rec_reneg  = dash.get("receita_reneg", 0)
+    exp_reneg  = rec_reneg * fator_reneg
+    diff_reneg = res["ren_valor"] - exp_reneg
+    diff_rpct  = (diff_reneg / exp_reneg * 100) if exp_reneg else 0
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Expectativa — Renegociação</div>
+          <div class="valor-g laranja">{fmt(exp_reneg)}</div>
+          <div class="label-sm">Base: {fmt(rec_reneg)} × {fator_reneg:.1f}</div>
+          <div class="label-sm">{dash.get('vol_reneg',0)} acessos renegociados</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Pago TIM — Renegociação</div>
+          <div class="valor-g laranja">{fmt(res['ren_valor'])}</div>
+          <div class="label-sm">{res['ren_linhas']} linhas · Receita: {fmt(res['ren_receita'])}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        cls = "diff-pos" if diff_reneg >= 0 else "diff-neg"
+        cor = "verde" if diff_reneg >= 0 else "vermelho"
+        sinal = "+" if diff_reneg >= 0 else ""
+        if rec_reneg == 0:
+            st.markdown('<div class="diff-neutro" style="height:100%;min-height:90px;display:flex;flex-direction:column;align-items:center;justify-content:center"><div class="label-sm cinza">Informe a meta de receita<br>de renegociação no dashboard<br>para ver a expectativa</div></div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="{cls}" style="height:100%;min-height:90px;display:flex;
+                 flex-direction:column;align-items:center;justify-content:center;margin-top:4px">
+              <div class="label-sm">TIM pagou vs esperado</div>
+              <div class="valor-g {cor}" style="font-size:1.4rem">{sinal}{fmt(diff_reneg)}</div>
+              <div class="label-sm">{sinal}{fmt_pct(diff_rpct)}</div>
+            </div>
+            """, unsafe_allow_html=True)
+else:
+    st.info("Dados do dashboard não disponíveis para o mês selecionado.")
+
+# ─────────────────────────────────────────────
+# SEÇÃO 2c — BÔNUS META
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 🎯 Bônus Meta Corporate")
+st.caption("Pago entre 60% e 110% de atingimento da meta de receita Corporate.")
+
+bm_pago = res["bm_valor"]
+
+if meta_receita > 0:
+    # Calcula atingimento implícito: bm_pago / meta_receita * 100
+    ating_implicito = (bm_pago / meta_receita * 100) if meta_receita else 0
+
+    # Expectativa: atingimento esperado = 100% → paga 100% da meta
+    # Regra TIM: paga entre 60% e 110% do atingimento aplicado sobre a meta
+    def calc_bonus_meta(meta: float, pct_ating: float) -> float:
+        if pct_ating < 60:
+            return 0.0
+        pct_pago = min(pct_ating, 110) / 100
+        return meta * pct_pago
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Meta Receita Corporate</div>
+          <div class="valor-g roxo">{fmt(meta_receita)}</div>
+          <div class="label-sm" style="margin-top:6px">
+            Paga a partir de 60% de atingimento<br>
+            Limite máximo: 110% da meta
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Bônus Meta Pago TIM</div>
+          <div class="valor-g roxo">{fmt(bm_pago)}</div>
+          <div class="label-sm">Atingimento implícito: {fmt_pct(ating_implicito)}</div>
+          <div class="label-sm">{res['bm_linhas_elegiveis']} acessos elegíveis</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        # Simula expectativas em diferentes níveis
+        st.markdown("**Simulador de Bônus Meta**")
+        pct_sim = st.slider("% atingimento simulado", 0, 150, 100, 5, key="sim_meta")
+        bm_sim = calc_bonus_meta(meta_receita, pct_sim)
+        cor_sim = "verde" if pct_sim >= 60 else "vermelho"
+        st.markdown(f"""
+        <div class="bloco" style="margin-top:0">
+          <div class="label-sm">Se atingir {pct_sim}% da meta:</div>
+          <div class="valor-g {cor_sim}" style="font-size:1.3rem">{fmt(bm_sim)}</div>
+          <div class="label-sm">{'✅ Elegível' if pct_sim >= 60 else '❌ Abaixo do mínimo (60%)'}</div>
+          {'<div class="label-sm amarelo">⚠️ Limitado a 110%</div>' if pct_sim > 110 else ''}
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Bônus Meta Pago TIM</div>
+          <div class="valor-g roxo">{fmt(bm_pago)}</div>
+          <div class="label-sm">{res['bm_linhas_elegiveis']} acessos elegíveis</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.info("Informe a **Meta Receita Corporate** na sidebar para ver o simulador e o atingimento implícito.")
 
 # ─────────────────────────────────────────────
 # SEÇÃO 3 — CRUZAMENTO POR CNPJ
