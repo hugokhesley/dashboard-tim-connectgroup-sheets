@@ -241,14 +241,14 @@ def get_dash_mes(mes_alvo: str) -> dict:
         sheet_url  = st.secrets["sheets"]["url"]
         ss         = client.open_by_url(sheet_url)
 
-        IGNORE = {"metas", "logs", "colaboradores", "parceiros", "comissoes",
-                  "bko-vendedor-real", "portalsnapshot", "portalusuarios",
-                  "deparadiscador", "portaldados", "portalpedidos"}
+        # Para análise do espelho, busca APENAS na aba "resultados"
+        # que contém o histórico fechado mês a mês
+        ABAS_HISTORICO = {"resultados"}
 
         dfs = []
         for ws in ss.worksheets():
             titulo = ws.title.strip().lower()
-            if titulo in IGNORE:
+            if titulo not in ABAS_HISTORICO:
                 continue
             try:
                 vals = ws.get_all_values()
