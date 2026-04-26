@@ -229,19 +229,70 @@ def resumo_espelho(df: pd.DataFrame) -> dict:
 def get_dash_mes(mes_alvo: str) -> dict:
     """
     Puxa acessos NOVO+ADITIVO para o mês informado.
-    Busca em todas as abas da planilha (DadosRadar + abas de histórico),
-    pois meses anteriores podem estar em abas separadas de Resultados.
+    Busca diretamente em todas as abas da planilha via gspread,
+    filtrando por data_ativacao correspondente ao mês.
+    Usa normalize_columns do data_loader para compatibilidade.
     """
+    from data_loader import normalize_columns, _dedup_columns, _to_num, _s, _sup, parse_month
+
     try:
-        raw = load_data()
-        if raw.empty:
+        client     = get_gspread_client()
+        sheet_url  = st.secrets["sheets"]["url"]
+        ss         = client.open_by_url(sheet_url)
+
+        IGNORE = {"metas", "logs", "colaboradores", "parceiros", "comissoes",
+                  "bko-vendedor-real", "portalsnapshot", "portalusuarios",
+                  "deparadiscador", "portaldados", "portalpedidos"}
+
+        dfs = []
+        for ws in ss.worksheets():
+            titulo = ws.title.strip().lower()
+            if titulo in IGNORE:
+                continue
+            try:
+                vals = ws.get_all_values()
+                if not vals or len(vals) < 2:
+                    continue
+                df = pd.DataFrame(vals[1:], columns=vals[0])
+                df = _dedup_columns(df)
+                df.columns = [_s(c).lower() for c in df.columns]
+                df = _dedup_columns(df)
+                df["_aba"] = ws.title
+                dfs.append(df)
+            except Exception:
+                continue
+
+        if not dfs:
             return {}
 
-        # Busca em todas as abas — não filtra por _aba para pegar histórico
-        df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"])
-        ativ = df[df["mes_ativacao"] == mes_alvo].copy()
+        all_cols = list(dict.fromkeys(c for d in dfs for c in d.columns))
+        raw = pd.concat([d.reindex(columns=all_cols) for d in dfs], ignore_index=True)
 
-        # Deduplica por pedido caso a mesma linha apareça em múltiplas abas
+        # Normaliza colunas para nomes padronizados
+        raw = normalize_columns(raw)
+        raw = _dedup_columns(raw)
+
+        # Converte numéricos
+        for col in ["acessos", "preco_oferta"]:
+            if col in raw.columns:
+                raw[col] = raw[col].apply(_to_num)
+
+        # Gera mes_ativacao
+        if "data_ativacao" in raw.columns:
+            raw["mes_ativacao"] = parse_month(raw["data_ativacao"])
+        else:
+            return {}
+
+        # Filtra mês e tipos — NOVO e ADITIVO, exclui CANCELADO
+        ativ = raw[raw["mes_ativacao"] == mes_alvo].copy()
+        if "tipo_contratacao" in ativ.columns:
+            ativ = ativ[ativ["tipo_contratacao"].apply(
+                lambda x: _sup(x) in ["NOVO", "ADITIVO"]
+            )].copy()
+        if "fila_atual" in ativ.columns:
+            ativ = ativ[ativ["fila_atual"].apply(lambda x: _sup(x) != "CANCELADO")].copy()
+
+        # Deduplica por pedido
         if "pedido" in ativ.columns:
             ativ = ativ.drop_duplicates(subset=["pedido"]).copy()
 
@@ -251,8 +302,8 @@ def get_dash_mes(mes_alvo: str) -> dict:
         if "cnpj" in ativ.columns:
             ativ["cnpj_norm"] = ativ["cnpj"].apply(norm_cnpj)
 
-        novo    = ativ[ativ["tipo_contratacao"].str.upper() == "NOVO"]
-        aditivo = ativ[ativ["tipo_contratacao"].str.upper() == "ADITIVO"]
+        novo    = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "NOVO")]
+        aditivo = ativ[ativ["tipo_contratacao"].apply(lambda x: _sup(x) == "ADITIVO")]
 
         return {
             "vol_total":   int(ativ["acessos"].sum()),
@@ -261,9 +312,10 @@ def get_dash_mes(mes_alvo: str) -> dict:
             "receita":     ativ["preco_oferta"].sum(),
             "cnpjs":       set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
             "df":          ativ,
+            "abas_lidas":  list(raw["_aba"].unique()),
         }
     except Exception as e:
-        st.warning(f"Erro ao carregar dashboard: {e}")
+        st.warning(f"Erro ao carregar dados do dashboard: {e}")
         return {}
 
 
@@ -397,6 +449,16 @@ with st.sidebar:
 
 with st.spinner("Carregando dados do dashboard..."):
     dash = get_dash_mes(mes_dash) if mes_dash else {}
+
+# Debug — mostra o que foi encontrado (remover depois de validar)
+if dash:
+    with st.expander("🔎 Debug — dados encontrados", expanded=False):
+        st.write(f"**Abas lidas:** {dash.get('abas_lidas', [])}")
+        st.write(f"**Mês buscado:** `{mes_dash}`")
+        st.write(f"**Acessos:** {dash.get('vol_total', 0)} | **Receita:** {fmt(dash.get('receita', 0))}")
+elif mes_dash:
+    with st.expander("🔎 Debug — nenhum dado encontrado", expanded=True):
+        st.warning(f"Buscou `{mes_dash}` em todas as abas — nenhum NOVO/ADITIVO ativado encontrado neste mês.")
 
 # Info do espelho
 custcode_label = CUSTCODES.get(res["custcode"], res["custcode"])
