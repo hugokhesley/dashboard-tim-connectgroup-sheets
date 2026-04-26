@@ -328,18 +328,9 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### ⚙️ Configurações")
 
-    # Mês de referência para cruzar com dashboard
-    hoje = datetime.now()
-    meses_opcoes = []
-    for delta in range(12):
-        m = hoje.month - delta
-        y = hoje.year
-        while m <= 0:
-            m += 12
-            y -= 1
-        meses_opcoes.append(f"{m:02d}/{y}")
-    mes_dash = st.selectbox("Mês dos Resultados (Dashboard)", meses_opcoes)
-
+    # Mês vem automaticamente do espelho após upload
+    st.markdown("**Mês de referência**")
+    st.caption("Detectado automaticamente do espelho após upload.")
     st.markdown("---")
     st.markdown("**Fator esperado — VOZ**")
     fator_voz = st.number_input(
@@ -367,13 +358,7 @@ uploads = st.file_uploader(
 
 if not uploads:
     st.markdown('<div class="info-box">ℹ️ Faça o upload do CSV do espelho TIM para iniciar a análise.</div>', unsafe_allow_html=True)
-    with st.spinner("Carregando dados do dashboard..."):
-        dash = get_dash_mes(mes_dash)
-    if dash:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Acessos NOVO+ADITIVO", f"{dash.get('vol_total',0):,}")
-        c2.metric("Receita Contratada", fmt(dash.get("receita",0)))
-        c3.metric("Expectativa VOZ", fmt(dash.get("receita",0)*fator_voz))
+    st.info("Faça o upload do espelho — o mês de referência será detectado automaticamente.")
     st.stop()
 
 # ─────────────────────────────────────────────
@@ -386,12 +371,22 @@ for f in uploads:
 df_esp = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
 res    = resumo_espelho(df_esp)
 
+# Deriva mês/ano do dashboard direto do espelho (colunas Ano e Mês)
+mes_num = mes_espelho_para_num(str(res.get("mes_label", "")))
+ano_num = int(res.get("ano", datetime.now().year))
+mes_dash = f"{mes_num:02d}/{ano_num}" if mes_num else None
+
+with st.sidebar:
+    if mes_dash:
+        st.info(f"📅 Espelho: **{res.get('mes_label','')} / {ano_num}**\nComparando com Dashboard **{mes_dash}**")
+
 with st.spinner("Carregando dados do dashboard..."):
-    dash = get_dash_mes(mes_dash)
+    dash = get_dash_mes(mes_dash) if mes_dash else {}
 
 # Info do espelho
 custcode_label = CUSTCODES.get(res["custcode"], res["custcode"])
-st.success(f"✅ **{res['mes_label']}/{res['ano']}** · {custcode_label} · {len(df_esp):,} linhas processadas")
+mes_dash_label = f"{res['mes_label']}/{res['ano']}"
+st.success(f"✅ Espelho de **{mes_dash_label}** · {custcode_label} · {len(df_esp):,} linhas · Dashboard carregado automaticamente para o mesmo período")
 
 # ─────────────────────────────────────────────
 # SEÇÃO 1 — VISÃO GERAL
