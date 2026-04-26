@@ -63,7 +63,8 @@ MESES_PT = {
     1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
     7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez",
 }
-MESES_PT_INV = {v.lower():k for k,v in MESES_PT.items()}
+# Indexado pelos 3 primeiros chars — imune a acentos e variações ("Março" → "mar" → 3)
+MESES_PT_INV = {v.lower()[:3]: k for k, v in MESES_PT.items()}
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -107,8 +108,8 @@ def fmt_cnpj(v: str) -> str:
     return v
 
 def mes_espelho_para_num(s: str) -> int:
-    """'Março' → 3"""
-    return MESES_PT_INV.get(s.strip().lower(), 0)
+    """'Março' → 3  (usa os 3 primeiros chars para ignorar acentos/sufixos)"""
+    return MESES_PT_INV.get(s.strip().lower()[:3], 0)
 
 # ─────────────────────────────────────────────
 # PARSER DO CSV DO ESPELHO
