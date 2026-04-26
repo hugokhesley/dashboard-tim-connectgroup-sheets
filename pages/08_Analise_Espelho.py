@@ -300,8 +300,11 @@ def get_dash_mes(mes_alvo: str) -> dict:
             return {}
 
         # Info de debug
-        total_antes = len(raw[raw["mes_ativacao"] == mes_alvo])
-        tipos_encontrados = raw[raw["mes_ativacao"] == mes_alvo]["tipo_contratacao"].value_counts().to_dict() if "tipo_contratacao" in raw.columns else {}
+        _mes_raw = raw[raw["mes_ativacao"] == mes_alvo].copy()
+        total_antes = len(_mes_raw)
+        tipos_encontrados = _mes_raw["tipo_contratacao"].value_counts().to_dict() if "tipo_contratacao" in _mes_raw.columns else {}
+        acessos_por_tipo = _mes_raw.groupby("tipo_contratacao")["acessos"].sum().to_dict() if "tipo_contratacao" in _mes_raw.columns else {}
+        receita_por_tipo = _mes_raw.groupby("tipo_contratacao")["preco_oferta"].sum().to_dict() if "tipo_contratacao" in _mes_raw.columns else {}
 
         if "cnpj" in ativ.columns:
             ativ["cnpj_norm"] = ativ["cnpj"].apply(norm_cnpj)
@@ -317,8 +320,10 @@ def get_dash_mes(mes_alvo: str) -> dict:
             "cnpjs":            set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
             "df":               ativ,
             "abas_lidas":       list(raw["_aba"].unique()),
-            "total_antes":      total_antes,
+            "total_antes":       total_antes,
             "tipos_encontrados": tipos_encontrados,
+            "acessos_por_tipo":  acessos_por_tipo,
+            "receita_por_tipo":  receita_por_tipo,
         }
     except Exception as e:
         st.warning(f"Erro ao carregar dados do dashboard: {e}")
@@ -462,9 +467,11 @@ if dash:
         st.write(f"**Abas lidas:** {dash.get('abas_lidas', [])}")
         st.write(f"**Mês buscado:** `{mes_dash}`")
         st.write(f"**Total linhas antes filtro tipo:** {dash.get('total_antes', '?')}")
-        st.write(f"**Tipos encontrados:** {dash.get('tipos_encontrados', '?')}")
-        st.write(f"**Acessos NOVO+ADITIVO:** {dash.get('vol_total', 0)}")
-        st.write(f"**Receita:** {fmt(dash.get('receita', 0))}")
+        st.write(f"**Tipos encontrados (linhas):** {dash.get('tipos_encontrados', '?')}")
+        st.write(f"**Acessos por tipo (soma coluna):** {dash.get('acessos_por_tipo', '?')}")
+        st.write(f"**Receita por tipo (soma coluna):** {dash.get('receita_por_tipo', '?')}")
+        st.write(f"**Acessos NOVO+ADITIVO filtrado:** {dash.get('vol_total', 0)}")
+        st.write(f"**Receita NOVO+ADITIVO filtrado:** {fmt(dash.get('receita', 0))}")
 elif mes_dash:
     with st.expander("🔎 Debug — nenhum dado encontrado", expanded=True):
         st.warning(f"Buscou `{mes_dash}` — nenhum registro encontrado.")
