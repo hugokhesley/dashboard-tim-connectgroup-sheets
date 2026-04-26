@@ -269,29 +269,10 @@ def get_dash_mes(mes_alvo: str) -> dict:
         all_cols = list(dict.fromkeys(c for d in dfs for c in d.columns))
         raw = pd.concat([d.reindex(columns=all_cols) for d in dfs], ignore_index=True)
 
-        # Normaliza colunas para nomes padronizados
-        raw = normalize_columns(raw)
-        raw = _dedup_columns(raw)
-
-        # Converte numéricos
-        for col in ["acessos", "preco_oferta"]:
-            if col in raw.columns:
-                raw[col] = raw[col].apply(_to_num)
-
-        # Gera mes_ativacao
-        if "data_ativacao" in raw.columns:
-            raw["mes_ativacao"] = parse_month(raw["data_ativacao"])
-        else:
-            return {}
-
-        # Filtra mês e tipos — NOVO e ADITIVO, exclui CANCELADO
+        # Usa apply_filters (mesmo padrão das outras páginas)
+        # depois filtra APENAS ativados no mês — exclui pipeline de outros meses
+        raw = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"])
         ativ = raw[raw["mes_ativacao"] == mes_alvo].copy()
-        if "tipo_contratacao" in ativ.columns:
-            ativ = ativ[ativ["tipo_contratacao"].apply(
-                lambda x: _sup(x) in ["NOVO", "ADITIVO"]
-            )].copy()
-        if "fila_atual" in ativ.columns:
-            ativ = ativ[ativ["fila_atual"].apply(lambda x: _sup(x) != "CANCELADO")].copy()
 
         # Deduplica por pedido
         if "pedido" in ativ.columns:
