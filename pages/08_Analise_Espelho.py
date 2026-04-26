@@ -339,6 +339,79 @@ def get_dash_mes(mes_alvo: str) -> dict:
 
 
 # ─────────────────────────────────────────────
+# TABELA DE FATORES POR FAIXA — OS TIM SMB
+# ─────────────────────────────────────────────
+# Estrutura: {classificacao: {"NOVO": [(limite, fator),...], "ADITIVO": [...]}}
+# Sem atingimento de meta: fator varia por faixa de receita contratada
+# Com atingimento de meta: fator máximo (última faixa) para todos os acessos
+
+FATORES_FAIXA = {
+    "Black": {
+        "NOVO":    [(10,3.5),(20,4.1),(25,4.6),(29.99,5.2),(float("inf"),5.8)],
+        "ADITIVO": [(10,2.9),(20,3.4),(25,3.8),(29.99,4.3),(float("inf"),4.8)],
+    },
+    "Platinum": {
+        "NOVO":    [(10,3.0),(20,3.5),(25,4.0),(29.99,4.5),(float("inf"),5.0)],
+        "ADITIVO": [(10,2.4),(20,2.8),(25,3.2),(29.99,3.6),(float("inf"),4.0)],
+    },
+    "Silver": {
+        "NOVO":    [(10,2.7),(20,3.2),(25,3.6),(29.99,4.1),(float("inf"),4.5)],
+        "ADITIVO": [(10,2.3),(20,2.5),(25,2.8),(29.99,3.2),(float("inf"),3.5)],
+    },
+    "Blue": {
+        "NOVO":    [(10,2.4),(20,2.8),(25,3.4),(29.99,3.6),(float("inf"),4.0)],
+        "ADITIVO": [(10,1.8),(20,2.1),(25,2.4),(29.99,2.7),(float("inf"),3.0)],
+    },
+}
+
+def fator_por_faixa(classificacao: str, tipo_venda: str, receita: float, meta_atingida: bool) -> float:
+    """
+    Retorna o fator de comissão conforme classificação TBP, tipo de venda e receita.
+    Se meta atingida → fator máximo (≥29,99) independente da receita.
+    """
+    cls  = FATORES_FAIXA.get(classificacao, FATORES_FAIXA["Platinum"])
+    tipo = "NOVO" if str(tipo_venda).strip().upper() == "NOVO" else "ADITIVO"
+    faixas = cls[tipo]
+    if meta_atingida:
+        return faixas[-1][1]  # melhor faixa
+    for limite, fator in faixas:
+        if receita < limite:
+            return fator
+    return faixas[-1][1]
+
+def calcular_expectativa_voz(df_ativ: pd.DataFrame, classificacao: str, meta_atingida: bool) -> dict:
+    """
+    Calcula expectativa de comissão VOZ linha a linha.
+    Retorna dict com totais por tipo e expectativa total.
+    """
+    if df_ativ.empty or "preco_oferta" not in df_ativ.columns:
+        return {"exp_novo":0,"exp_adic":0,"exp_total":0,"linhas":0}
+
+    df = df_ativ.copy()
+    df["tipo_upper"] = df["tipo_contratacao"].apply(lambda x: str(x).strip().upper())
+    df["fator_calc"] = df.apply(
+        lambda r: fator_por_faixa(
+            classificacao,
+            r["tipo_upper"],
+            r["preco_oferta"],
+            meta_atingida,
+        ), axis=1
+    )
+    df["comissao_calc"] = df["preco_oferta"] * df["fator_calc"]
+
+    novo_mask = df["tipo_upper"] == "NOVO"
+    adic_mask = df["tipo_upper"] == "ADITIVO"
+
+    return {
+        "exp_novo":   df[novo_mask]["comissao_calc"].sum(),
+        "exp_adic":   df[adic_mask]["comissao_calc"].sum(),
+        "exp_total":  df["comissao_calc"].sum(),
+        "linhas":     len(df),
+        "df_calc":    df,
+    }
+
+
+# ─────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────
 st.markdown("""
@@ -416,16 +489,19 @@ with st.sidebar:
     st.caption("Mês detectado automaticamente do espelho.")
     st.markdown("---")
 
-    st.markdown("**Fatores VOZ**")
-    fator_novo = st.number_input(
-        "Fator NOVO fidelizado",
-        min_value=0.1, max_value=10.0, value=5.0, step=0.1, format="%.1f",
-        help="Platinum=5,0 | Silver=4,5 | Blue=4,0",
+    st.markdown("**Classificação TBP**")
+    classificacao = st.selectbox(
+        "Classificação do custcode",
+        ["Platinum", "Black", "Silver", "Blue"],
+        index=0,
     )
-    fator_adic = st.number_input(
-        "Fator ADITIVO fidelizado",
-        min_value=0.1, max_value=10.0, value=4.0, step=0.1, format="%.1f",
-        help="Platinum=4,0 | Silver=3,5 | Blue=3,0",
+    st.markdown("---")
+
+    st.markdown("**Cenário de meta**")
+    atingiu_meta = st.radio(
+        "Atingimento da Meta Receita Corporate",
+        ["✅ Atingiu meta (fator máximo)", "❌ Não atingiu meta (por faixa)"],
+        index=1,
     )
     st.markdown("---")
 
@@ -433,7 +509,7 @@ with st.sidebar:
     fator_reneg = st.number_input(
         "Fator Reneg.",
         min_value=0.1, max_value=10.0, value=3.1, step=0.1, format="%.1f",
-        help="Varia por plano — use o fator médio negociado",
+        help="Varia por plano — use o fator médio do mês",
     )
     st.markdown("---")
 
@@ -617,27 +693,34 @@ st.markdown("---")
 st.markdown("### 🔄 Comparativo VOZ — Dashboard × Espelho")
 st.caption("NOVO e ADITIVO com fatores distintos. Renegociação na seção seguinte.")
 
-if dash:
-    rec_novo  = dash.get("receita_novo", 0)
-    rec_adic  = dash.get("receita_adic", 0)
-    exp_novo  = rec_novo * fator_novo
-    exp_adic  = rec_adic * fator_adic
-    exp_voz   = exp_novo + exp_adic
-    diff_val  = res["voz_valor"] - exp_voz
-    diff_pct  = (diff_val / exp_voz * 100) if exp_voz else 0
+if dash and "df" in dash:
+    meta_atingida = "✅" in atingiu_meta
+    calc = calcular_expectativa_voz(dash["df"], classificacao, meta_atingida)
+    exp_novo  = calc["exp_novo"]
+    exp_adic  = calc["exp_adic"]
+    exp_voz   = calc["exp_total"]
     fator_real = (res["voz_valor"] / res["voz_receita"]) if res["voz_receita"] else 0
+    diff_val   = res["voz_valor"] - exp_voz
+    diff_pct   = (diff_val / exp_voz * 100) if exp_voz else 0
+
+    cenario_label = "fator máximo (meta atingida)" if meta_atingida else "por faixa de receita"
+    fator_max_novo = FATORES_FAIXA[classificacao]["NOVO"][-1][1]
+    fator_max_adic = FATORES_FAIXA[classificacao]["ADITIVO"][-1][1]
 
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown(f"""
         <div class="bloco">
-          <div class="bloco-title">Expectativa — Dashboard</div>
+          <div class="bloco-title">Expectativa — {classificacao} · {cenario_label}</div>
           <div class="valor-g azul">{fmt(exp_voz)}</div>
           <div class="label-sm" style="margin-top:6px">
-            🆕 Novo: {fmt(rec_novo)} × {fator_novo:.1f} = <b>{fmt(exp_novo)}</b><br>
-            ➕ Adic: {fmt(rec_adic)} × {fator_adic:.1f} = <b>{fmt(exp_adic)}</b>
+            🆕 Novo: {fmt(dash.get('receita_novo',0))} → <b>{fmt(exp_novo)}</b><br>
+            ➕ Adic: {fmt(dash.get('receita_adic',0))} → <b>{fmt(exp_adic)}</b>
           </div>
-          <div class="label-sm" style="margin-top:4px">{dash.get('vol_novo',0)} Novos · {dash.get('vol_aditivo',0)} Aditivos</div>
+          <div class="label-sm" style="margin-top:4px">
+            {dash.get('vol_novo',0)} Novos · {dash.get('vol_aditivo',0)} Aditivos · {calc['linhas']} linhas calculadas
+          </div>
+          {'<div class="label-sm amarelo">⚡ Fator máximo: Novo '+str(fator_max_novo)+' / Adic '+str(fator_max_adic)+'</div>' if meta_atingida else ''}
         </div>
         """, unsafe_allow_html=True)
     with c2:
@@ -660,14 +743,27 @@ if dash:
         <div class="{cls}" style="height:100%;min-height:110px;display:flex;
              flex-direction:column;align-items:center;justify-content:center;margin-top:4px">
           <div class="label-sm">TIM pagou vs esperado</div>
-          <div class="valor-g {cor}" style="font-size:1.4rem">{sinal}{fmt(diff_val)}</div>
+          <div class="valor-g {cor}" style="font-size:1.5rem">{sinal}{fmt(diff_val)}</div>
           <div class="label-sm">{sinal}{fmt_pct(diff_pct)}</div>
         </div>
         """, unsafe_allow_html=True)
 
-    fator_esp_medio = (exp_voz / dash.get("receita",1)) if dash.get("receita",0) else 0
-    if abs(fator_real - fator_esp_medio) > 0.2:
-        st.warning(f"⚠️ Fator médio TIM ({fator_real:.2f}) difere do esperado ({fator_esp_medio:.2f}). Verifique a classificação do custcode.")
+    # Expander com detalhe por faixa
+    with st.expander("📊 Detalhe por faixa de receita"):
+        if "df_calc" in calc:
+            df_detalhe = calc["df_calc"].copy()
+            df_detalhe["cnpj_fmt"] = df_detalhe["cnpj"].apply(fmt_cnpj) if "cnpj" in df_detalhe.columns else ""
+            cols = [c for c in ["cnpj_fmt","razao_social","tipo_contratacao","preco_oferta","fator_calc","comissao_calc"] if c in df_detalhe.columns]
+            st.dataframe(df_detalhe[cols].rename(columns={
+                "cnpj_fmt":"CNPJ","razao_social":"Razão Social",
+                "tipo_contratacao":"Tipo","preco_oferta":"Receita (R$)",
+                "fator_calc":"Fator","comissao_calc":"Comissão Esp. (R$)"
+            }), use_container_width=True, hide_index=True,
+            column_config={
+                "Receita (R$)":       st.column_config.NumberColumn(format="R$ %.2f"),
+                "Comissão Esp. (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Fator":              st.column_config.NumberColumn(format="%.1f"),
+            })
 else:
     st.info("Dados do dashboard não disponíveis para o mês selecionado.")
 
