@@ -2,29 +2,21 @@
 08_Analise_Espelho.py — Análise do Espelho de Comissionamento TIM
 Connect Group | Dashboard TIM Empresas
 
-Compara o resultado apurado nos Resultados do dashboard
-com o que foi efetivamente pago pela TIM via planilha Espelho.
-Acesso restrito: hugo, angelo
+Lê o CSV do espelho TIM (encoding latin1, vírgula decimal, CNPJ float),
+categoriza em 6 blocos, cruza com DadosRadar e exibe comparativo completo.
+Preparado para múltiplos custcodes.
 """
 
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime
+from datetime import datetime, date
 import sys, os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from auth import require_login
-from data_loader import (
-    registrar_acesso,
-    get_gspread_client,
-    load_metas_historico,
-    apply_filters,
-    load_data,
-    load_bko,
-    _to_num, _s,
-)
+from data_loader import registrar_acesso, get_gspread_client, load_data, apply_filters, _s, _to_num
 
 # ─────────────────────────────────────────────
 st.set_page_config(
@@ -38,25 +30,40 @@ username = require_login("espelho")
 registrar_acesso("Análise Espelho", username=username)
 
 # ─────────────────────────────────────────────
-# CONSTANTES
+# CUSTCODES CONHECIDOS
 # ─────────────────────────────────────────────
+CUSTCODES = {
+    "NE80_NEN15I_NEE021": "Connect Group Solutions (53.692.197/0001-33)",
+    "NE80_NEN15I_NEE363": "Conect Brasil (29.753.512/0001-00)",
+}
 
-# Classificação TBP 360 → fatores Platinum (referência Connect Group)
-# A TIM classifica por custcode — pode divergir do negociado com o parceiro
-FATOR_FIBRA_PLATINUM = 2.5   # Ultra Fibra — fator TIM direto (valor fixo por linha)
-
-TIPOS_COMISSAO = {
-    "Comissão Básica VOZ":    "voz",
-    "Comissão Banda Larga":   "fibra",
-    "Bonus Meta":             "bonus_meta",
+# ─────────────────────────────────────────────
+# MAPEAMENTO DE CATEGORIAS
+# ─────────────────────────────────────────────
+# Tipo de Comissão → categoria interna
+CATEGORIAS = {
+    "Comissão Básica VOZ":   "voz",
+    "Comissão Pós-venda Pós": "renegociacao",
     "Bonus Qualidade":        "bonus_qualidade",
+    "Bonus Meta":             "bonus_meta",
+    "Incentivo a Vendas":     "bonus_estrutura",
+    "Comissão Banda Larga":   "fibra",
+}
+
+LABELS = {
+    "voz":             "Comissão Básica VOZ",
+    "renegociacao":    "Pós-venda / Renegociação",
+    "bonus_qualidade": "Bônus Qualidade (M7/M14)",
+    "bonus_meta":      "Bônus Meta Corporate",
+    "bonus_estrutura": "Bônus Estrutura (CLTs)",
+    "fibra":           "Comissão Banda Larga",
 }
 
 MESES_PT = {
-    "01":"Jan","02":"Fev","03":"Mar","04":"Abr",
-    "05":"Mai","06":"Jun","07":"Jul","08":"Ago",
-    "09":"Set","10":"Out","11":"Nov","12":"Dez",
+    1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
+    7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez",
 }
+MESES_PT_INV = {v.lower():k for k,v in MESES_PT.items()}
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -67,154 +74,181 @@ def fmt(v: float) -> str:
 def fmt_pct(v: float) -> str:
     return f"{v:.1f}%".replace(".",",")
 
-def delta_color(diff: float) -> str:
-    if diff >= 0:
-        return "normal"
-    return "inverse"
+def to_num_br(v) -> float:
+    """Converte string com vírgula decimal ('1.234,56') para float."""
+    if pd.isna(v) or str(v).strip() in ("", "0", "-"):
+        return 0.0
+    try:
+        return float(str(v).replace(".","").replace(",","."))
+    except Exception:
+        return 0.0
 
-def mes_label(ym: str) -> str:
-    """'02/2026' → 'Fev/2026'"""
-    if not ym or "/" not in ym:
-        return ym
-    m, y = ym.split("/")
-    return f"{MESES_PT.get(m, m)}/{y}"
+def norm_cnpj(v) -> str:
+    """
+    Converte qualquer formato de CNPJ para string de 14 dígitos.
+    Trata: float (6,6E+10), int, string com/sem máscara.
+    """
+    if pd.isna(v):
+        return ""
+    s = str(v).strip()
+    # Remove notação científica / float
+    try:
+        s = str(int(float(s)))
+    except Exception:
+        pass
+    # Remove caracteres não numéricos
+    s = "".join(c for c in s if c.isdigit())
+    return s.zfill(14) if s else ""
+
+def fmt_cnpj(v: str) -> str:
+    d = str(v).zfill(14)
+    if len(d) == 14:
+        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+    return v
+
+def mes_espelho_para_num(s: str) -> int:
+    """'Março' → 3"""
+    return MESES_PT_INV.get(s.strip().lower(), 0)
 
 # ─────────────────────────────────────────────
-# LEITURA DO ESPELHO
+# PARSER DO CSV DO ESPELHO
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
-def parse_espelho(file_bytes_1: bytes, file_bytes_2: bytes | None = None) -> pd.DataFrame:
+def parse_espelho_csv(file_bytes: bytes) -> pd.DataFrame:
     """
-    Lê um ou dois XLSX do espelho e retorna df consolidado.
-    Quando dois arquivos são passados, faz concat (mesmo layout, partes diferentes).
+    Lê CSV do espelho TIM (encoding latin1, separador detectado automaticamente).
+    Normaliza tipos e retorna df limpo.
     """
-    def _ler(b: bytes) -> pd.DataFrame:
-        df = pd.read_excel(io.BytesIO(b), header=0)
-        df.columns = [str(c).strip() for c in df.columns]
-        return df
+    df = pd.read_csv(
+        io.BytesIO(file_bytes),
+        encoding="latin1",
+        sep=None,
+        engine="python",
+        on_bad_lines="skip",
+    )
+    df.columns = [str(c).strip() for c in df.columns]
 
-    df = _ler(file_bytes_1)
-    if file_bytes_2:
-        df2 = _ler(file_bytes_2)
-        # Alinha colunas — garante que ambos tenham as mesmas antes do concat
-        all_cols = list(dict.fromkeys(list(df.columns) + list(df2.columns)))
-        df  = df.reindex(columns=all_cols)
-        df2 = df2.reindex(columns=all_cols)
-        df  = pd.concat([df, df2], ignore_index=True)
-
-    # Garante numéricas
-    for col in ["Valor Unitário", "Receita Contratada", "Fator Elemento",
-                "Total Receita Bônus Meta", "Total Receita Bônus Aceleração",
-                "percentual_qualidade", "Gross Bonus"]:
+    # Converte valores monetários (vírgula decimal)
+    cols_num = [
+        "Valor Unitário", "Receita Contratada", "Fator Elemento",
+        "Total Receita Bônus Meta", "Total Receita Bônus Aceleração",
+        "Gross Bonus", "Fator Bonus", "percentual_qualidade",
+        "meta_grupo_economico", "atingimento_grupo_economico",
+    ]
+    for col in cols_num:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            df[col] = df[col].apply(to_num_br)
+
+    # Normaliza CNPJ do cliente
+    if "CPF/CNPJ Cliente" in df.columns:
+        df["cnpj_norm"] = df["CPF/CNPJ Cliente"].apply(norm_cnpj)
+
+    # Categoria interna
+    if "Tipo de Comissão" in df.columns:
+        df["categoria"] = df["Tipo de Comissão"].map(CATEGORIAS).fillna("outro")
+
     return df
 
 
 def resumo_espelho(df: pd.DataFrame) -> dict:
-    """Extrai os totais consolidados do espelho."""
+    """Extrai totais consolidados por categoria."""
     out = {}
 
-    # VOZ — comissão básica
-    voz = df[df["Tipo de Comissão"] == "Comissão Básica VOZ"]
-    out["voz_linhas"]       = len(voz)
-    out["voz_receita"]      = voz["Receita Contratada"].sum()
-    out["voz_comissao"]     = voz["Valor Unitário"].sum()
-    out["voz_fator_medio"]  = (out["voz_comissao"] / out["voz_receita"]) if out["voz_receita"] else 0
+    def _sub(cat, positivo=True):
+        mask = df["categoria"] == cat
+        if positivo:
+            mask = mask & (df["Valor Unitário"] >= 0)
+        else:
+            mask = mask & (df["Valor Unitário"] < 0)
+        return df[mask]
 
-    # FIBRA — banda larga positivos e estornos
-    fibra = df[df["Tipo de Comissão"] == "Comissão Banda Larga"]
-    fibra_pos = fibra[fibra["Valor Unitário"] > 0]
-    fibra_neg = fibra[fibra["Valor Unitário"] < 0]
-    out["fibra_linhas"]         = len(fibra_pos)
-    out["fibra_comissao_bruta"] = fibra_pos["Valor Unitário"].sum()
-    out["fibra_estornos"]       = fibra_neg["Valor Unitário"].sum()   # negativo
-    out["fibra_comissao_liq"]   = out["fibra_comissao_bruta"] + out["fibra_estornos"]
+    # VOZ
+    voz = _sub("voz")
+    out["voz_valor"]    = voz["Valor Unitário"].sum()
+    out["voz_linhas"]   = len(voz)
+    out["voz_receita"]  = voz["Receita Contratada"].sum()
+    out["voz_novo"]     = voz[voz["Tipo de Venda"].str.lower() == "novo"]["Valor Unitário"].sum()
+    out["voz_aditivo"]  = voz[voz["Tipo de Venda"].str.lower() == "aditivo"]["Valor Unitário"].sum()
 
-    # BÔNUS META
-    bm = df[df["Tipo de Comissão"] == "Bonus Meta"]
-    # O campo Total Receita Bônus Meta é repetido por linha — pegar valor único
-    out["bonus_meta_valor"] = bm["Total Receita Bônus Meta"].max() if len(bm) else 0
-    out["bonus_meta_linhas_elegiveis"] = len(bm)
-    out["bonus_meta_fator"] = bm["Fator Elemento"].iloc[0] if len(bm) else 0
+    # Renegociação
+    ren = _sub("renegociacao")
+    out["ren_valor"]   = ren["Valor Unitário"].sum()
+    out["ren_linhas"]  = len(ren)
+    out["ren_receita"] = ren["Receita Contratada"].sum()
 
-    # BÔNUS QUALIDADE / PERMANÊNCIA
-    bq = df[df["Tipo de Comissão"] == "Bonus Qualidade"]
-    out["bonus_qual_valor"]  = bq["Valor Unitário"].sum()
-    out["bonus_qual_linhas"] = len(bq)
+    # Fibra
+    fibra_pos = _sub("fibra", positivo=True)
+    fibra_neg = _sub("fibra", positivo=False)
+    out["fibra_valor"]   = fibra_pos["Valor Unitário"].sum()
+    out["fibra_estorno"] = fibra_neg["Valor Unitário"].sum()
+    out["fibra_liquido"] = out["fibra_valor"] + out["fibra_estorno"]
+    out["fibra_linhas"]  = len(fibra_pos)
 
-    # TOTAL LÍQUIDO DO ESPELHO
-    out["total_espelho"] = (
-        out["voz_comissao"]
-        + out["fibra_comissao_liq"]
-        + out["bonus_meta_valor"]
-        + out["bonus_qual_valor"]
+    # Bônus Qualidade — M7 (210 dias) e M14 (420 dias)
+    bq = _sub("bonus_qualidade")
+    bq210 = bq[bq["Descrição"].str.contains("210", na=False)]
+    bq420 = bq[bq["Descrição"].str.contains("420", na=False)]
+    out["bq_m7_valor"]  = bq210["Valor Unitário"].sum()
+    out["bq_m7_linhas"] = len(bq210)
+    out["bq_m14_valor"] = bq420["Valor Unitário"].sum()
+    out["bq_m14_linhas"]= len(bq420)
+    out["bq_total"]     = bq["Valor Unitário"].sum()
+
+    # Bônus Meta — valor real é o campo Total Receita Bônus Meta (único por espelho)
+    bm = _sub("bonus_meta")
+    out["bm_valor"]          = bm["Total Receita Bônus Meta"].max() if len(bm) else 0
+    out["bm_linhas_elegiveis"] = len(bm)
+
+    # Bônus Estrutura
+    be = _sub("bonus_estrutura")
+    out["be_valor"]  = be["Valor Unitário"].sum()
+    out["be_linhas"] = len(be)
+
+    # Percentual qualidade
+    pq = df["percentual_qualidade"].replace(0, pd.NA).dropna()
+    out["pct_qualidade"] = pq.iloc[0] if len(pq) else None
+
+    # Identificação
+    out["custcode"]  = df["Custcode Pagamento"].iloc[0] if "Custcode Pagamento" in df.columns else "—"
+    out["mes_label"] = df["Mês"].iloc[0] if "Mês" in df.columns else "—"
+    out["ano"]       = df["Ano"].iloc[0] if "Ano" in df.columns else "—"
+    out["cnpj_parc"] = df["CNPJ Parceiro"].iloc[0] if "CNPJ Parceiro" in df.columns else "—"
+
+    # Total geral
+    out["total"] = (
+        out["voz_valor"] + out["ren_valor"] + out["fibra_liquido"]
+        + out["bq_total"] + out["bm_valor"] + out["be_valor"]
     )
-
-    # PERCENTUAL DE QUALIDADE (campo do espelho)
-    pct_qual = df["percentual_qualidade"].replace(0, pd.NA).dropna()
-    out["percentual_qualidade"] = pct_qual.iloc[0] if len(pct_qual) else None
-
-    # Mês de referência do espelho
-    if "Mês" in df.columns:
-        out["mes_referencia"] = str(df["Mês"].iloc[0])
-    elif "Ano" in df.columns and "Mês" in df.columns:
-        out["mes_referencia"] = f"{df['Mês'].iloc[0]}/{df['Ano'].iloc[0]}"
-    else:
-        out["mes_referencia"] = "—"
 
     return out
 
 
 # ─────────────────────────────────────────────
-# DADOS DO DASHBOARD (Resultados)
+# DADOS DASHBOARD
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=180, show_spinner=False)
-def get_resultados_mes(mes_alvo: str) -> dict:
-    """
-    Puxa do DadosRadar os dados do mês informado (formato MM/AAAA).
-    Retorna resumo compatível com o comparativo.
-    """
+def get_dash_mes(mes_alvo: str) -> dict:
+    """Puxa acessos NOVO+ADITIVO do DadosRadar para o mês."""
     try:
         raw = load_data()
-        bko = load_bko()
         if raw.empty:
             return {}
-
-        # Filtra apenas aba DadosRadar — evita duplicação com outras abas da planilha
-        raw_radar = raw.copy()
-        if "_aba" in raw_radar.columns:
-            raw_radar = raw_radar[raw_radar["_aba"] == "DadosRadar"].copy()
-
-        # Apenas NOVO e ADITIVO — RENEGOCIAÇÃO tratada separadamente no futuro
-        df = apply_filters(raw_radar, mes_alvo, ["NOVO", "ADITIVO"])
-
-        # Apenas ativados no mês
+        radar = raw[raw["_aba"] == "DadosRadar"].copy() if "_aba" in raw.columns else raw.copy()
+        df = apply_filters(radar, mes_alvo, ["NOVO", "ADITIVO"])
         ativ = df[df["mes_ativacao"] == mes_alvo].copy()
-
-        # Separa por tipo para exibição, mas fator é único (NOVO e ADITIVO = mesma lógica)
+        if "cnpj" in ativ.columns:
+            ativ["cnpj_norm"] = ativ["cnpj"].apply(norm_cnpj)
         novo    = ativ[ativ["tipo_contratacao"].str.upper() == "NOVO"]
         aditivo = ativ[ativ["tipo_contratacao"].str.upper() == "ADITIVO"]
-
-        vol_total     = int(ativ["acessos"].sum())
-        vol_novo      = int(novo["acessos"].sum())
-        vol_aditivo   = int(aditivo["acessos"].sum())
-        receita_total = ativ["preco_oferta"].sum()
-        receita_novo  = novo["preco_oferta"].sum()
-        receita_adic  = aditivo["preco_oferta"].sum()
-
-        # Expectativa calculada fora desta função com o fator da sidebar
-        # (fator único sobre receita_total — NOVO e ADITIVO seguem a mesma lógica)
         return {
-            "vol_total":     vol_total,
-            "vol_novo":      vol_novo,
-            "vol_aditivo":   vol_aditivo,
-            "receita_total": receita_total,
-            "receita_novo":  receita_novo,
-            "receita_adic":  receita_adic,
+            "vol_total":    int(ativ["acessos"].sum()),
+            "vol_novo":     int(novo["acessos"].sum()),
+            "vol_aditivo":  int(aditivo["acessos"].sum()),
+            "receita":      ativ["preco_oferta"].sum(),
+            "cnpjs":        set(ativ["cnpj_norm"].dropna().unique()) if "cnpj_norm" in ativ.columns else set(),
+            "df":           ativ,
         }
     except Exception as e:
-        st.warning(f"Erro ao carregar dados do dashboard: {e}")
+        st.warning(f"Erro ao carregar dashboard: {e}")
         return {}
 
 
@@ -223,61 +257,55 @@ def get_resultados_mes(mes_alvo: str) -> dict:
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-.header-espelho {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    border-radius: 12px; padding: 20px 28px; margin-bottom: 24px;
-    border-left: 5px solid #e63946;
-    display: flex; align-items: center; justify-content: space-between;
+.esp-header {
+    background: linear-gradient(135deg,#0d1117,#161b22,#1c2333);
+    border-radius:12px; padding:20px 28px; margin-bottom:24px;
+    border-left:5px solid #e63946;
+    display:flex; align-items:center; justify-content:space-between;
 }
-.header-title { font-size: 1.3rem; font-weight: 700; color: #fff; margin: 0; }
-.header-sub   { font-size: 0.85rem; color: #94a3b8; margin: 4px 0 0; }
-.header-badge {
-    background: #e63946; color: #fff; font-weight: 700;
-    padding: 6px 14px; border-radius: 20px; font-size: 0.8rem;
-}
+.esp-title { font-size:1.3rem; font-weight:700; color:#fff; margin:0; }
+.esp-sub   { font-size:0.85rem; color:#8b949e; margin:4px 0 0; }
+.esp-badge { background:#e63946; color:#fff; font-weight:700;
+             padding:6px 14px; border-radius:20px; font-size:0.8rem; }
 
-.bloco {
-    background: #1e2230; border-radius: 10px;
-    padding: 16px 20px; border: 1px solid #2a2f3e; margin-bottom: 12px;
-}
-.bloco-title {
-    font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 1px; color: #64748b; margin-bottom: 10px;
-}
+.bloco { background:#161b22; border-radius:10px; padding:16px 20px;
+         border:1px solid #30363d; margin-bottom:12px; }
+.bloco-title { font-size:0.72rem; font-weight:600; text-transform:uppercase;
+               letter-spacing:1.2px; color:#8b949e; margin-bottom:8px; }
+.valor-g  { font-size:1.6rem; font-weight:700; font-family:monospace; }
+.label-sm { font-size:0.78rem; color:#8b949e; margin-top:2px; }
+.verde    { color:#2ec4b6; }
+.azul     { color:#4361ee; }
+.amarelo  { color:#f7b731; }
+.laranja  { color:#ff9f43; }
+.roxo     { color:#a29bfe; }
+.vermelho { color:#e63946; }
+.cinza    { color:#8b949e; }
 
-.valor-grande { font-size: 1.6rem; font-weight: 700; font-family: monospace; }
-.label-sm     { font-size: 0.78rem; color: #94a3b8; margin-bottom: 2px; }
-.verde  { color: #2ec4b6; }
-.vermelho { color: #e63946; }
-.amarelo  { color: #f7b731; }
-.azul     { color: #4361ee; }
-.cinza    { color: #94a3b8; }
+.total-bar {
+    background:linear-gradient(135deg,#0f3460,#1a1a2e);
+    border-radius:12px; padding:20px 28px; margin:16px 0;
+    border:1px solid #30363d;
+    display:flex; align-items:center; justify-content:space-between;
+}
+.sep { border:none; border-top:1px solid #30363d; margin:20px 0; }
 
-.diff-positivo {
-    background: rgba(46,196,182,0.1); border: 1px solid rgba(46,196,182,0.3);
-    border-radius: 6px; padding: 8px 14px; text-align: center;
-}
-.diff-negativo {
-    background: rgba(230,57,70,0.1); border: 1px solid rgba(230,57,70,0.3);
-    border-radius: 6px; padding: 8px 14px; text-align: center;
-}
-.diff-neutro {
-    background: rgba(100,116,139,0.1); border: 1px solid rgba(100,116,139,0.3);
-    border-radius: 6px; padding: 8px 14px; text-align: center;
-}
+.tag { display:inline-block; padding:2px 10px; border-radius:20px;
+       font-size:0.72rem; font-weight:600; }
+.tag-voz    { background:rgba(67,97,238,.15); color:#7289fa; }
+.tag-ren    { background:rgba(255,159,67,.15); color:#ff9f43; }
+.tag-bq     { background:rgba(247,183,49,.15); color:#f7b731; }
+.tag-bm     { background:rgba(162,155,254,.15); color:#a29bfe; }
+.tag-be     { background:rgba(46,196,182,.15); color:#2ec4b6; }
+.tag-fibra  { background:rgba(230,57,70,.15); color:#e63946; }
 
-.separador { border: none; border-top: 1px solid #2a2f3e; margin: 20px 0; }
-
-.info-box {
-    background: rgba(67,97,238,0.08); border: 1px solid rgba(67,97,238,0.25);
-    border-radius: 8px; padding: 12px 16px; font-size: 0.82rem; color: #94a3b8;
-    margin-bottom: 16px;
-}
-.warn-box {
-    background: rgba(247,183,49,0.08); border: 1px solid rgba(247,183,49,0.3);
-    border-radius: 8px; padding: 12px 16px; font-size: 0.82rem; color: #f7b731;
-    margin-bottom: 16px;
-}
+.diff-pos { background:rgba(46,196,182,.08); border:1px solid rgba(46,196,182,.25);
+            border-radius:8px; padding:12px 16px; text-align:center; }
+.diff-neg { background:rgba(230,57,70,.08); border:1px solid rgba(230,57,70,.25);
+            border-radius:8px; padding:12px 16px; text-align:center; }
+.info-box { background:rgba(67,97,238,.08); border:1px solid rgba(67,97,238,.25);
+            border-radius:8px; padding:12px 16px; font-size:0.82rem;
+            color:#8b949e; margin-bottom:16px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -285,12 +313,12 @@ st.markdown("""
 # HEADER
 # ─────────────────────────────────────────────
 st.markdown("""
-<div class="header-espelho">
+<div class="esp-header">
   <div>
-    <p class="header-title">🔍 ANÁLISE DO ESPELHO TIM</p>
-    <p class="header-sub">Comparativo: Resultados Dashboard × Pagamento TIM</p>
+    <p class="esp-title">🔍 ANÁLISE DO ESPELHO TIM</p>
+    <p class="esp-sub">Comissionamento detalhado · VOZ · Renegociação · Bônus · Estrutura</p>
   </div>
-  <div class="header-badge">💰 ESPELHO</div>
+  <div class="esp-badge">ESPELHO</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -300,259 +328,385 @@ st.markdown("""
 with st.sidebar:
     st.markdown("### ⚙️ Configurações")
 
-    # Seleção do mês de referência
-    historico_metas = load_metas_historico()
-    meses_disponiveis = list(historico_metas.keys()) if historico_metas else []
-
-    # Adiciona meses padrão recentes se não estiverem
-    meses_padrao = []
+    # Mês de referência para cruzar com dashboard
     hoje = datetime.now()
-    for delta in range(6):
+    meses_opcoes = []
+    for delta in range(12):
         m = hoje.month - delta
         y = hoje.year
         while m <= 0:
             m += 12
             y -= 1
-        meses_padrao.append(f"{m:02d}/{y}")
-
-    todos_meses = sorted(
-        set(meses_disponiveis + meses_padrao),
-        key=lambda x: (int(x.split("/")[1]), int(x.split("/")[0])),
-        reverse=True
-    )
-
-    mes_sel = st.selectbox(
-        "Mês de referência (Resultados)",
-        todos_meses,
-        help="Mês cujos dados do dashboard serão comparados com o espelho",
-    )
+        meses_opcoes.append(f"{m:02d}/{y}")
+    mes_dash = st.selectbox("Mês dos Resultados (Dashboard)", meses_opcoes)
 
     st.markdown("---")
-
-    # Fator negociado com TIM (classificação do custcode)
-    st.markdown("**Fator de comissionamento VOZ**")
-    st.caption("NOVO e ADITIVO seguem o mesmo fator — definido pela classificação TBP")
-
+    st.markdown("**Fator esperado — VOZ**")
     fator_voz = st.number_input(
-        "Fator (Receita Contratada × Fator = Comissão)",
+        "Fator (classificação TBP)",
         min_value=0.1, max_value=10.0, value=4.5, step=0.1, format="%.1f",
-        help="Platinum fidelizado = 5,0 | Silver fidelizado = 4,5 | Blue = 4,0 | Não fidelizado = 0,3",
+        help="Platinum=5,0 | Silver=4,5 | Blue=4,0",
     )
-
     st.markdown("---")
-    if st.button("🔄 Atualizar dados dashboard", use_container_width=True):
-        get_resultados_mes.clear()
+    if st.button("🔄 Atualizar dashboard", use_container_width=True):
+        get_dash_mes.clear()
         st.rerun()
-    st.caption(f"Mês selecionado: **{mes_label(mes_sel)}**")
 
 # ─────────────────────────────────────────────
-# UPLOAD DO ESPELHO (1 ou 2 arquivos)
+# UPLOAD
 # ─────────────────────────────────────────────
-st.markdown("#### 📂 Upload do Espelho TIM")
-st.caption("Selecione um ou dois arquivos de uma vez (Ctrl+clique ou Cmd+clique para selecionar múltiplos).")
+st.markdown("#### 📂 Upload do Espelho TIM (.csv)")
+st.caption("Selecione um ou dois arquivos simultaneamente (Ctrl+clique para múltiplos).")
 
-uploaded_files = st.file_uploader(
-    "Planilha(s) Espelho TIM (.xlsx)",
-    type=["xlsx"],
+uploads = st.file_uploader(
+    "Arquivo(s) CSV do espelho",
+    type=["csv"],
     accept_multiple_files=True,
-    key="espelho_files",
-    help="Selecione os dois arquivos simultaneamente se o espelho vier dividido em partes.",
+    key="esp_csv",
 )
 
-if not uploaded_files:
-    st.markdown("""
-    <div class="info-box">
-        ℹ️ Carregue a planilha Espelho TIM para visualizar o comparativo.
-        Se vier em duas partes, selecione os dois arquivos de uma vez (Ctrl+clique).
-        Os dados do dashboard para o mês selecionado são carregados automaticamente.
-    </div>
-    """, unsafe_allow_html=True)
-
+if not uploads:
+    st.markdown('<div class="info-box">ℹ️ Faça o upload do CSV do espelho TIM para iniciar a análise.</div>', unsafe_allow_html=True)
     with st.spinner("Carregando dados do dashboard..."):
-        res = get_resultados_mes(mes_sel)
-
-    if res:
-        st.markdown(f"### 📊 Dados apurados — {mes_label(mes_sel)}")
+        dash = get_dash_mes(mes_dash)
+    if dash:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Volume total ativado", f"{res.get('vol_total',0):,} acessos")
-        c2.metric("Receita Contratada",   fmt(res.get("receita_total", 0)))
-        c3.metric("Expectativa VOZ (Platinum)",
-                  fmt(res.get("receita_total",0) * fator_voz))
-        st.info("⬆ Carregue o Espelho acima para ver o comparativo completo.")
+        c1.metric("Acessos NOVO+ADITIVO", f"{dash.get('vol_total',0):,}")
+        c2.metric("Receita Contratada", fmt(dash.get("receita",0)))
+        c3.metric("Expectativa VOZ", fmt(dash.get("receita",0)*fator_voz))
     st.stop()
 
 # ─────────────────────────────────────────────
 # PROCESSAMENTO
 # ─────────────────────────────────────────────
-bytes_1 = uploaded_files[0].read()
-bytes_2 = uploaded_files[1].read() if len(uploaded_files) > 1 else None
+dfs = []
+for f in uploads:
+    dfs.append(parse_espelho_csv(f.read()))
 
-n_arquivos = len(uploaded_files)
-nomes = " + ".join(f.name for f in uploaded_files)
+df_esp = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
+res    = resumo_espelho(df_esp)
 
-with st.spinner(f"Processando {n_arquivos} arquivo(s) do espelho..."):
-    df_esp   = parse_espelho(bytes_1, bytes_2)
-    res_esp  = resumo_espelho(df_esp)
-    res_dash = get_resultados_mes(mes_sel)
+with st.spinner("Carregando dados do dashboard..."):
+    dash = get_dash_mes(mes_dash)
 
-if n_arquivos == 2:
-    st.success(f"✅ Dois arquivos consolidados: **{nomes}** — {len(df_esp)} linhas no total.")
-else:
-    st.info(f"📄 Arquivo carregado: **{nomes}** — {len(df_esp)} linhas.")
-
-# Recalcula expectativa com fatores personalizados da sidebar
-# Expectativa VOZ: receita total (NOVO+ADITIVO) × fator único configurável
-exp_voz = res_dash.get("receita_total", 0) * fator_voz
+# Info do espelho
+custcode_label = CUSTCODES.get(res["custcode"], res["custcode"])
+st.success(f"✅ **{res['mes_label']}/{res['ano']}** · {custcode_label} · {len(df_esp):,} linhas processadas")
 
 # ─────────────────────────────────────────────
+# SEÇÃO 1 — VISÃO GERAL
 # ─────────────────────────────────────────────
-# NORMALIZAÇÃO DE CNPJ
-# ─────────────────────────────────────────────
-def norm_cnpj(v) -> str:
-    """Remove tudo que não é dígito e retorna string zerada à esquerda."""
-    if pd.isna(v):
-        return ""
-    return str(int(float(str(v).strip()))).zfill(14) if str(v).strip().replace(".","").replace("/","").replace("-","").isdigit() else str(v).strip().replace(".","").replace("/","").replace("-","")
-
-def fmt_cnpj(v: str) -> str:
-    d = v.zfill(14)
-    if len(d) == 14:
-        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
-    return v
-
-# ─────────────────────────────────────────────
-# PREPARA CNPJs DO ESPELHO
-# só linhas de Comissão Básica VOZ e Banda Larga (as vendas — exclui bônus)
-# ─────────────────────────────────────────────
-tipos_venda_esp = ["Comissão Básica VOZ", "Comissão Banda Larga"]
-df_venda_esp = df_esp[df_esp["Tipo de Comissão"].isin(tipos_venda_esp)].copy()
-df_venda_esp["cnpj_norm"] = df_venda_esp["CPF/CNPJ Cliente"].apply(norm_cnpj)
-df_venda_esp = df_venda_esp[df_venda_esp["cnpj_norm"] != ""]
-
-# Um registro por CNPJ no espelho (cliente único)
-cnpjs_espelho = set(df_venda_esp["cnpj_norm"].unique())
-
-# Resumo por CNPJ no espelho: acessos e comissão
-esp_por_cnpj = (
-    df_venda_esp[df_venda_esp["Valor Unitário"] > 0]
-    .groupby("cnpj_norm")
-    .agg(
-        acessos_esp=("Valor Unitário", "count"),
-        comissao_esp=("Valor Unitário", "sum"),
-        razao_esp=("Razão Social", "first"),
-        plano_esp=("Plano", lambda x: x.mode()[0] if len(x) else ""),
-    )
-    .reset_index()
-)
-
-# ─────────────────────────────────────────────
-# PREPARA CNPJs DO DASHBOARD (DadosRadar)
-# ─────────────────────────────────────────────
-from data_loader import normalize_columns, _dedup_columns, load_data, apply_filters, _s
-
-raw = load_data()
-raw_radar = raw.copy()
-if "_aba" in raw_radar.columns:
-    raw_radar = raw_radar[raw_radar["_aba"] == "DadosRadar"].copy()
-
-df_dash = apply_filters(raw_radar, mes_sel, ["NOVO", "ADITIVO"])
-df_dash = df_dash[df_dash["mes_ativacao"] == mes_sel].copy()
-
-# Normaliza CNPJ do dashboard
-df_dash["cnpj_norm"] = df_dash["cnpj"].apply(norm_cnpj) if "cnpj" in df_dash.columns else ""
-df_dash = df_dash[df_dash["cnpj_norm"] != ""]
-
-cnpjs_dashboard = set(df_dash["cnpj_norm"].unique())
-
-# Resumo por CNPJ no dashboard
-dash_por_cnpj = (
-    df_dash.groupby("cnpj_norm")
-    .agg(
-        acessos_dash=("acessos", "sum"),
-        receita_dash=("preco_oferta", "sum"),
-        razao_dash=("razao_social", "first"),
-    )
-    .reset_index()
-)
-dash_por_cnpj["acessos_dash"] = dash_por_cnpj["acessos_dash"].astype(int)
-
-# ─────────────────────────────────────────────
-# CRUZAMENTO
-# ─────────────────────────────────────────────
-em_ambos       = cnpjs_dashboard & cnpjs_espelho
-so_dashboard   = cnpjs_dashboard - cnpjs_espelho   # vendemos mas TIM não pagou
-so_espelho     = cnpjs_espelho   - cnpjs_dashboard # TIM pagou mas não achamos no dashboard
-
-# Merge completo para tabela detalhada
-df_cruzado = dash_por_cnpj.merge(esp_por_cnpj, on="cnpj_norm", how="outer")
-df_cruzado["status"] = df_cruzado.apply(
-    lambda r: "✅ Em ambos"        if pd.notna(r.get("acessos_dash")) and pd.notna(r.get("acessos_esp"))
-    else "⚠️ Só no Dashboard"     if pd.notna(r.get("acessos_dash"))
-    else "❓ Só no Espelho",
-    axis=1
-)
-df_cruzado["razao"] = df_cruzado["razao_dash"].fillna(df_cruzado["razao_esp"])
-df_cruzado["cnpj_fmt"] = df_cruzado["cnpj_norm"].apply(fmt_cnpj)
-
-# ─────────────────────────────────────────────
-# HEADER DO COMPARATIVO
-# ─────────────────────────────────────────────
-st.markdown(f"### 🔍 Comparativo de clientes — {mes_label(mes_sel)}")
-
-# KPIs de cobertura
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Clientes no Dashboard",  len(cnpjs_dashboard))
-c2.metric("Clientes no Espelho",    len(cnpjs_espelho))
-c3.metric("✅ Encontrados nos dois", len(em_ambos))
-c4.metric("⚠️ Divergências",        len(so_dashboard) + len(so_espelho))
-
 st.markdown("---")
+st.markdown("### 💰 Visão Geral do Espelho")
+
+# 6 blocos de categorias
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown(f"""
+    <div class="bloco">
+      <div class="bloco-title"><span class="tag tag-voz">VOZ</span> Comissão Básica</div>
+      <div class="valor-g azul">{fmt(res['voz_valor'])}</div>
+      <div class="label-sm">{res['voz_linhas']} acessos · Receita: {fmt(res['voz_receita'])}</div>
+      <div class="label-sm" style="margin-top:4px">
+        🆕 Novo: {fmt(res['voz_novo'])} &nbsp;|&nbsp; ➕ Aditivo: {fmt(res['voz_aditivo'])}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    st.markdown(f"""
+    <div class="bloco">
+      <div class="bloco-title"><span class="tag tag-ren">RENEGOCIAÇÃO</span> Pós-venda</div>
+      <div class="valor-g laranja">{fmt(res['ren_valor'])}</div>
+      <div class="label-sm">{res['ren_linhas']} acessos · Receita: {fmt(res['ren_receita'])}</div>
+      <div class="label-sm" style="margin-top:4px; color:#555">Tratamento separado — não compõe meta VOZ</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col3:
+    fibra_label = fmt(res['fibra_liquido']) if res.get('fibra_linhas',0) else "—"
+    st.markdown(f"""
+    <div class="bloco">
+      <div class="bloco-title"><span class="tag tag-fibra">FIBRA</span> Banda Larga</div>
+      <div class="valor-g verde">{fibra_label}</div>
+      <div class="label-sm">Bruto: {fmt(res['fibra_valor'])} · Estorno: {fmt(res['fibra_estorno'])}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+col4, col5, col6 = st.columns(3)
+
+with col4:
+    st.markdown(f"""
+    <div class="bloco">
+      <div class="bloco-title"><span class="tag tag-bq">BÔNUS QUALIDADE</span> M7 / M14</div>
+      <div class="valor-g amarelo">{fmt(res['bq_total'])}</div>
+      <div class="label-sm">
+        M7 (210d): {fmt(res['bq_m7_valor'])} · {res['bq_m7_linhas']} linhas<br>
+        M14 (420d): {fmt(res['bq_m14_valor'])} · {res['bq_m14_linhas']} linhas
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col5:
+    pct_q = f"{res['pct_qualidade']:.0f}%" if res.get('pct_qualidade') else "—"
+    st.markdown(f"""
+    <div class="bloco">
+      <div class="bloco-title"><span class="tag tag-bm">BÔNUS META</span> Corporate</div>
+      <div class="valor-g roxo">{fmt(res['bm_valor'])}</div>
+      <div class="label-sm">{res['bm_linhas_elegiveis']} linhas elegíveis</div>
+      <div class="label-sm" style="margin-top:4px">% Qualidade: {pct_q}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with col6:
+    st.markdown(f"""
+    <div class="bloco">
+      <div class="bloco-title"><span class="tag tag-be">BÔNUS ESTRUTURA</span> CLTs</div>
+      <div class="valor-g verde">{fmt(res['be_valor'])}</div>
+      <div class="label-sm">{res['be_linhas']} lançamento(s) · Valor global único</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Total bar
+st.markdown(f"""
+<div class="total-bar">
+  <div>
+    <div style="font-size:.8rem;color:#8b949e;text-transform:uppercase;letter-spacing:1px">
+      Total do Espelho — {res['mes_label']}/{res['ano']}
+    </div>
+    <div style="font-size:2rem;font-weight:700;color:#2ec4b6;font-family:monospace;margin-top:4px">
+      {fmt(res['total'])}
+    </div>
+    <div style="font-size:.78rem;color:#8b949e;margin-top:4px">
+      VOZ {fmt(res['voz_valor'])} &nbsp;+&nbsp;
+      Reneg. {fmt(res['ren_valor'])} &nbsp;+&nbsp;
+      BQ {fmt(res['bq_total'])} &nbsp;+&nbsp;
+      BM {fmt(res['bm_valor'])} &nbsp;+&nbsp;
+      Estrutura {fmt(res['be_valor'])}
+    </div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:.8rem;color:#8b949e">Custcode</div>
+    <div style="font-size:1rem;font-weight:600;color:#fff">{res['custcode']}</div>
+    <div style="font-size:.78rem;color:#8b949e">{res['cnpj_parc']}</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# TABELA PRINCIPAL
+# SEÇÃO 2 — COMPARATIVO COM DASHBOARD (VOZ)
 # ─────────────────────────────────────────────
-tab_todos, tab_faltando, tab_extra = st.tabs([
-    f"Todos ({len(df_cruzado)})",
-    f"⚠️ Só no Dashboard — não pagos TIM ({len(so_dashboard)})",
-    f"❓ Só no Espelho — não achados ({len(so_espelho)})",
-])
+st.markdown("---")
+st.markdown("### 🔄 Comparativo VOZ — Dashboard × Espelho")
+st.caption("Apenas Comissão Básica VOZ (NOVO + ADITIVO). Renegociação tratada separadamente.")
 
-cols_exibir = ["status", "cnpj_fmt", "razao", "acessos_dash", "receita_dash", "acessos_esp", "comissao_esp", "plano_esp"]
-cols_presentes = [c for c in cols_exibir if c in df_cruzado.columns]
+if dash:
+    exp_voz = dash.get("receita", 0) * fator_voz
+    diff_val = res["voz_valor"] - exp_voz
+    diff_pct = (diff_val / exp_voz * 100) if exp_voz else 0
+    fator_real = (res["voz_valor"] / res["voz_receita"]) if res["voz_receita"] else 0
 
-col_cfg = {
-    "status":       st.column_config.TextColumn("Status"),
-    "cnpj_fmt":     st.column_config.TextColumn("CNPJ"),
-    "razao":        st.column_config.TextColumn("Razão Social"),
-    "acessos_dash": st.column_config.NumberColumn("Acessos Dashboard", format="%d"),
-    "receita_dash": st.column_config.NumberColumn("Receita Dashboard (R$)", format="R$ %.2f"),
-    "acessos_esp":  st.column_config.NumberColumn("Acessos Espelho", format="%d"),
-    "comissao_esp": st.column_config.NumberColumn("Comissão TIM (R$)", format="R$ %.2f"),
-    "plano_esp":    st.column_config.TextColumn("Plano"),
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Expectativa (Dashboard × Fator {fator_voz:.1f})</div>
+          <div class="valor-g azul">{fmt(exp_voz)}</div>
+          <div class="label-sm">Base: {fmt(dash.get('receita',0))} · {dash.get('vol_total',0)} acessos</div>
+          <div class="label-sm">🆕 {dash.get('vol_novo',0)} Novos · ➕ {dash.get('vol_aditivo',0)} Aditivos</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class="bloco">
+          <div class="bloco-title">Pago TIM (Espelho)</div>
+          <div class="valor-g verde">{fmt(res['voz_valor'])}</div>
+          <div class="label-sm">Fator médio TIM: {fator_real:.2f} · {res['voz_linhas']} linhas</div>
+          <div class="label-sm">🆕 {fmt(res['voz_novo'])} Novo · ➕ {fmt(res['voz_aditivo'])} Aditivo</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        cls = "diff-pos" if diff_val >= 0 else "diff-neg"
+        cor = "verde" if diff_val >= 0 else "vermelho"
+        sinal = "+" if diff_val >= 0 else ""
+        st.markdown(f"""
+        <div class="{cls}" style="height:100%; min-height:90px; display:flex;
+             flex-direction:column; align-items:center; justify-content:center; margin-top:4px">
+          <div class="label-sm">TIM pagou vs esperado</div>
+          <div class="valor-g {cor}" style="font-size:1.4rem">{sinal}{fmt(diff_val)}</div>
+          <div class="label-sm">{sinal}{fmt_pct(diff_pct)}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if abs(fator_real - fator_voz) > 0.2:
+        st.warning(f"⚠️ Fator médio pago pela TIM ({fator_real:.2f}) difere do esperado ({fator_voz:.1f}). A TIM pode ter classificado o custcode em tier diferente neste mês.")
+else:
+    st.info("Dados do dashboard não disponíveis para o mês selecionado.")
+
+# ─────────────────────────────────────────────
+# SEÇÃO 3 — CRUZAMENTO POR CNPJ
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 🔍 Cruzamento por CNPJ — VOZ + Renegociação")
+
+# CNPJs do espelho (apenas comissões de venda, positivas)
+esp_venda = df_esp[
+    df_esp["categoria"].isin(["voz","renegociacao"]) &
+    (df_esp["Valor Unitário"] > 0)
+].copy()
+
+esp_por_cnpj = (
+    esp_venda.groupby("cnpj_norm")
+    .agg(
+        acessos_esp=("Valor Unitário","count"),
+        comissao_esp=("Valor Unitário","sum"),
+        receita_esp=("Receita Contratada","sum"),
+        tipo_principal=("Tipo de Comissão", lambda x: x.mode()[0] if len(x) else ""),
+    )
+    .reset_index()
+)
+
+cnpjs_esp  = set(esp_por_cnpj["cnpj_norm"].unique()) - {""}
+
+if dash and "df" in dash:
+    df_dash_raw = dash["df"].copy()
+    if "cnpj_norm" not in df_dash_raw.columns and "cnpj" in df_dash_raw.columns:
+        df_dash_raw["cnpj_norm"] = df_dash_raw["cnpj"].apply(norm_cnpj)
+
+    dash_por_cnpj = (
+        df_dash_raw.groupby("cnpj_norm")
+        .agg(
+            acessos_dash=("acessos","sum"),
+            receita_dash=("preco_oferta","sum"),
+            razao_dash=("razao_social","first"),
+        )
+        .reset_index()
+    )
+    dash_por_cnpj["acessos_dash"] = dash_por_cnpj["acessos_dash"].astype(int)
+    cnpjs_dash = set(dash_por_cnpj["cnpj_norm"].unique()) - {""}
+
+    em_ambos     = cnpjs_dash & cnpjs_esp
+    so_dash      = cnpjs_dash - cnpjs_esp
+    so_esp       = cnpjs_esp  - cnpjs_dash
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Clientes no Dashboard",  len(cnpjs_dash))
+    c2.metric("Clientes no Espelho",    len(cnpjs_esp))
+    c3.metric("✅ Em ambos",            len(em_ambos))
+    c4.metric("⚠️ Divergências",        len(so_dash) + len(so_esp))
+
+    # Merge completo
+    df_cruzado = dash_por_cnpj.merge(esp_por_cnpj, on="cnpj_norm", how="outer")
+    df_cruzado["status"] = df_cruzado.apply(
+        lambda r: "✅ Em ambos"
+        if pd.notna(r.get("acessos_dash")) and pd.notna(r.get("acessos_esp"))
+        else "⚠️ Só no Dashboard"
+        if pd.notna(r.get("acessos_dash"))
+        else "❓ Só no Espelho",
+        axis=1,
+    )
+    df_cruzado["cnpj_fmt"] = df_cruzado["cnpj_norm"].apply(fmt_cnpj)
+
+    tab1, tab2, tab3 = st.tabs([
+        f"Todos ({len(df_cruzado)})",
+        f"⚠️ Só no Dashboard — não pagos ({len(so_dash)})",
+        f"❓ Só no Espelho — não mapeados ({len(so_esp)})",
+    ])
+
+    col_cfg = {
+        "status":       st.column_config.TextColumn("Status", width="small"),
+        "cnpj_fmt":     st.column_config.TextColumn("CNPJ"),
+        "razao_dash":   st.column_config.TextColumn("Razão Social"),
+        "acessos_dash": st.column_config.NumberColumn("Acessos Dash", format="%d"),
+        "receita_dash": st.column_config.NumberColumn("Receita Dash (R$)", format="R$ %.2f"),
+        "acessos_esp":  st.column_config.NumberColumn("Acessos Esp.", format="%d"),
+        "comissao_esp": st.column_config.NumberColumn("Comissão TIM (R$)", format="R$ %.2f"),
+        "tipo_principal": st.column_config.TextColumn("Tipo"),
+    }
+    cols_show = ["status","cnpj_fmt","razao_dash","acessos_dash","receita_dash","acessos_esp","comissao_esp","tipo_principal"]
+    cols_show = [c for c in cols_show if c in df_cruzado.columns]
+
+    with tab1:
+        st.dataframe(df_cruzado[cols_show].sort_values("status"), use_container_width=True, hide_index=True, column_config=col_cfg)
+        csv = df_cruzado[cols_show].to_csv(index=False).encode("utf-8")
+        st.download_button("⬇ Exportar CSV", csv, "cruzamento_cnpj.csv", "text/csv")
+    with tab2:
+        if so_dash:
+            st.caption("Clientes no Dashboard que **não aparecem no Espelho**. Possíveis causas: churn antes da apuração, não elegível, CNPJ divergente.")
+            df_f = df_cruzado[df_cruzado["cnpj_norm"].isin(so_dash)][cols_show]
+            st.dataframe(df_f, use_container_width=True, hide_index=True, column_config=col_cfg)
+        else:
+            st.success("Todos os clientes do Dashboard foram encontrados no Espelho. ✅")
+    with tab3:
+        if so_esp:
+            st.caption("Clientes no Espelho que **não foram encontrados no Dashboard**. Possíveis causas: CNPJ diferente no cadastro, venda de outro custcode.")
+            df_e = df_cruzado[df_cruzado["cnpj_norm"].isin(so_esp)][cols_show]
+            st.dataframe(df_e, use_container_width=True, hide_index=True, column_config=col_cfg)
+        else:
+            st.success("Todos os clientes do Espelho foram encontrados no Dashboard. ✅")
+else:
+    st.info("Selecione o mês correspondente na sidebar para cruzar com o Dashboard.")
+
+# ─────────────────────────────────────────────
+# SEÇÃO 4 — DETALHE POR CATEGORIA
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 📋 Detalhe por categoria")
+
+cols_base = ["Tipo de Comissão","Descrição","Plano","Tipo de Venda",
+             "cnpj_norm","GSM","Receita Contratada","Fator Elemento","Valor Unitário","Data Ativação"]
+
+def df_cat(cat):
+    sub = df_esp[df_esp["categoria"] == cat].copy()
+    if "cnpj_norm" in sub.columns:
+        sub["CNPJ"] = sub["cnpj_norm"].apply(fmt_cnpj)
+    cols = [c for c in cols_base + ["CNPJ"] if c in sub.columns]
+    return sub[cols].reset_index(drop=True)
+
+col_num_cfg = {
+    "Valor Unitário":      st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+    "Receita Contratada":  st.column_config.NumberColumn("Receita (R$)", format="R$ %.2f"),
+    "Fator Elemento":      st.column_config.NumberColumn("Fator", format="%.2f"),
 }
 
-with tab_todos:
-    st.dataframe(
-        df_cruzado[cols_presentes].sort_values("status"),
-        use_container_width=True, hide_index=True,
-        column_config=col_cfg,
-    )
-    csv = df_cruzado[cols_presentes].to_csv(index=False).encode("utf-8")
-    st.download_button("⬇ Exportar CSV", csv, "comparativo_cnpj.csv", "text/csv")
+tab_voz, tab_ren, tab_bq, tab_bm, tab_be, tab_raw = st.tabs([
+    f"🎤 VOZ ({res['voz_linhas']})",
+    f"🔁 Renegociação ({res['ren_linhas']})",
+    f"⭐ Bônus Qualidade ({res['bq_m7_linhas']+res['bq_m14_linhas']})",
+    f"🎯 Bônus Meta",
+    f"🏗️ Bônus Estrutura",
+    "📄 Raw completo",
+])
 
-with tab_faltando:
-    if so_dashboard:
-        df_falt = df_cruzado[df_cruzado["cnpj_norm"].isin(so_dashboard)][cols_presentes]
-        st.caption("Clientes que constam nos Resultados do Dashboard mas **não aparecem no Espelho TIM**. Possíveis causas: churn antes da apuração, não elegível, ou erro de CNPJ.")
-        st.dataframe(df_falt, use_container_width=True, hide_index=True, column_config=col_cfg)
-    else:
-        st.success("Todos os clientes do Dashboard foram encontrados no Espelho. ✅")
+with tab_voz:
+    st.dataframe(df_cat("voz"), use_container_width=True, hide_index=True, column_config=col_num_cfg)
 
-with tab_extra:
-    if so_espelho:
-        df_ext = df_cruzado[df_cruzado["cnpj_norm"].isin(so_espelho)][cols_presentes]
-        st.caption("Clientes que aparecem no Espelho TIM mas **não foram encontrados no Dashboard**. Possíveis causas: CNPJ diferente no cadastro, venda de outro custcode, ou dado não lançado no Radar.")
-        st.dataframe(df_ext, use_container_width=True, hide_index=True, column_config=col_cfg)
-    else:
-        st.success("Todos os clientes do Espelho foram encontrados no Dashboard. ✅")
+with tab_ren:
+    st.caption("Renegociação: receita × fator próprio. Não compõe base de cálculo de meta VOZ.")
+    st.dataframe(df_cat("renegociacao"), use_container_width=True, hide_index=True, column_config=col_num_cfg)
 
+with tab_bq:
+    bq_df = df_cat("bonus_qualidade")
+    c1, c2 = st.columns(2)
+    c1.metric("M7 — 210 dias", fmt(res["bq_m7_valor"]), f"{res['bq_m7_linhas']} linhas")
+    c2.metric("M14 — 420 dias", fmt(res["bq_m14_valor"]), f"{res['bq_m14_linhas']} linhas")
+    st.dataframe(bq_df, use_container_width=True, hide_index=True, column_config=col_num_cfg)
+
+with tab_bm:
+    st.metric("Total Receita Bônus Meta Corporate", fmt(res["bm_valor"]))
+    st.caption(f"{res['bm_linhas_elegiveis']} acessos elegíveis. O valor total é único por espelho — o campo 'Valor Unitário' é apenas a parcela por acesso.")
+    bm_df = df_cat("bonus_meta")
+    cols_bm = [c for c in ["Tipo de Comissão","Descrição","CNPJ","GSM","Valor Unitário","Total Receita Bônus Meta"] if c in bm_df.columns]
+    st.dataframe(bm_df[cols_bm] if cols_bm else bm_df, use_container_width=True, hide_index=True, column_config=col_num_cfg)
+
+with tab_be:
+    st.metric("Bônus Estrutura (CLTs TIM)", fmt(res["be_valor"]))
+    st.caption("Valor global único, calculado pela TIM com base na quantidade de vendedores CLT auditados.")
+    be_df = df_cat("bonus_estrutura")
+    st.dataframe(be_df, use_container_width=True, hide_index=True, column_config=col_num_cfg)
+
+with tab_raw:
+    st.dataframe(df_esp, use_container_width=True, hide_index=True)
+    csv_raw = df_esp.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇ Baixar CSV completo", csv_raw, "espelho_completo.csv", "text/csv")
