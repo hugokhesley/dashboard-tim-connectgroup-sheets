@@ -1,0 +1,43 @@
+name: Recuperar DadosRadar
+
+on:
+  workflow_dispatch:
+    inputs:
+      janela_horas:
+        description: 'Buscar emails das últimas X horas'
+        required: false
+        default: '6'
+
+jobs:
+  recuperar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install pandas openpyxl gspread google-auth requests
+
+      - name: Criar arquivo de credenciais Google
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Buscar links e subir para Sheets
+        env:
+          EMAIL_1: ${{ secrets.IMAP_EMAIL_1 }}
+          SENHA_1: ${{ secrets.IMAP_SENHA_1 }}
+          EMAIL_2: ${{ secrets.IMAP_EMAIL_2 }}
+          SENHA_2: ${{ secrets.IMAP_SENHA_2 }}
+          EMAIL_3: ${{ secrets.IMAP_EMAIL_3 }}
+          SENHA_3: ${{ secrets.IMAP_SENHA_3 }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          JANELA_HORAS: ${{ github.event.inputs.janela_horas || '6' }}
+        run: |
+          python actions_recover.py
