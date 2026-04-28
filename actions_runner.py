@@ -31,6 +31,8 @@ EMAIL_1         = os.environ["EMAIL_1"]
 SENHA_1         = os.environ["SENHA_1"]
 EMAIL_2         = os.environ["EMAIL_2"]
 SENHA_2         = os.environ["SENHA_2"]
+EMAIL_3         = os.environ["EMAIL_3"]           # ← NOVO: kleberson@connectgroup.solutions
+SENHA_3         = os.environ["SENHA_3"]           # ← NOVO
 SPREADSHEET_ID  = os.environ["SPREADSHEET_ID"]
 POSICAO_FILA    = int(os.environ.get("POSICAO_FILA", "3"))
 
@@ -42,7 +44,8 @@ ABA_DESTINO     = "DadosRadar"
 
 CONTAS = [
     {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
-    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
+    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},   # Alagoas
+    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},   # ← NOVO
 ]
 
 # ─────────────────────────────────────────────────────────────────
@@ -323,6 +326,7 @@ def main():
     desde = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
     link1 = None
     link2 = None
+    link3 = None        # ← NOVO
     tentativa = 0
 
     while tentativa < 12:
@@ -337,13 +341,17 @@ def main():
             link2 = verificar_email(EMAIL_2, SENHA_2, desde)
             print(f"  Email 2: {'✅ recebido' if link2 else '⏸ aguardando'}")
 
-        if link1 and link2:
+        if not link3:                                                   # ← NOVO
+            link3 = verificar_email(EMAIL_3, SENHA_3, desde)           # ← NOVO
+            print(f"  Email 3: {'✅ recebido' if link3 else '⏸ aguardando'}")  # ← NOVO
+
+        if link1 and link2 and link3:   # ← ATUALIZADO
             break
 
         print(f"  Aguardando {INTERVALO_IMAP//60} min...")
         time.sleep(INTERVALO_IMAP)
 
-    if not (link1 and link2):
+    if not (link1 and link2 and link3):     # ← ATUALIZADO
         print("❌ Timeout: emails não chegaram.")
         exit(1)
 
@@ -352,10 +360,12 @@ def main():
     import io
     bytes1 = requests.get(link1, headers={"User-Agent": "Mozilla/5.0"}, timeout=60).content
     bytes2 = requests.get(link2, headers={"User-Agent": "Mozilla/5.0"}, timeout=60).content
+    bytes3 = requests.get(link3, headers={"User-Agent": "Mozilla/5.0"}, timeout=60).content   # ← NOVO
 
     df1 = pd.read_excel(io.BytesIO(bytes1), header=0)
     df2 = pd.read_excel(io.BytesIO(bytes2), header=0)
-    df_final = pd.concat([df1, df2], ignore_index=True)
+    df3 = pd.read_excel(io.BytesIO(bytes3), header=0)                                         # ← NOVO
+    df_final = pd.concat([df1, df2, df3], ignore_index=True)           # ← ATUALIZADO
     print(f"  📋 Total: {len(df_final)} linhas")
 
     subir_para_sheets(df_final)
