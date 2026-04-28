@@ -1,17 +1,11 @@
 name: Atualizar DadosRadar
-
 on:
-  # Acionamento manual via API (disparado pelo dashboard)
   workflow_dispatch:
     inputs:
       posicao_fila:
         description: 'Posição estimada na fila do Radar'
         required: false
         default: '3'
-
-  # Agendamento automático diário (horário de Brasília = UTC-3)
-  # Ajuste o horário abaixo conforme necessário
-  # Exemplo: 06:00 BRT = 09:00 UTC
   schedule:
     - cron: '0 10,12,14,16,18,20,22 * * 1-5'
 
@@ -19,7 +13,6 @@ jobs:
   atualizar:
     runs-on: ubuntu-latest
     timeout-minutes: 120
-
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
@@ -41,20 +34,24 @@ jobs:
           echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
 
       - name: Criar arquivos SDTID
+        env:
+          SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
+          SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
+          SDTID_T3748937_B64: ${{ secrets.SDTID_T3748937_B64 }}
         run: |
           python -c "
           import base64, os
           s1 = os.environ['SDTID_T3729525_B64']
           s2 = os.environ['SDTID_T3761125_B64']
+          s3 = os.environ['SDTID_T3748937_B64']
           with open('T3729525_001938489117.sdtid', 'wb') as f:
               f.write(base64.b64decode(s1))
           with open('T3761125_001938495598.sdtid', 'wb') as f:
               f.write(base64.b64decode(s2))
+          with open('T3748937_001938491397.sdtid', 'wb') as f:
+              f.write(base64.b64decode(s3))
           print('SDTID files created successfully')
           "
-        env:
-          SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
-          SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
 
       - name: Executar atualização
         env:
@@ -62,6 +59,8 @@ jobs:
           SENHA_1: ${{ secrets.IMAP_SENHA_1 }}
           EMAIL_2: ${{ secrets.IMAP_EMAIL_2 }}
           SENHA_2: ${{ secrets.IMAP_SENHA_2 }}
+          EMAIL_3: ${{ secrets.IMAP_EMAIL_3 }}
+          SENHA_3: ${{ secrets.IMAP_SENHA_3 }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           POSICAO_FILA: ${{ github.event.inputs.posicao_fila || '3' }}
         run: |
