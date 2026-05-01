@@ -24,7 +24,7 @@ st.set_page_config(
 username = require_login("pos_venda")
 registrar_acesso("pos_venda", username=username)
 
-MES_ALVO = datetime.now().strftime("%m/%Y")
+MES_ATUAL = datetime.now().strftime("%m/%Y")
 META_RENEG = 751
 
 st.markdown("""
@@ -140,8 +140,27 @@ def main():
         st.warning("⚠️ Nenhum dado encontrado. Verifique a conexão com o Google Sheets.")
         st.stop()
 
+    def gerar_meses_opcoes():
+        hoje = datetime.now()
+        meses = []
+        for i in range(6):
+            m = hoje.month - i
+            a = hoje.year
+            while m <= 0:
+                m += 12
+                a -= 1
+            meses.append(f"{m:02d}/{a}")
+        return meses
+
     with st.sidebar:
         st.markdown("### 🔧 Filtros")
+
+        meses_opcoes = gerar_meses_opcoes()
+        mes_labels   = [MESES_PT.get(m[:2], m[:2]) + "/" + m[3:] for m in meses_opcoes]
+        mes_idx      = st.selectbox("📅 Mês de referência", range(len(meses_opcoes)),
+                                    format_func=lambda i: mes_labels[i], index=0)
+        MES_ALVO = meses_opcoes[mes_idx]
+
         parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
         vendedor_sel = st.selectbox("Vendedor", st.session_state.get("vendedores_disp", ["Todos"]))
         st.markdown("---")
