@@ -11,8 +11,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 from data_loader import load_colaboradores, get_gspread_client, _s, _norm_pedido
-from auth import require_login
-
 st.set_page_config(
     page_title="Connect Group | Atribuição de Vendedores",
     page_icon="👤",
@@ -20,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-username = require_login("atribuicao_vendedor")
+username = "lider"  # página pública — sem login
 
 SPREADSHEET_ID = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 ABA_BKO        = "BKO-VENDEDOR-REAL"
