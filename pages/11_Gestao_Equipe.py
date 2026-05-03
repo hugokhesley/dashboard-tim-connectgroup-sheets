@@ -46,6 +46,12 @@ LINK_ATRIBUICAO   = "https://dashboard-tim-connectgroup-sheets-yhmvrhy6akairuh3y
 
 st.markdown("""
 <style>
+  [data-testid="stSidebarNav"] { display: none; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
   .stApp { background-color: #0f1117; color: #e2e8f0; }
