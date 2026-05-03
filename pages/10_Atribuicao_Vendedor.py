@@ -97,6 +97,12 @@ def carregar_pendentes():
             lambda x: _s(x).upper()
         ).str.contains("CANCELAD", na=False)]
 
+    # Remove renegociações
+    if "tipo_contratacao" in df_radar.columns:
+        df_radar = df_radar[~df_radar["tipo_contratacao"].apply(
+            lambda x: _s(x).upper()
+        ).str.contains("RENEGOCI", na=False)]
+
     # Filtra ultimos 30 dias pelo mes_input
     if "mes_input" in df_radar.columns:
         from datetime import datetime, timedelta
