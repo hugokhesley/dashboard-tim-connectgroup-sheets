@@ -405,10 +405,8 @@ def _carregar_pendentes_bko(lider_filtro="", parceiro_filtro="", tipo="admin"):
     if col_fila:
         df_pend = df_pend[~df_pend[col_fila].apply(lambda x: "CANCELAD" in _s(x).upper())]
 
-    # Filtro por líder ou parceiro
-    if tipo == "lider" and lider_filtro and col_lider:
-        df_pend = df_pend[df_pend[col_lider].apply(lambda x: _s(x).upper()) == lider_filtro.upper()]
-    # Para parceiro não filtramos BKO (não tem coluna parceiro), mostra todos os pendentes
+    # BKO geralmente não tem coluna líder — não filtramos aqui
+    # O líder vê todos os pendentes e atribui os do seu time
 
     from datetime import timedelta
     limite = datetime.today() - timedelta(days=60)
