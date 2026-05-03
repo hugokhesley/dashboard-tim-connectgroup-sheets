@@ -1633,7 +1633,11 @@ def main():
         df = df[df["lider"] == lider_sel]
 
     # ── Bloco de notificação sidebar (depende do df) ──────────────
-    pendentes_sem_vend = int((df["vendedor_real"] == "Sem Vendedor").sum()) if "vendedor_real" in df.columns else 0
+    # Conta direto no BKO: pedidos sem vendedor_real preenchido
+    if not bko.empty and "vendedor_real" in bko.columns:
+        pendentes_sem_vend = int((bko["vendedor_real"].apply(lambda x: _s(x) == "")).sum())
+    else:
+        pendentes_sem_vend = int((df["vendedor_real"] == "Sem Vendedor").sum()) if "vendedor_real" in df.columns else 0
     with st.sidebar:
         if pendentes_sem_vend > 0:
             st.warning(f"👤 **{pendentes_sem_vend}** pedido(s) sem vendedor.")
