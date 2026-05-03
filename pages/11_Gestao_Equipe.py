@@ -451,9 +451,13 @@ def main():
         auth_config["cookie"]["expiry_days"],
     )
 
-    name, authentication_status, username = authenticator.login(
-        "🔐 Gestão de Vendas — Connect Group", "main"
-    )
+    login_result = authenticator.login(location="main")
+    if login_result:
+        name, authentication_status, username = login_result
+    else:
+        name = st.session_state.get("name")
+        authentication_status = st.session_state.get("authentication_status")
+        username = st.session_state.get("username")
 
     if authentication_status is False:
         st.error("Usuário ou senha incorretos.")
