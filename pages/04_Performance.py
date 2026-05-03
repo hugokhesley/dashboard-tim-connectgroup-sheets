@@ -1611,31 +1611,6 @@ def main():
 
         # ── Notificar líderes sobre pendentes ─────────────────────
         LINK_ATRIBUICAO = "https://dashboard-tim-connectgroup-sheets-yhmvrhy6akairuh3yjmbmw.streamlit.app/Atribuicao_Vendedor"
-        pendentes_sem_vend = int((df["vendedor_real"] == "Sem Vendedor").sum()) if "vendedor_real" in df.columns else 0
-        if pendentes_sem_vend > 0:
-            st.warning(f"👤 **{pendentes_sem_vend}** pedido(s) sem vendedor atribuído.")
-        else:
-            st.success("✅ Todos os pedidos com vendedor atribuído.")
-
-        if st.button("📲 Notificar líderes", use_container_width=True,
-                     help="Envia link de atribuição para todos os líderes via Telegram"):
-            telegram_lideres_all = _telegram_lideres()
-            if not telegram_lideres_all:
-                st.error("Nenhum chat_id configurado nos secrets.")
-            else:
-                mensagem = (
-                    f"👤 <b>Atribuição de Vendedores</b>\n"
-                    f"Connect Group · {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                    f"<b>{pendentes_sem_vend} pedido(s)</b> sem vendedor atribuído.\n\n"
-                    f"👉 <a href=\"{LINK_ATRIBUICAO}\">Abrir formulário de atribuição</a>"
-                )
-                enviados = 0
-                for lider, chat_id in telegram_lideres_all.items():
-                    if enviar_telegram(str(chat_id), mensagem):
-                        enviados += 1
-                st.success(f"✅ Notificação enviada para {enviados} líder(es)!")
-
-        st.markdown(f"[🔗 Abrir formulário]({LINK_ATRIBUICAO})", unsafe_allow_html=False)
         st.markdown("---")
         st.markdown(f"**Mês:** `{MES_ALVO}`")
         st.markdown(f"**Meta/Vendedor:** `R$ {META_VENDEDOR_PAD:,}`")
@@ -1656,6 +1631,32 @@ def main():
 
     if lider_sel != "Todos":
         df = df[df["lider"] == lider_sel]
+
+    # ── Bloco de notificação sidebar (depende do df) ──────────────
+    pendentes_sem_vend = int((df["vendedor_real"] == "Sem Vendedor").sum()) if "vendedor_real" in df.columns else 0
+    with st.sidebar:
+        if pendentes_sem_vend > 0:
+            st.warning(f"👤 **{pendentes_sem_vend}** pedido(s) sem vendedor.")
+        else:
+            st.success("✅ Todos com vendedor atribuído.")
+        if st.button("📲 Notificar líderes", use_container_width=True,
+                     help="Envia link de atribuição para todos os líderes via Telegram"):
+            telegram_lideres_all = _telegram_lideres()
+            if not telegram_lideres_all:
+                st.error("Nenhum chat_id configurado nos secrets.")
+            else:
+                mensagem = (
+                    f"👤 <b>Atribuição de Vendedores</b>\n"
+                    f"Connect Group · {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                    f"<b>{pendentes_sem_vend} pedido(s)</b> sem vendedor atribuído.\n\n"
+                    f"👉 <a href=\"{LINK_ATRIBUICAO}\">Abrir formulário de atribuição</a>"
+                )
+                enviados = 0
+                for lider, chat_id in telegram_lideres_all.items():
+                    if enviar_telegram(str(chat_id), mensagem):
+                        enviados += 1
+                st.success(f"✅ Notificação enviada para {enviados} líder(es)!")
+        st.markdown(f"[🔗 Abrir formulário]({LINK_ATRIBUICAO})")
 
     if df.empty:
         st.info("Nenhum dado para os filtros selecionados.")
