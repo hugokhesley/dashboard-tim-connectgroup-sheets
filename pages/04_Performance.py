@@ -1633,8 +1633,16 @@ def main():
         df = df[df["lider"] == lider_sel]
 
     # ── Bloco de notificação sidebar (depende do df) ──────────────
-    # Conta pendentes no mês atual (igual ao que a Performance exibe)
-    pendentes_sem_vend = int((df["vendedor_real"] == "Sem Vendedor").sum()) if "vendedor_real" in df.columns else 0
+    # Usa df_nan calculado na aba Detalhado — mesmo número exibido na tabela
+    # Calcula aqui de forma antecipada para a sidebar
+    if "vendedor_real" in df.columns and "pedido" in df.columns:
+        pendentes_sem_vend = int(
+            df[df["vendedor_real"] == "Sem Vendedor"]
+            .drop_duplicates(subset=["pedido"])
+            .__len__()
+        )
+    else:
+        pendentes_sem_vend = 0
     with st.sidebar:
         if pendentes_sem_vend > 0:
             st.warning(f"👤 **{pendentes_sem_vend}** pedido(s) sem vendedor.")
