@@ -90,6 +90,28 @@ def carregar_pendentes():
         return pd.DataFrame()
 
     df_radar["_pedido_norm"] = df_radar["pedido"].apply(_s)
+
+    # Remove cancelados
+    if "status_dash" in df_radar.columns:
+        df_radar = df_radar[~df_radar["status_dash"].apply(
+            lambda x: _s(x).upper()
+        ).str.contains("CANCELAD", na=False)]
+
+    # Filtra ultimos 30 dias pelo mes_input
+    if "mes_input" in df_radar.columns:
+        from datetime import datetime, timedelta
+        hoje   = datetime.today()
+        limite = hoje - timedelta(days=30)
+        def _parse_mes(v):
+            try:
+                return datetime.strptime(_s(v), "%m/%Y")
+            except Exception:
+                return None
+        df_radar["_dt_input"] = df_radar["mes_input"].apply(_parse_mes)
+        df_radar = df_radar[df_radar["_dt_input"].apply(
+            lambda d: d is not None and d >= limite.replace(day=1)
+        )]
+
     df_pend = df_radar[~df_radar["_pedido_norm"].isin(pedidos_com_vendedor)].copy()
     df_pend = df_pend[df_pend["_pedido_norm"] != ""].drop_duplicates("_pedido_norm")
 
