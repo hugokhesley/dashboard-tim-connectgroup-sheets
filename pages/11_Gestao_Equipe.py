@@ -585,23 +585,30 @@ def main():
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
 
     # ── Tabs ──────────────────────────────────────────────────────
-    tab_det, tab_atr = st.tabs(["📋 Detalhado", "👤 Atribuição de Vendedores"])
+    # Parceiros só veem o Detalhado
+    if tipo == "parceiro":
+        tabs = st.tabs(["📋 Detalhado"])
+        with tabs[0]:
+            st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
+            render_detalhado(df, mes_alvo, meta_dict)
+    else:
+        tab_det, tab_atr = st.tabs(["📋 Detalhado", "👤 Atribuição de Vendedores"])
 
-    with tab_det:
-        st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
-        render_detalhado(df, mes_alvo, meta_dict)
+        with tab_det:
+            st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
+            render_detalhado(df, mes_alvo, meta_dict)
 
-    with tab_atr:
-        st.markdown('<p class="section-title">👤 Pedidos sem Vendedor Atribuído</p>', unsafe_allow_html=True)
-        with st.spinner("Carregando pendentes..."):
-            df_pend, ws_bko = _carregar_pendentes_bko(
-                lider_filtro=lider_u,
-                parceiro_filtro=parceiro_u,
-                tipo=tipo
-            )
-            vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
+        with tab_atr:
+            st.markdown('<p class="section-title">👤 Pedidos sem Vendedor Atribuído</p>', unsafe_allow_html=True)
+            with st.spinner("Carregando pendentes..."):
+                df_pend, ws_bko = _carregar_pendentes_bko(
+                    lider_filtro=lider_u,
+                    parceiro_filtro=parceiro_u,
+                    tipo=tipo
+                )
+                vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
 
-        render_atribuicao(df_pend, ws_bko, vendedores)
+            render_atribuicao(df_pend, ws_bko, vendedores)
 
 
 main()
