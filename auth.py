@@ -37,6 +37,7 @@ PAGE_ACCESS = {
     "espelho":     ["hugo", "angelo"],
     "atualizacao_bases":     ["hugo"],
     "discador":     ["hugo"],
+    "atribuicao_vendedor": ["hugo"],
 }
 
 # ---------------------------------------------------------------------------
