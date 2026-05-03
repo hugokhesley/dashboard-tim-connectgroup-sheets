@@ -1,0 +1,40 @@
+name: Notificar Pendentes Vendedor
+
+on:
+  workflow_run:
+    workflows: ["Atualizar DadosRadar"]
+    types:
+      - completed
+  schedule:
+    - cron: '30 13,17,21 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  notificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install pandas gspread google-auth requests
+
+      - name: Criar arquivo de credenciais Google
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Enviar notificações
+        env:
+          SPREADSHEET_ID:   ${{ secrets.SPREADSHEET_ID }}
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_LIDERES: ${{ secrets.TELEGRAM_LIDERES }}
+          LINK_ATRIBUICAO:  ${{ secrets.LINK_ATRIBUICAO }}
+        run: |
+          python notify_pendentes.py
