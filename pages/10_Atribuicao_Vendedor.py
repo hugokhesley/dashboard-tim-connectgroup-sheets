@@ -55,7 +55,7 @@ st.markdown("""
 def carregar_pendentes():
     """
     Lê BKO-VENDEDOR-REAL e retorna pedidos sem vendedor_real
-    nos últimos 30 dias, excluindo CANCELADO e RENEGOCIAÇÃO.
+    nos últimos 60 dias, excluindo CANCELADO e RENEGOCIAÇÃO.
     """
     gc       = get_gspread_client()
     planilha = gc.open_by_key(SPREADSHEET_ID)
@@ -104,7 +104,7 @@ def carregar_pendentes():
 
     # Filtra últimos 30 dias pela safra (MM/YYYY)
     if col_safra:
-        limite = datetime.today() - timedelta(days=30)
+        limite = datetime.today() - timedelta(days=60)
         def _parse_safra(v):
             try:
                 return datetime.strptime(_s(v).strip(), "%m/%Y")
@@ -183,11 +183,11 @@ def main():
         vendedores  = carregar_vendedores()
 
     if df_pend.empty:
-        st.success("✅ Nenhum pedido pendente de atribuição nos últimos 30 dias!")
+        st.success("✅ Nenhum pedido pendente de atribuição nos últimos 60 dias!")
         st.stop()
 
     total = len(df_pend)
-    st.markdown(f"**{total} pedido(s) sem vendedor** nos últimos 30 dias. Preencha os do seu time e salve.")
+    st.markdown(f"**{total} pedido(s) sem vendedor** nos últimos 60 dias. Preencha os do seu time e salve.")
     st.markdown("---")
 
     vendedores_opts = ["— não é meu —"] + vendedores
