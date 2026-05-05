@@ -1,4 +1,5 @@
 import streamlit as st
+import time
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
@@ -133,6 +134,7 @@ def load_data() -> pd.DataFrame:
             if worksheet.title.strip().lower() in IGNORE_TABS:
                 continue
             try:
+                time.sleep(0.5)  # anti-throttling Sheets API
                 all_values = worksheet.get_all_values()
                 if not all_values or len(all_values) < 2:
                     continue
@@ -347,6 +349,7 @@ def load_bko() -> pd.DataFrame:
         sheet_url = st.secrets['sheets']['url']
         spreadsheet = client.open_by_url(sheet_url)
         ws = spreadsheet.worksheet('BKO-VENDEDOR-REAL')
+        time.sleep(0.5)  # anti-throttling
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 3:
             return pd.DataFrame(columns=['pedido', 'vendedor_real', 'lider'])
@@ -473,6 +476,7 @@ def load_colaboradores() -> pd.DataFrame:
         sheet_url = st.secrets['sheets']['url']
         spreadsheet = client.open_by_url(sheet_url)
         ws = spreadsheet.worksheet('Colaboradores')
+        time.sleep(0.5)  # anti-throttling
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 3:
             return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
