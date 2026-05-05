@@ -230,6 +230,265 @@ def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
 
         st.markdown(html_e, unsafe_allow_html=True)
 
+def gerar_pdf_resultados(df_atv, meta_dict, mes):
+    """Gera PDF formatado Equipe → Vendedor → Clientes."""
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_RIGHT, TA_CENTER
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=14*mm, rightMargin=14*mm,
+        topMargin=14*mm, bottomMargin=14*mm)
+
+    VERDE     = colors.HexColor("#22c55e")
+    VERDE_ESC = colors.HexColor("#15803d")
+    AZUL      = colors.HexColor("#3b82f6")
+    AMBER     = colors.HexColor("#f59e0b")
+    CINZA     = colors.HexColor("#64748b")
+    CINZA_ESC = colors.HexColor("#1e293b")
+    BRANCO    = colors.white
+    FL        = colors.HexColor("#131f2e")
+    FV        = colors.HexColor("#0f1820")
+    FC        = colors.HexColor("#080e15")
+    TEXTO     = colors.HexColor("#e2e8f0")
+    TDIM      = colors.HexColor("#94a3b8")
+
+    def s(name, **kw):
+        base = {"fontName": "Helvetica", "fontSize": 9, "textColor": TEXTO, "leading": 13}
+        base.update(kw)
+        return ParagraphStyle(name, **base)
+
+    sTitle  = s("T", fontSize=15, fontName="Helvetica-Bold", textColor=BRANCO)
+    sRight  = s("R", fontSize=7,  textColor=BRANCO, alignment=TA_RIGHT)
+    sLider  = s("L", fontSize=9,  fontName="Helvetica-Bold", textColor=BRANCO)
+    sVend   = s("V", fontSize=8,  fontName="Helvetica-Bold", textColor=TEXTO)
+    sCli    = s("C", fontSize=7,  textColor=TDIM)
+
+    story = []
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    # Header
+    h = Table([[Paragraph(f"<b>CONNECT GROUP — Vendas {mes}</b>", sTitle),
+                Paragraph(f"Gerado em {agora}", sRight)]], colWidths=["70%","30%"])
+    h.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),VERDE_ESC),("ROWPADDING",(0,0),(-1,-1),10),("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
+    story.append(h)
+    story.append(Spacer(1, 6*mm))
+
+    lideres = sorted([l for l in df_atv["lider"].dropna().unique() if l and l != "Sem Equipe"])
+
+    for lider in lideres:
+        df_l  = df_atv[df_atv["lider"] == lider]
+        ac_l  = int(df_l["acessos"].sum())
+        rec_l = df_l["preco_oferta"].sum()
+        vends = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v != "Sem Vendedor"])
+
+        lr = Table([[Paragraph(f"  {lider}", sLider),
+                     Paragraph(f"{len(vends)} vend.   {ac_l} ac / R$ {rec_l:,.2f}", sRight)]],
+                   colWidths=["55%","45%"])
+        lr.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),AZUL),("ROWPADDING",(0,0),(-1,-1),8),
+                                 ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LINEBELOW",(0,0),(-1,0),2,colors.HexColor("#1d4ed8"))]))
+        story.append(lr)
+
+        for vend in vends:
+            df_v   = df_l[df_l["vendedor_real"] == vend]
+            ac_v   = int(df_v["acessos"].sum())
+            rec_v  = df_v["preco_oferta"].sum()
+            meta_v = _meta_vend(vend, meta_dict)
+            pct_v  = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            cor_v  = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
+
+            vr = Table([[Paragraph(f"    {vend}", sVend),
+                         Paragraph(f"{ac_v} ac / R$ {rec_v:,.2f} ({pct_v}%)", sRight)]],
+                       colWidths=["55%","45%"])
+            vr.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),FL),("ROWPADDING",(0,0),(-1,-1),6),
+                                     ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LINEBELOW",(0,0),(-1,0),0.5,CINZA_ESC),
+                                     ("TEXTCOLOR",(1,0),(1,0),cor_v)]))
+            story.append(vr)
+
+            # Clientes
+            cols_grp = [c for c in ["razao_social","fila_atual"] if c in df_v.columns]
+            if cols_grp:
+                df_g = df_v.copy()
+                for col in cols_grp: df_g[col] = df_g[col].fillna("—")
+                cdf = (df_g.groupby(cols_grp, as_index=False)
+                       .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"))
+                       .sort_values("ac", ascending=False))
+                for _, crow in cdf.iterrows():
+                    razao = str(crow.get("razao_social","—"))[:55]
+                    fila  = str(crow.get("fila_atual","—")).upper()
+                    ac_c  = int(crow.get("ac",0))
+                    rec_c = float(crow.get("rec",0))
+                    cr = Table([[Paragraph(f"        {razao}", sCli),
+                                 Paragraph(f"{ac_c} ac   R$ {rec_c:,.2f}   {fila}", sRight)]],
+                               colWidths=["60%","40%"])
+                    cr.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,-1),FC),("ROWPADDING",(0,0),(-1,-1),3),
+                                             ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LINEBELOW",(0,0),(-1,0),0.3,CINZA_ESC)]))
+                    story.append(cr)
+
+        story.append(Spacer(1, 4*mm))
+
+    story.append(HRFlowable(width="100%", thickness=0.5, color=CINZA_ESC))
+    story.append(Spacer(1, 1*mm))
+    story.append(Paragraph(f"Connect Group · {mes} · {agora}",
+                            s("F", fontSize=6, textColor=CINZA, alignment=TA_CENTER)))
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()
+
+
+def gerar_excel_resultados(df_atv, meta_dict, mes):
+    """Gera Excel formatado Equipe → Vendedor → Clientes."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"Vendas {mes}"
+
+    # Estilos
+    def fill(hex_color):
+        return PatternFill("solid", fgColor=hex_color.replace("#",""))
+
+    def border():
+        thin = Side(style="thin", color="1E293B")
+        return Border(bottom=thin)
+
+    ft_title  = Font(name="Calibri", bold=True, size=14, color="FFFFFF")
+    ft_lider  = Font(name="Calibri", bold=True, size=11, color="FFFFFF")
+    ft_vend   = Font(name="Calibri", bold=True, size=10, color="E2E8F0")
+    ft_cli    = Font(name="Calibri", size=9,    color="94A3B8")
+    ft_header = Font(name="Calibri", bold=True, size=9,  color="FFFFFF")
+
+    al_left  = Alignment(horizontal="left",  vertical="center")
+    al_right = Alignment(horizontal="right", vertical="center")
+    al_center= Alignment(horizontal="center",vertical="center")
+
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    # Larguras
+    ws.column_dimensions["A"].width = 45
+    ws.column_dimensions["B"].width = 15
+    ws.column_dimensions["C"].width = 15
+    ws.column_dimensions["D"].width = 12
+    ws.column_dimensions["E"].width = 20
+
+    row = 1
+    # Título
+    ws.merge_cells(f"A{row}:E{row}")
+    ws[f"A{row}"] = f"CONNECT GROUP — Vendas {mes}"
+    ws[f"A{row}"].font = ft_title
+    ws[f"A{row}"].fill = fill("#15803d")
+    ws[f"A{row}"].alignment = al_left
+    ws.row_dimensions[row].height = 28
+    row += 1
+
+    ws.merge_cells(f"A{row}:E{row}")
+    ws[f"A{row}"] = f"Gerado em {agora}"
+    ws[f"A{row}"].font = Font(name="Calibri", size=9, color="94A3B8")
+    ws[f"A{row}"].fill = fill("#0f1117")
+    ws[f"A{row}"].alignment = al_left
+    row += 2
+
+    lideres = sorted([l for l in df_atv["lider"].dropna().unique() if l and l != "Sem Equipe"])
+
+    for lider in lideres:
+        df_l  = df_atv[df_atv["lider"] == lider]
+        ac_l  = int(df_l["acessos"].sum())
+        rec_l = df_l["preco_oferta"].sum()
+        vends = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v != "Sem Vendedor"])
+
+        # Linha líder
+        ws.merge_cells(f"A{row}:C{row}")
+        ws[f"A{row}"] = f"  {lider}"
+        ws[f"A{row}"].font = ft_lider
+        ws[f"A{row}"].fill = fill("#1d4ed8")
+        ws[f"A{row}"].alignment = al_left
+        ws[f"D{row}"] = ac_l
+        ws[f"D{row}"].font = ft_lider
+        ws[f"D{row}"].fill = fill("#1d4ed8")
+        ws[f"D{row}"].alignment = al_right
+        ws[f"E{row}"] = rec_l
+        ws[f"E{row}"].font = ft_lider
+        ws[f"E{row}"].fill = fill("#1d4ed8")
+        ws[f"E{row}"].alignment = al_right
+        ws[f"E{row}"].number_format = "R$ #,##0.00"
+        ws.row_dimensions[row].height = 20
+        row += 1
+
+        for vend in vends:
+            df_v   = df_l[df_l["vendedor_real"] == vend]
+            ac_v   = int(df_v["acessos"].sum())
+            rec_v  = df_v["preco_oferta"].sum()
+            meta_v = _meta_vend(vend, meta_dict)
+            pct_v  = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            cor_v  = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
+
+            ws.merge_cells(f"A{row}:C{row}")
+            ws[f"A{row}"] = f"    {vend}"
+            ws[f"A{row}"].font = ft_vend
+            ws[f"A{row}"].fill = fill("#131f2e")
+            ws[f"A{row}"].alignment = al_left
+            ws[f"D{row}"] = ac_v
+            ws[f"D{row}"].font = Font(name="Calibri", bold=True, size=10, color=cor_v)
+            ws[f"D{row}"].fill = fill("#131f2e")
+            ws[f"D{row}"].alignment = al_right
+            ws[f"E{row}"] = rec_v
+            ws[f"E{row}"].font = Font(name="Calibri", bold=True, size=10, color=cor_v)
+            ws[f"E{row}"].fill = fill("#131f2e")
+            ws[f"E{row}"].alignment = al_right
+            ws[f"E{row}"].number_format = "R$ #,##0.00"
+            ws.row_dimensions[row].height = 18
+            row += 1
+
+            # Clientes
+            cols_grp = [c for c in ["razao_social","fila_atual"] if c in df_v.columns]
+            if cols_grp:
+                df_g = df_v.copy()
+                for col in cols_grp: df_g[col] = df_g[col].fillna("—")
+                cdf = (df_g.groupby(cols_grp, as_index=False)
+                       .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"))
+                       .sort_values("ac", ascending=False))
+                for _, crow in cdf.iterrows():
+                    razao = str(crow.get("razao_social","—"))[:60]
+                    fila  = str(crow.get("fila_atual","—")).upper()
+                    ac_c  = int(crow.get("ac",0))
+                    rec_c = float(crow.get("rec",0))
+                    ws.merge_cells(f"A{row}:B{row}")
+                    ws[f"A{row}"] = f"        {razao}"
+                    ws[f"A{row}"].font = ft_cli
+                    ws[f"A{row}"].fill = fill("#080e15")
+                    ws[f"A{row}"].alignment = al_left
+                    ws[f"C{row}"] = fila
+                    ws[f"C{row}"].font = ft_cli
+                    ws[f"C{row}"].fill = fill("#080e15")
+                    ws[f"C{row}"].alignment = al_center
+                    ws[f"D{row}"] = ac_c
+                    ws[f"D{row}"].font = ft_cli
+                    ws[f"D{row}"].fill = fill("#080e15")
+                    ws[f"D{row}"].alignment = al_right
+                    ws[f"E{row}"] = rec_c
+                    ws[f"E{row}"].font = ft_cli
+                    ws[f"E{row}"].fill = fill("#080e15")
+                    ws[f"E{row}"].alignment = al_right
+                    ws[f"E{row}"].number_format = "R$ #,##0.00"
+                    ws.row_dimensions[row].height = 15
+                    row += 1
+
+        row += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
 def main():
     st.markdown("""
     <div class="header-res">
@@ -499,6 +758,45 @@ def main():
             st.info("Nenhum registro para exportar com os filtros atuais.")
     else:
         st.info("Aplique os filtros e aguarde o carregamento do BKO para exportar.")
+
+    st.markdown("---")
+
+    # ── Exportar Relatório ────────────────────────────────────────────────
+    st.markdown('<p class="section-title">📥 Exportar Relatório de Vendas</p>', unsafe_allow_html=True)
+
+    if not bko.empty and "pedido" in dff.columns and not df_atv_rank.empty:
+        col_pdf, col_xlsx = st.columns(2)
+        with col_pdf:
+            if st.button("📄 Gerar PDF", use_container_width=True, type="primary"):
+                with st.spinner("Gerando PDF..."):
+                    try:
+                        pdf_bytes = gerar_pdf_resultados(df_atv_rank, meta_dict, mes_sel)
+                        st.download_button(
+                            label="⬇️ Baixar PDF",
+                            data=pdf_bytes,
+                            file_name=f"vendas_{mes_sel.replace('/','_')}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Erro ao gerar PDF: {e}")
+        with col_xlsx:
+            if st.button("📊 Gerar Excel", use_container_width=True):
+                with st.spinner("Gerando Excel..."):
+                    try:
+                        xlsx_bytes = gerar_excel_resultados(df_atv_rank, meta_dict, mes_sel)
+                        st.download_button(
+                            label="⬇️ Baixar Excel",
+                            data=xlsx_bytes,
+                            file_name=f"vendas_{mes_sel.replace('/','_')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Erro ao gerar Excel: {e}")
+    else:
+        st.info("Selecione um mês com dados para exportar.")
 
     st.markdown("---")
     # ── Tabela detalhada ──────────────────────────────────────────────────
