@@ -532,6 +532,8 @@ def main():
         st.markdown(f"**Mês:** `{mes_alvo}`")
         st.caption("Dados via Google Sheets · cache 3 min")
 
+    is_mes_atual = (mes_alvo == datetime.now().strftime("%m/%Y"))
+
     # ── Aplica filtros ────────────────────────────────────────────
     df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], parceiro_sel)
 
