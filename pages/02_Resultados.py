@@ -434,6 +434,73 @@ def main():
         st.info("BKO não disponível — cadastre os vendedores na planilha BKO-VENDEDOR-REAL.")
 
     st.markdown("---")
+
+    # ── Exportar Relatório ────────────────────────────────────────────────
+    st.markdown('<p class="section-title">📥 Exportar Relatório de Vendas</p>', unsafe_allow_html=True)
+
+    if not bko.empty and "pedido" in dff.columns and not df_atv_rank.empty:
+        # Monta relatório: Equipe → Vendedor → Vendas
+        rows_rel = []
+        for lider in sorted(df_atv_rank["lider"].dropna().unique()):
+            if not lider or lider == "Sem Equipe":
+                continue
+            df_l = df_atv_rank[df_atv_rank["lider"] == lider]
+            for vend in sorted(df_l["vendedor_real"].dropna().unique()):
+                if not vend or vend == "Sem Vendedor":
+                    continue
+                df_v = df_l[df_l["vendedor_real"] == vend]
+                for _, row in df_v.iterrows():
+                    rows_rel.append({
+                        "Equipe / Líder":   lider,
+                        "Vendedor":         vend,
+                        "Razão Social":     _s(row.get("razao_social", "—")),
+                        "Parceiro":         _s(row.get("parceiro", "—")),
+                        "Tipo":             _s(row.get("tipo_contratacao", "—")),
+                        "Acessos":          int(row.get("acessos", 0)),
+                        "Receita (R$)":     float(row.get("preco_oferta", 0)),
+                        "Mês Ativação":     _s(row.get("mes_ativacao", "—")),
+                        "Fila Atual":       _s(row.get("fila_atual", "—")),
+                    })
+
+        if rows_rel:
+            df_rel = pd.DataFrame(rows_rel)
+
+            # Resumo por equipe e vendedor
+            resumo = (df_rel.groupby(["Equipe / Líder", "Vendedor"], as_index=False)
+                      .agg(Total_Acessos=("Acessos", "sum"), Total_Receita=("Receita (R$)", "sum"))
+                      .sort_values(["Equipe / Líder", "Total_Receita"], ascending=[True, False]))
+
+            col_prev, col_btn = st.columns([3, 1])
+            with col_prev:
+                st.dataframe(
+                    resumo,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Equipe / Líder":  "Equipe / Líder",
+                        "Vendedor":        "Vendedor",
+                        "Total_Acessos":   st.column_config.NumberColumn("Acessos", format="%d"),
+                        "Total_Receita":   st.column_config.NumberColumn("Receita (R$)", format="R$ %.2f"),
+                    }
+                )
+            with col_btn:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                csv_rel = df_rel.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
+                st.download_button(
+                    label="⬇️ Baixar CSV",
+                    data=csv_rel,
+                    file_name=f"vendas_{mes_sel.replace('/', '_')}.csv",
+                    mime="text/csv",
+                    type="primary",
+                    use_container_width=True,
+                )
+                st.caption(f"{len(df_rel)} registro(s) · {mes_sel}")
+        else:
+            st.info("Nenhum registro para exportar com os filtros atuais.")
+    else:
+        st.info("Aplique os filtros e aguarde o carregamento do BKO para exportar.")
+
+    st.markdown("---")
     # ── Tabela detalhada ──────────────────────────────────────────────────
     st.markdown('<p class="section-title">📋 Registros Ativados</p>', unsafe_allow_html=True)
 
