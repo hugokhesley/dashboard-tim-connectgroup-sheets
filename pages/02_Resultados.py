@@ -350,7 +350,7 @@ def gerar_excel_resultados(df_atv, meta_dict, mes):
 
     wb = Workbook()
     ws = wb.active
-    ws.title = f"Vendas {mes}"
+    ws.title = f"Vendas {mes.replace('/', '-')}"
 
     # Estilos
     def fill(hex_color):
