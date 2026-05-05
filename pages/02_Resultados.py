@@ -537,6 +537,17 @@ def main():
             meses += meses_validos
         mes_sel = st.selectbox("Mês de Ativação", meses, index=len(meses)-1 if len(meses) > 1 else 0)
 
+        # Multiselect de líderes — carregado do colab
+        from data_loader import load_colaboradores as _lc
+        _colab_side = _lc()
+        lideres_disponiveis = sorted(_colab_side["lider"].dropna().unique().tolist()) if not _colab_side.empty else []
+        lideres_sel = st.multiselect(
+            "👥 Equipes / Líderes",
+            options=lideres_disponiveis,
+            default=lideres_disponiveis,
+            placeholder="Selecione as equipes..."
+        )
+
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
             st.cache_data.clear()
@@ -686,8 +697,11 @@ def main():
     if not bko.empty and "pedido" in dff.columns:
         dff_bko = dff.merge(bko[["pedido","vendedor_real","lider"]], on="pedido", how="left")
         df_atv_rank = dff_bko[dff_bko["mes_ativacao"] == mes_sel].copy()
+        # Aplica filtro de líderes selecionados
+        if lideres_sel and "lider" in df_atv_rank.columns:
+            df_atv_rank = df_atv_rank[df_atv_rank["lider"].isin(lideres_sel)]
         if not df_atv_rank.empty and "vendedor_real" in df_atv_rank.columns:
-            render_ranking_resultados(df_atv_rank, mes_sel, meta_dict, lideres)
+            render_ranking_resultados(df_atv_rank, mes_sel, meta_dict, lideres_sel)
         else:
             st.info("Nenhum registro ativado com BKO para este mês.")
     else:
