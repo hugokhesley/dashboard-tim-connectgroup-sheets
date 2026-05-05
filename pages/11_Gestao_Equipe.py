@@ -185,6 +185,10 @@ def gerar_meses_opcoes():
 def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
     FILAS_CANCEL = {"CANCELADO", "CANCELADA", "CANCEL"}
 
+    # Se mês anterior, filtra só pedidos com ativação no mês selecionado
+    if not is_mes_atual:
+        df = df[df["mes_ativacao"] == mes_alvo].copy()
+
     parceiros = sorted(df["parceiro"].dropna().unique()) if "parceiro" in df.columns else ["—"]
 
     for parceiro in parceiros:
@@ -200,11 +204,12 @@ def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
         rec_p = df_p[df_p["mes_ativacao"] == mes_alvo]["preco_oferta"].sum()
         pip_p = int(df_p[df_p["mes_ativacao"].isna()]["acessos"].sum()) if is_mes_atual else 0
 
+        pip_str = f"&nbsp;·&nbsp;⏳ {pip_p} ac tramitando" if is_mes_atual and pip_p > 0 else ""
         st.markdown(f"""<div class="det-parceiro">
           <span class="det-parceiro-nome">🏢 {parceiro}</span>
           <span class="det-parceiro-stats">
             {len(lideres_p)} equipe(s) &nbsp;·&nbsp;
-            ✅ {ac_p} ac / R$ {rec_p:,.2f}{"&nbsp;·&nbsp;⏳ " + str(pip_p) + " ac tramitando" if is_mes_atual and pip_p > 0 else ""}
+            ✅ {ac_p} ac / R$ {rec_p:,.2f}{pip_str}
           </span>
         </div>""", unsafe_allow_html=True)
 
@@ -216,12 +221,12 @@ def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
             pip_l = int(df_l_ok[df_l_ok["mes_ativacao"].isna()]["acessos"].sum()) if is_mes_atual else 0
             vends = sorted([v for v in df_l["vendedor_real"].unique() if v and v not in ("Sem Vendedor", "")])
 
+            pip_l_str = f"&nbsp;·&nbsp;⏳ {pip_l} ac" if is_mes_atual and pip_l > 0 else ""
             st.markdown(f"""<div class="det-lider">
               <span class="det-lider-nome">👤 {lider}</span>
               <span class="det-lider-stats">
                 {len(vends)} vend. &nbsp;·&nbsp;
-                ✅ {ac_l} ac / R$ {rec_l:,.2f} &nbsp;·&nbsp;
-{("&nbsp;·&nbsp;⏳ " + str(pip_l) + " ac") if is_mes_atual and pip_l > 0 else ""}
+                ✅ {ac_l} ac / R$ {rec_l:,.2f}{pip_l_str}
               </span>
             </div>""", unsafe_allow_html=True)
 
@@ -230,20 +235,21 @@ def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
                 df_v_ok = df_v[~df_v["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)] if "fila_atual" in df_v.columns else df_v
 
                 df_atv_v = df_v_ok[df_v_ok["mes_ativacao"] == mes_alvo]
-                df_pip_v = df_v_ok[df_v_ok["mes_ativacao"].isna()] if is_mes_atual else df_v_ok[df_v_ok["mes_ativacao"] == "NUNCA"]
+                df_pip_v = df_v_ok[df_v_ok["mes_ativacao"].isna()] if is_mes_atual else pd.DataFrame()
 
                 ac_atv_v  = int(df_atv_v["acessos"].sum())
                 rec_atv_v = df_atv_v["preco_oferta"].sum()
-                ac_pip_v  = int(df_pip_v["acessos"].sum())
-                rec_pip_v = df_pip_v["preco_oferta"].sum()
+                ac_pip_v  = int(df_pip_v["acessos"].sum()) if not df_pip_v.empty else 0
+                rec_pip_v = df_pip_v["preco_oferta"].sum() if not df_pip_v.empty else 0
                 meta_v    = _meta_vend(vend, meta_dict)
                 pct_v     = min(int(rec_atv_v / meta_v * 100), 100) if meta_v > 0 else 0
                 cor_v     = _cor(pct_v)
 
-                # Clientes
-                cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"] if c in df_v_ok.columns]
+                # Clientes — mês anterior mostra só os ativados
+                df_clientes = df_atv_v if not is_mes_atual else df_v_ok
+                cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"] if c in df_clientes.columns]
                 if cols_grp:
-                    df_grp = df_v_ok.copy()
+                    df_grp = df_clientes.copy()
                     for col in cols_grp:
                         df_grp[col] = df_grp[col].fillna("—")
                     clientes_df = (
@@ -257,7 +263,7 @@ def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
 
                 clientes_html = ""
                 if clientes_df.empty:
-                    clientes_html = '<div class="det-empty">Sem pedidos no mês.</div>'
+                    clientes_html = '<div class="det-empty">Sem pedidos ativados neste mês.</div>'
                 else:
                     for _, crow in clientes_df.iterrows():
                         razao = str(crow.get("razao_social", "—"))
@@ -276,6 +282,16 @@ def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
                           </span>
                         </div>"""
 
+                # Bloco tramitando só aparece no mês atual
+                pip_block = ""
+                if is_mes_atual:
+                    pip_block = f"""<div class="det-kpi-block">
+                        <span class="det-kpi-label">⏳ Tramitando</span>
+                        <span class="det-kpi-val" style="color:#f59e0b">
+                          {ac_pip_v} ac · R$ {rec_pip_v:,.2f}
+                        </span>
+                      </div>"""
+
                 st.markdown(f"""<div class="det-vendedor-wrap">
                   <div class="det-vend-header">
                     <span class="det-vend-nome">📌 {vend}</span>
@@ -287,12 +303,7 @@ def render_detalhado(df, mes_alvo, meta_dict, is_mes_atual=True):
                           <span style="color:#64748b;font-size:0.68rem"> ({pct_v}%)</span>
                         </span>
                       </div>
-                      {f'''<div class="det-kpi-block">
-                        <span class="det-kpi-label">⏳ Tramitando</span>
-                        <span class="det-kpi-val" style="color:#f59e0b">
-                          {ac_pip_v} ac · R$ {rec_pip_v:,.2f}
-                        </span>
-                      </div>''' if is_mes_atual else ''}
+                      {pip_block}
                     </div>
                   </div>
                   <div class="det-clientes-wrap">{clientes_html}</div>
@@ -576,12 +587,10 @@ def main():
         st.markdown(f"""<div class="kpi-mini green"><div class="kpi-label">💰 Receita Ativada</div>
           <div class="kpi-value">R$ {rec_g:,.2f}</div><div class="kpi-sub">{pct_g}% da meta</div></div>""", unsafe_allow_html=True)
     with k3:
-        if is_mes_atual:
-            st.markdown(f'''<div class="kpi-mini amber"><div class="kpi-label">⏳ Pipeline</div>
-              <div class="kpi-value">{pip_g:,}</div><div class="kpi-sub">em tramitação</div></div>''', unsafe_allow_html=True)
-        else:
-            st.markdown('''<div class="kpi-mini amber"><div class="kpi-label">⏳ Pipeline</div>
-              <div class="kpi-value">—</div><div class="kpi-sub">não aplicável</div></div>''', unsafe_allow_html=True)
+        pip_label = f"{pip_g:,}" if is_mes_atual else "—"
+        pip_sub   = "em tramitação" if is_mes_atual else "não aplicável"
+        st.markdown(f"""<div class="kpi-mini amber"><div class="kpi-label">⏳ Pipeline</div>
+          <div class="kpi-value">{pip_label}</div><div class="kpi-sub">{pip_sub}</div></div>""", unsafe_allow_html=True)
     with k4:
         st.markdown(f"""<div class="kpi-mini purple"><div class="kpi-label">👥 Vendedores</div>
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
