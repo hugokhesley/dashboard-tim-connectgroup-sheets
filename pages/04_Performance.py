@@ -1608,10 +1608,6 @@ def main():
             st.cache_data.clear()
             st.rerun()
         st.markdown("---")
-
-        # ── Notificar líderes sobre pendentes ─────────────────────
-        LINK_ATRIBUICAO = "https://dashboard-tim-connectgroup-sheets-yhmvrhy6akairuh3yjmbmw.streamlit.app/Atribuicao_Vendedor"
-        st.markdown("---")
         st.markdown(f"**Mês:** `{MES_ALVO}`")
         st.markdown(f"**Meta/Vendedor:** `R$ {META_VENDEDOR_PAD:,}`")
         st.caption("Dados via Google Sheets · cache 3 min")
@@ -1631,41 +1627,6 @@ def main():
 
     if lider_sel != "Todos":
         df = df[df["lider"] == lider_sel]
-
-    # ── Bloco de notificação sidebar (depende do df) ──────────────
-    # Usa df_nan calculado na aba Detalhado — mesmo número exibido na tabela
-    # Calcula aqui de forma antecipada para a sidebar
-    if "vendedor_real" in df.columns and "pedido" in df.columns:
-        pendentes_sem_vend = int(
-            df[df["vendedor_real"] == "Sem Vendedor"]
-            .drop_duplicates(subset=["pedido"])
-            .__len__()
-        )
-    else:
-        pendentes_sem_vend = 0
-    with st.sidebar:
-        if pendentes_sem_vend > 0:
-            st.warning(f"👤 **{pendentes_sem_vend}** pedido(s) sem vendedor.")
-        else:
-            st.success("✅ Todos com vendedor atribuído.")
-        if st.button("📲 Notificar líderes", use_container_width=True,
-                     help="Envia link de atribuição para todos os líderes via Telegram"):
-            telegram_lideres_all = _telegram_lideres()
-            if not telegram_lideres_all:
-                st.error("Nenhum chat_id configurado nos secrets.")
-            else:
-                mensagem = (
-                    f"👤 <b>Atribuição de Vendedores</b>\n"
-                    f"Connect Group · {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                    f"<b>{pendentes_sem_vend} pedido(s)</b> sem vendedor atribuído.\n\n"
-                    f"👉 <a href=\"{LINK_ATRIBUICAO}\">Abrir formulário de atribuição</a>"
-                )
-                enviados = 0
-                for lider, chat_id in telegram_lideres_all.items():
-                    if enviar_telegram(str(chat_id), mensagem):
-                        enviados += 1
-                st.success(f"✅ Notificação enviada para {enviados} líder(es)!")
-        st.markdown(f"[🔗 Abrir formulário]({LINK_ATRIBUICAO})")
 
     if df.empty:
         st.info("Nenhum dado para os filtros selecionados.")
@@ -1797,17 +1758,44 @@ def main():
         # Pendências BKO
         st.markdown('<p class="section-title">⚠️ Pendências de Cadastro no BKO</p>', unsafe_allow_html=True)
 
-        df_full = apply_filters(raw.copy(), MES_ALVO, ["NOVO","ADITIVO"], parceiro_sel)
-        if not bko.empty and "pedido" in df_full.columns:
-            df_full["pedido"] = df_full["pedido"].apply(_norm_pedido)
-            bk2 = bko.copy()
-            bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
-            df_full = df_full.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
-            df_full["vendedor_real"] = df_full["vendedor_real"].fillna("")
-            df_full["lider"]         = df_full["lider"].fillna("")
+        # ── Busca pedidos dos últimos 60 dias que não estão no BKO ─────
+        from datetime import timedelta
+        hoje   = datetime.today()
+        limite = hoje - timedelta(days=60)
+
+        # Carrega todos os meses dos últimos 60 dias
+        meses_busca = set()
+        for i in range(3):  # até 3 meses atrás
+            m = hoje.month - i
+            a = hoje.year
+            while m <= 0:
+                m += 12
+                a -= 1
+            meses_busca.add(f"{m:02d}/{a}")
+
+        # Acumula pedidos de todos os meses
+        frames_full = []
+        for mes_b in meses_busca:
+            df_b = apply_filters(raw.copy(), mes_b, ["NOVO","ADITIVO"], parceiro_sel)
+            if not df_b.empty:
+                frames_full.append(df_b)
+
+        df_full = pd.concat(frames_full, ignore_index=True) if frames_full else pd.DataFrame()
+
+        if not df_full.empty:
+            df_full = df_full.drop_duplicates(subset=["pedido"]) if "pedido" in df_full.columns else df_full
+            if not bko.empty and "pedido" in df_full.columns:
+                df_full["pedido"] = df_full["pedido"].apply(_norm_pedido)
+                bk2 = bko.copy()
+                bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
+                df_full = df_full.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+                df_full["vendedor_real"] = df_full["vendedor_real"].fillna("")
+                df_full["lider"]         = df_full["lider"].fillna("")
+            else:
+                df_full["vendedor_real"] = ""
+                df_full["lider"]         = ""
         else:
-            df_full["vendedor_real"] = ""
-            df_full["lider"]         = ""
+            df_full = pd.DataFrame()
 
         COLS_SHOW = [c for c in ["pedido","razao_social","fila_atual","status_dash","acessos","preco_oferta","mes_ativacao"] if c in df_full.columns]
         COL_CFG = {
@@ -1821,21 +1809,42 @@ def main():
         }
 
         df_nan = (df_full[df_full["vendedor_real"] == ""][COLS_SHOW]
-                  .drop_duplicates(subset=["pedido"]).copy()) if "pedido" in df_full.columns else pd.DataFrame()
+                  .drop_duplicates(subset=["pedido"]).copy()) if not df_full.empty and "pedido" in df_full.columns else pd.DataFrame()
         df_seq = (df_full[df_full["lider"] == "Sem Equipe"][COLS_SHOW + ["vendedor_real"]]
-                  .drop_duplicates(subset=["pedido"]).copy()) if "Sem Equipe" in df_full["lider"].values and "pedido" in df_full.columns else pd.DataFrame()
+                  .drop_duplicates(subset=["pedido"]).copy()) if not df_full.empty and "Sem Equipe" in df_full.get("lider", pd.Series()).values and "pedido" in df_full.columns else pd.DataFrame()
 
-        tab_nan, tab_seq = st.tabs(["❓ Não cadastrados no BKO", "👤 Sem Equipe (BKO sem Líder)"])
+        tab_nan, tab_seq = st.tabs(["❓ Não cadastrados no BKO (60 dias)", "👤 Sem Equipe (BKO sem Líder)"])
 
         with tab_nan:
             if df_nan.empty:
-                st.success("✅ Todos os pedidos estão cadastrados no BKO!")
+                st.success("✅ Todos os pedidos dos últimos 60 dias estão no BKO!")
             else:
-                st.warning(f"**{len(df_nan)} pedido(s)** sem cadastro no BKO-VENDEDOR-REAL.")
+                st.warning(f"**{len(df_nan)} pedido(s)** dos últimos 60 dias sem cadastro no BKO-VENDEDOR-REAL.")
                 st.dataframe(df_nan, use_container_width=True, hide_index=True, column_config=COL_CFG)
-                csv = df_nan.to_csv(index=False).encode("utf-8")
-                st.download_button("⬇️ Exportar (.csv)", data=csv,
-                    file_name=f"sem_bko_{MES_ALVO.replace('/','_')}.csv", mime="text/csv")
+
+                c_exp, c_ins = st.columns(2)
+                with c_exp:
+                    csv = df_nan.to_csv(index=False).encode("utf-8")
+                    st.download_button("⬇️ Exportar (.csv)", data=csv,
+                        file_name=f"sem_bko_60dias.csv", mime="text/csv")
+                with c_ins:
+                    if st.button("📋 Inserir todos no BKO", type="primary", use_container_width=True,
+                                 help="Insere todos os pedidos pendentes na aba BKO-VENDEDOR-REAL"):
+                        cols_bko = [c for c in ["pedido","razao_social","mes_ativacao"] if c in df_nan.columns]
+                        # Insere mês a mês
+                        total_ok = 0
+                        for mes_b in meses_busca:
+                            df_mes = df_nan[df_nan["mes_ativacao"] == mes_b] if "mes_ativacao" in df_nan.columns else df_nan
+                            if df_mes.empty:
+                                continue
+                            ok_bko, msg_bko = inserir_pendentes_bko(df_mes[cols_bko].copy(), mes_b)
+                            if ok_bko:
+                                total_ok += len(df_mes)
+                        st.cache_data.clear()
+                        if total_ok > 0:
+                            st.success(f"✅ {total_ok} pedido(s) inseridos no BKO!")
+                        else:
+                            st.warning("Nenhum pedido novo inserido (já existiam ou erro).")
 
         with tab_seq:
             if df_seq.empty:
