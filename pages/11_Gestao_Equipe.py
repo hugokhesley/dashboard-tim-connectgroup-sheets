@@ -363,7 +363,7 @@ def render_atribuicao(df_pendentes, ws_bko, vendedores):
 #  CARREGAMENTO DE DADOS
 # ─────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def _load_all():
     raw   = load_data()
     bko   = load_bko()
@@ -371,7 +371,7 @@ def _load_all():
     return raw, bko, colab
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _carregar_pendentes_bko(lider_filtro="", parceiro_filtro="", tipo="admin"):
     gc       = get_gspread_client()
     planilha = gc.open_by_key(SPREADSHEET_ID)
