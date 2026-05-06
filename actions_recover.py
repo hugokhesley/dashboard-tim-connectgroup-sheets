@@ -1,8 +1,8 @@
 # “””
 
-# ACTIONS RECOVER — Recuperação pós-timeout
+# ACTIONS RECOVER - Recuperacao pos-timeout
 
-# Roda quando o actions_runner.py cancela após os emails já terem
+# Roda quando o actions_runner.py cancela apos os emails ja terem
 chegado. Vai direto ao IMAP das 3 contas, pega os links e sobe
 para o Sheets. Sem login no Radar, sem RSA, sem espera.
 
@@ -22,11 +22,11 @@ from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from google.oauth2.service_account import Credentials
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
-# ⚙️  CONFIGURAÇÕES
+# CONFIGURACOES
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 EMAIL_1        = os.environ[“EMAIL_1”]
 SENHA_1        = os.environ[“SENHA_1”]
@@ -36,13 +36,11 @@ EMAIL_3        = os.environ[“EMAIL_3”]
 SENHA_3        = os.environ[“SENHA_3”]
 SPREADSHEET_ID = os.environ[“SPREADSHEET_ID”]
 
-# Janela de busca em horas (padrão: últimas 6h)
-
 JANELA_HORAS   = int(os.environ.get(“JANELA_HORAS”, “6”))
 
 IMAP_HOST      = “imap.titan.email”
 IMAP_PORT      = 993
-INTERVALO_IMAP = 60   # segundos entre tentativas
+INTERVALO_IMAP = 60
 MAX_TENTATIVAS = 10
 ABA_DESTINO    = “DadosRadar”
 
@@ -52,11 +50,11 @@ CONTAS_EMAIL = [
 {“nome”: “Conta 3”, “email”: EMAIL_3, “senha”: SENHA_3},
 ]
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 # IMAP
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 def verificar_email(email_conta, senha, desde):
 try:
@@ -77,13 +75,13 @@ mail.login(email_conta, senha)
 
     for caixa in caixas:
         try:
-            status_sel, _ = mail.select(f'"{caixa}"')
+            status_sel, _ = mail.select('"' + caixa + '"')
             if status_sel != "OK":
                 continue
         except Exception:
             continue
 
-        status, msgs = mail.search(None, f'SINCE "{data_imap}"')
+        status, msgs = mail.search(None, 'SINCE "' + data_imap + '"')
         if status != "OK" or not msgs[0]:
             continue
 
@@ -132,15 +130,15 @@ mail.login(email_conta, senha)
     mail.logout()
     return None
 except Exception as e:
-    print(f"  ⚠️ Erro IMAP {email_conta}: {e}")
+    print("  Erro IMAP " + email_conta + ": " + str(e))
     return None
 ```
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 # SHEETS
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 def subir_para_sheets(df):
 scopes = [“https://www.googleapis.com/auth/spreadsheets”, “https://www.googleapis.com/auth/drive”]
@@ -156,19 +154,19 @@ df = df.fillna(””)
 dados = [df.columns.tolist()] + df.values.tolist()
 dados = [[str(v) for v in linha] for linha in dados]
 aba.update(dados, value_input_option=“USER_ENTERED”)
-print(f”  ✅ {len(df)} linhas gravadas em ‘{ABA_DESTINO}’!”)
+print(”  OK: “ + str(len(df)) + “ linhas gravadas em ‘” + ABA_DESTINO + “’!”)
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 # MAIN
 
-# ─────────────────────────────────────────────────────────────────
+# ———————————————————————
 
 def main():
 print(”=” * 55)
-print(”  ACTIONS RECOVER — BUSCA DE LINKS E UPLOAD”)
+print(”  ACTIONS RECOVER - BUSCA DE LINKS E UPLOAD”)
 print(”=” * 55)
-print(f”🔍 Buscando emails das últimas {JANELA_HORAS}h…”)
+print(“Buscando emails das ultimas “ + str(JANELA_HORAS) + “h…”)
 
 ```
 desde = datetime.now().astimezone() - timedelta(hours=JANELA_HORAS)
@@ -177,36 +175,34 @@ tentativa = 0
 
 while tentativa < MAX_TENTATIVAS:
     tentativa += 1
-    print(f"\n📬 Tentativa #{tentativa}...")
+    print("\nTentativa #" + str(tentativa) + "...")
 
     for i, conta in enumerate(CONTAS_EMAIL):
         if not links[i]:
             links[i] = verificar_email(conta["email"], conta["senha"], desde)
-            status = "✅ encontrado" if links[i] else "⏸ aguardando"
-            print(f"  {conta['nome']} ({conta['email']}): {status}")
+            status = "encontrado" if links[i] else "aguardando"
+            print("  " + conta["nome"] + " (" + conta["email"] + "): " + status)
 
     if all(links):
         break
 
     if tentativa < MAX_TENTATIVAS:
-        print(f"  ⏳ Aguardando {INTERVALO_IMAP}s...")
+        print("  Aguardando " + str(INTERVALO_IMAP) + "s...")
         time.sleep(INTERVALO_IMAP)
 
-# Verifica quais chegaram
 faltando = [CONTAS_EMAIL[i]["nome"] for i, l in enumerate(links) if not l]
 if faltando:
-    print(f"\n⚠️  Links não encontrados: {', '.join(faltando)}")
+    print("\nLinks nao encontrados: " + ", ".join(faltando))
     links_validos = [l for l in links if l]
     if not links_validos:
-        print("❌ Nenhum link encontrado. Abortando.")
+        print("Nenhum link encontrado. Abortando.")
         exit(1)
-    print(f"  Prosseguindo com {len(links_validos)} de 3 links...")
+    print("  Prosseguindo com " + str(len(links_validos)) + " de 3 links...")
 else:
     links_validos = links
-    print("\n✅ Todos os links encontrados!")
+    print("\nTodos os links encontrados!")
 
-# Download
-print("\n⬇️  Baixando planilhas...")
+print("\nBaixando planilhas...")
 dfs = []
 for i, link in enumerate(links_validos):
     try:
@@ -215,22 +211,21 @@ for i, link in enumerate(links_validos):
             df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
         except Exception:
             df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
-        print(f"  Arquivo {i+1}: {len(df)} linhas")
+        print("  Arquivo " + str(i+1) + ": " + str(len(df)) + " linhas")
         dfs.append(df)
     except Exception as e:
-        print(f"  ⚠️ Erro no download {i+1}: {e}")
+        print("  Erro no download " + str(i+1) + ": " + str(e))
 
 if not dfs:
-    print("❌ Nenhum arquivo baixado. Abortando.")
+    print("Nenhum arquivo baixado. Abortando.")
     exit(1)
 
 df_final = pd.concat(dfs, ignore_index=True)
-print(f"  📋 Total consolidado: {len(df_final)} linhas")
+print("  Total consolidado: " + str(len(df_final)) + " linhas")
 
-# Upload
 subir_para_sheets(df_final)
 
-print("\n🎉 Recuperação concluída com sucesso!")
+print("\nRecuperacao concluida com sucesso!")
 print("=" * 55)
 ```
 
