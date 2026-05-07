@@ -1,9 +1,9 @@
 """
 =====================================================================
-  ACTIONS RUNNER - Roda no GitHub Actions
+  ACTIONS RUNNER — Roda no GitHub Actions
 =====================================================================
-  Versao do script adaptada para rodar em servidor Linux headless.
-  Usa variaveis de ambiente em vez de st.secrets.
+  Versão do script adaptada para rodar em servidor Linux headless.
+  Usa variáveis de ambiente em vez de st.secrets.
 =====================================================================
 """
 
@@ -23,9 +23,9 @@ from email.utils import parsedate_to_datetime
 from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
 
-# ---------------------------------------------------------------------
-# CONFIGURACOES (via variaveis de ambiente)
-# ---------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────
+#  ⚙️  CONFIGURAÇÕES (via variáveis de ambiente)
+# ─────────────────────────────────────────────────────────────────
 
 EMAIL_1         = os.environ["EMAIL_1"]
 SENHA_1         = os.environ["SENHA_1"]
@@ -48,9 +48,9 @@ CONTAS = [
     {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
 ]
 
-# ---------------------------------------------------------------------
-# MONKEY-PATCH RSA
-# ---------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────
+#  MONKEY-PATCH RSA
+# ─────────────────────────────────────────────────────────────────
 
 def _verify_mac_ignorar(self, *args, **kwargs):
     pass
@@ -73,9 +73,9 @@ def calcular_datas():
     return f"01/{mes:02d}/{ano}", hoje.strftime("%d/%m/%Y")
 
 
-# ---------------------------------------------------------------------
-# SELENIUM
-# ---------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────
+#  SELENIUM
+# ─────────────────────────────────────────────────────────────────
 
 def criar_driver():
     from selenium import webdriver
@@ -109,7 +109,7 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
     from selenium.webdriver.support import expected_conditions as EC
 
     token = gerar_token(sdtid_path)
-    print(f"  Token gerado para {login.upper()}")
+    print(f"  🔐 Token gerado para {login.upper()}")
 
     driver = criar_driver()
     try:
@@ -125,7 +125,7 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
             driver.execute_script("arguments[0].click()", btn)
             time.sleep(4)
         except Exception as e:
-            print(f"  Aviso Username: {e}")
+            print(f"  ⚠️ Username: {e}")
 
         # SmartID
         try:
@@ -141,14 +141,14 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
         btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
         driver.execute_script("arguments[0].click()", btn)
         time.sleep(8)
-        print(f"  Login OK - {driver.current_url[:60]}")
+        print(f"  ✅ Login OK — {driver.current_url[:60]}")
 
-        # Lista relatorios
+        # Lista relatórios
         driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
         time.sleep(5)
 
         base = WebDriverWait(driver, 20).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral - Apos 01/05/2009')]"))
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral')]"))
         )
         driver.execute_script("arguments[0].click()", base)
         time.sleep(5)
@@ -169,12 +169,12 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
             except Exception:
                 pass
 
-        gerar = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatorio']")))
+        gerar = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatório']")))
         driver.execute_script("arguments[0].click()", gerar)
         time.sleep(5)
-        print(f"  Relatorio solicitado!")
+        print(f"  ✓ Relatório solicitado!")
 
-        # Posicao na fila
+        # Posição na fila
         posicao = POSICAO_FILA
         try:
             driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
@@ -186,16 +186,16 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
         except Exception:
             pass
 
-        print(f"  Posicao na fila: {posicao}")
+        print(f"  📊 Posição na fila: {posicao}")
         return posicao
 
     finally:
         driver.quit()
 
 
-# ---------------------------------------------------------------------
-# IMAP
-# ---------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────
+#  IMAP
+# ─────────────────────────────────────────────────────────────────
 
 def verificar_email(email_conta, senha, desde):
     try:
@@ -215,13 +215,13 @@ def verificar_email(email_conta, senha, desde):
 
         for caixa in caixas:
             try:
-                status_sel, _ = mail.select('"' + caixa + '"')
+                status_sel, _ = mail.select(f'"{caixa}"')
                 if status_sel != "OK":
                     continue
             except Exception:
                 continue
 
-            status, msgs = mail.search(None, 'SINCE "' + data_imap + '"')
+            status, msgs = mail.search(None, f'SINCE "{data_imap}"')
             if status != "OK" or not msgs[0]:
                 continue
 
@@ -270,13 +270,13 @@ def verificar_email(email_conta, senha, desde):
         mail.logout()
         return None
     except Exception as e:
-        print("  Erro IMAP " + email_conta + ": " + str(e))
+        print(f"  ⚠️ Erro IMAP {email_conta}: {e}")
         return None
 
 
-# ---------------------------------------------------------------------
-# SHEETS
-# ---------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────
+#  SHEETS
+# ─────────────────────────────────────────────────────────────────
 
 def subir_para_sheets(df):
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -292,36 +292,36 @@ def subir_para_sheets(df):
     dados = [df.columns.tolist()] + df.values.tolist()
     dados = [[str(v) for v in linha] for linha in dados]
     aba.update(dados, value_input_option="USER_ENTERED")
-    print("  OK: " + str(len(df)) + " linhas gravadas em '" + ABA_DESTINO + "'!")
+    print(f"  ✅ {len(df)} linhas gravadas em '{ABA_DESTINO}'!")
 
 
-# ---------------------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────
+#  MAIN
+# ─────────────────────────────────────────────────────────────────
 
 def main():
     print("=" * 55)
-    print("  ACTIONS RUNNER - ATUALIZACAO DADOSRADAR")
+    print("  ACTIONS RUNNER — ATUALIZAÇÃO DADOSRADAR")
     print("=" * 55)
 
     data_inicio, data_fim = calcular_datas()
-    print("Periodo: " + data_inicio + " -> " + data_fim)
+    print(f"📅 Período: {data_inicio} → {data_fim}")
 
-    # Etapa 1: Solicitar relatorios
+    # Etapa 1: Solicitar relatórios
     contas_ok = []
     posicoes = []
     for conta in CONTAS:
-        print("\nProcessando " + conta["login"].upper() + "...")
+        print(f"\n🌐 Processando {conta['login'].upper()}...")
         try:
             posicao = fazer_login_e_solicitar(conta["login"], conta["sdtid"], data_inicio, data_fim)
             posicoes.append(posicao)
             contas_ok.append(conta["login"])
         except Exception as e:
-            print("  FALHA em " + conta["login"].upper() + ", pulando: " + str(e))
+            print(f"  ❌ FALHA em {conta['login'].upper()}, pulando: {e}")
             continue
 
     if not posicoes:
-        print("Nenhuma conta processada com sucesso. Abortando.")
+        print("❌ Nenhuma conta processada com sucesso. Abortando.")
         exit(1)
 
     # Calcula espera
@@ -329,8 +329,8 @@ def main():
     tempo_total  = (maior * 7) + 2
     primeira_min = tempo_total // 2
 
-    print("\nContas OK: " + ", ".join(contas_ok))
-    print("Aguardando " + str(primeira_min) + " min antes da verificacao de emails...")
+    print(f"\n✅ Contas OK: {', '.join(contas_ok)}")
+    print(f"⏳ Aguardando {primeira_min} min antes da verificação de emails...")
     time.sleep(primeira_min * 60)
 
     # Etapa 2: Aguarda emails
@@ -349,30 +349,30 @@ def main():
 
     while tentativa < 12:
         tentativa += 1
-        print("\nVerificacao #" + str(tentativa) + "...")
+        print(f"\n🔍 Verificação #{tentativa}...")
 
         for i, ec in enumerate(emails_contas):
             if not links[i]:
                 links[i] = verificar_email(ec["email"], ec["senha"], desde)
-                status = "recebido" if links[i] else "aguardando"
-                print("  " + ec["nome"] + ": " + status)
+                status = "✅ recebido" if links[i] else "⏸ aguardando"
+                print(f"  {ec['nome']}: {status}")
 
         if all(links):
             break
 
-        print("  Aguardando " + str(INTERVALO_IMAP // 60) + " min...")
+        print(f"  ⏳ Aguardando {INTERVALO_IMAP // 60} min...")
         time.sleep(INTERVALO_IMAP)
 
     links_validos = [l for l in links if l]
     if not links_validos:
-        print("Timeout: nenhum email chegou. Abortando.")
+        print("❌ Timeout: nenhum email chegou. Abortando.")
         exit(1)
 
     if len(links_validos) < len(emails_contas):
-        print("Aviso: apenas " + str(len(links_validos)) + " de " + str(len(emails_contas)) + " emails chegaram. Prosseguindo...")
+        print(f"⚠️ Apenas {len(links_validos)} de {len(emails_contas)} emails chegaram. Prosseguindo...")
 
     # Etapa 3: Download e upload
-    print("\nBaixando planilhas...")
+    print("\n⬇️ Baixando planilhas...")
     import io
     dfs = []
     for i, link in enumerate(links_validos):
@@ -382,21 +382,21 @@ def main():
                 df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
             except Exception:
                 df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
-            print("  Arquivo " + str(i+1) + ": " + str(len(df)) + " linhas")
+            print(f"  Arquivo {i+1}: {len(df)} linhas")
             dfs.append(df)
         except Exception as e:
-            print("  Erro no download " + str(i+1) + ": " + str(e))
+            print(f"  ⚠️ Erro no download {i+1}: {e}")
 
     if not dfs:
-        print("Nenhum arquivo baixado. Abortando.")
+        print("❌ Nenhum arquivo baixado. Abortando.")
         exit(1)
 
     df_final = pd.concat(dfs, ignore_index=True)
-    print("  Total: " + str(len(df_final)) + " linhas")
+    print(f"  📋 Total: {len(df_final)} linhas")
 
     subir_para_sheets(df_final)
 
-    print("\nDadosRadar atualizado com sucesso!")
+    print("\n🎉 DadosRadar atualizado com sucesso!")
     print("=" * 55)
 
 
