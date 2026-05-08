@@ -148,41 +148,13 @@ def fazer_login(driver, login, sdtid_path):
 
     # Fecha popup se aparecer
     try:
-        fechar = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'close') or contains(@aria-label,'close') or contains(@aria-label,'Close')]")))
+        fechar = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, "//*[contains(@class,'close') or contains(@aria-label,'lose')]"))
+        )
         driver.execute_script("arguments[0].click()", fechar)
         time.sleep(1)
     except Exception:
         pass
-
-
-# ─────────────────────────────────────────────────────────────────
-#  SELENIUM — abrir aba de relatórios
-# ─────────────────────────────────────────────────────────────────
-
-def abrir_aba_relatorios(driver):
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-
-    aba_original = driver.current_window_handle
-
-    # Clica em "Relatórios" no menu lateral
-    relatorios_menu = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'Relatórios') and contains(., 'Extrair')]"))
-    )
-    driver.execute_script("arguments[0].click()", relatorios_menu)
-    time.sleep(4)
-
-    # Troca para a nova aba
-    for handle in driver.window_handles:
-        if handle != aba_original:
-            driver.switch_to.window(handle)
-            break
-
-    # Aguarda carregar a fila de relatórios
-    WebDriverWait(driver, 15).until(lambda d: "report-queue" in d.current_url)
-    time.sleep(2)
-    print(f"  📋 Aba de relatórios aberta — {driver.current_url[:60]}")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -197,14 +169,10 @@ def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
     driver = criar_driver()
     try:
         fazer_login(driver, login, sdtid_path)
-        abrir_aba_relatorios(driver)
 
-        # Clica em "novo"
-        novo_btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'novo') or contains(@class,'novo')]"))
-        )
-        driver.execute_script("arguments[0].click()", novo_btn)
-        time.sleep(4)
+        # Vai direto para a lista de relatórios
+        driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
+        time.sleep(5)
 
         # Seleciona "Base Geral - Após 01/05/2009"
         base = WebDriverWait(driver, 20).until(
@@ -267,9 +235,13 @@ def baixar_relatorio(login, sdtid_path):
     driver = criar_driver()
     try:
         fazer_login(driver, login, sdtid_path)
-        abrir_aba_relatorios(driver)
 
-        # Aguarda aparecer pelo menos uma linha "concluído" com "Após 01/05/2009"
+        # Vai direto para a fila de relatórios
+        driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
+        time.sleep(3)
+        print(f"  📋 Fila de relatórios aberta")
+
+        # Aguarda aparecer linha "concluído" com "Após 01/05/2009"
         WebDriverWait(driver, 30).until(
             EC.presence_of_element_located((By.XPATH, "//tr[contains(.,'Após 01/05/2009') and contains(.,'concluído')]//a"))
         )
@@ -281,7 +253,7 @@ def baixar_relatorio(login, sdtid_path):
         if not linhas:
             raise Exception("Nenhum relatório concluído encontrado na fila.")
 
-        # Pega o link da linha com maior ID (mais recente = primeiro da lista)
+        # Pega o link da linha com maior ID (mais recente)
         melhor_link = None
         melhor_id   = -1
         for linha in linhas:
@@ -308,7 +280,7 @@ def baixar_relatorio(login, sdtid_path):
         for c in cookies_selenium:
             sessao.cookies.set(c["name"], c["value"])
 
-        resp = sessao.get(melhor_link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
+        resp    = sessao.get(melhor_link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
         content = resp.content
 
         # Lê o arquivo
@@ -433,7 +405,7 @@ def main():
     data_inicio, data_fim = calcular_datas()
     print(f"📅 Período: {data_inicio} → {data_fim}")
 
-    # ── ETAPA 1: Solicitar relatórios ──────────────────────────
+    # ── ETAPA 1: Solicitar relatórios ─────────────────────────
     contas_ok = []
     posicoes  = []
     for conta in CONTAS:
@@ -458,9 +430,9 @@ def main():
     time.sleep(primeira_min * 60)
 
     # ── ETAPA 2: Monitora emails como gatilho ─────────────────
-    desde         = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
-    gatilhos      = {c["login"]: False for c in contas_ok}
-    tentativa     = 0
+    desde     = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
+    gatilhos  = {c["login"]: False for c in contas_ok}
+    tentativa = 0
 
     while tentativa < 12:
         tentativa += 1
@@ -477,7 +449,7 @@ def main():
             print("✅ Todos os emails recebidos!")
             break
 
-        # Se pelo menos metade chegou, espera mais um pouco e segue
+        # Se pelo menos metade chegou e já são 6 tentativas, segue
         recebidos = sum(gatilhos.values())
         if recebidos > 0 and tentativa >= 6:
             print(f"⚠️ {recebidos}/{len(contas_ok)} emails recebidos. Prosseguindo com os disponíveis...")
@@ -486,7 +458,7 @@ def main():
         print(f"  ⏳ Aguardando {INTERVALO_IMAP // 60} min...")
         time.sleep(INTERVALO_IMAP)
 
-    # ── ETAPA 3: Baixar relatórios via novo login ──────────────
+    # ── ETAPA 3: Baixar relatórios via novo login ─────────────
     print("\n⬇️ Baixando relatórios...")
     dfs = []
     for conta in contas_ok:
@@ -503,7 +475,7 @@ def main():
         print("❌ Nenhum arquivo baixado. Abortando.")
         exit(1)
 
-    # ── ETAPA 4: Concat + Upload ───────────────────────────────
+    # ── ETAPA 4: Concat + Upload ──────────────────────────────
     df_final = pd.concat(dfs, ignore_index=True)
     print(f"\n📋 Total consolidado: {len(df_final)} linhas")
     subir_para_sheets(df_final)
