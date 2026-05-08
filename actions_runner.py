@@ -2,12 +2,16 @@
 =====================================================================
   ACTIONS RUNNER — Roda no GitHub Actions
 =====================================================================
-  Versão do script adaptada para rodar em servidor Linux headless.
-  Usa variáveis de ambiente em vez de st.secrets.
+  Fluxo:
+  1. Login RSA + solicitar relatório para cada conta
+  2. IMAP monitora email como gatilho (sem usar o link)
+  3. Novo login RSA + baixa o relatório mais recente da fila
+  4. Concat + upload para o Google Sheets
 =====================================================================
 """
 
 import os
+import io
 import time
 import imaplib
 import email
@@ -15,8 +19,6 @@ import re
 import requests
 import pandas as pd
 import gspread
-import base64
-import tempfile
 from datetime import datetime, timezone, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
@@ -24,7 +26,7 @@ from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
 
 # ─────────────────────────────────────────────────────────────────
-#  ⚙️  CONFIGURAÇÕES (via variáveis de ambiente)
+#  ⚙️  CONFIGURAÇÕES
 # ─────────────────────────────────────────────────────────────────
 
 EMAIL_1         = os.environ["EMAIL_1"]
@@ -43,9 +45,9 @@ INTERVALO_IMAP  = 300
 ABA_DESTINO     = "DadosRadar"
 
 CONTAS = [
-    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
-    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
-    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
+    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid", "email": EMAIL_1, "senha": SENHA_1},
+    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid", "email": EMAIL_2, "senha": SENHA_2},
+    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid", "email": EMAIL_3, "senha": SENHA_3},
 ]
 
 # ─────────────────────────────────────────────────────────────────
@@ -74,7 +76,7 @@ def calcular_datas():
 
 
 # ─────────────────────────────────────────────────────────────────
-#  SELENIUM
+#  SELENIUM — criação do driver
 # ─────────────────────────────────────────────────────────────────
 
 def criar_driver():
@@ -92,7 +94,6 @@ def criar_driver():
     import shutil
     chromedriver = shutil.which("chromedriver")
     chrome = shutil.which("google-chrome") or shutil.which("chromium-browser") or shutil.which("chromium")
-
     if chrome:
         options.binary_location = chrome
 
@@ -103,7 +104,11 @@ def criar_driver():
         return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 
-def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
+# ─────────────────────────────────────────────────────────────────
+#  SELENIUM — login RSA
+# ─────────────────────────────────────────────────────────────────
+
+def fazer_login(driver, login, sdtid_path):
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
@@ -111,49 +116,104 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
     token = gerar_token(sdtid_path)
     print(f"  🔐 Token gerado para {login.upper()}")
 
+    driver.get("https://radar.timbrasil.com.br/")
+    time.sleep(5)
+
+    # Username
+    try:
+        campo = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "identifierInput")))
+        campo.clear()
+        campo.send_keys(login)
+        btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
+        driver.execute_script("arguments[0].click()", btn)
+        time.sleep(4)
+    except Exception as e:
+        print(f"  ⚠️ Username: {e}")
+
+    # SmartID
+    try:
+        WebDriverWait(driver, 20).until(lambda d: "iam-pf" in d.current_url)
+        time.sleep(3)
+    except Exception:
+        pass
+
+    # Token RSA
+    campo_token = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "password")))
+    campo_token.send_keys(token)
+    time.sleep(1)
+    btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
+    driver.execute_script("arguments[0].click()", btn)
+    time.sleep(8)
+    print(f"  ✅ Login OK — {driver.current_url[:60]}")
+
+    # Fecha popup se aparecer
+    try:
+        fechar = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.XPATH, "//button[contains(@class,'close') or contains(@aria-label,'close') or contains(@aria-label,'Close')]")))
+        driver.execute_script("arguments[0].click()", fechar)
+        time.sleep(1)
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────
+#  SELENIUM — abrir aba de relatórios
+# ─────────────────────────────────────────────────────────────────
+
+def abrir_aba_relatorios(driver):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    aba_original = driver.current_window_handle
+
+    # Clica em "Relatórios" no menu lateral
+    relatorios_menu = WebDriverWait(driver, 15).until(
+        EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'Relatórios') and contains(., 'Extrair')]"))
+    )
+    driver.execute_script("arguments[0].click()", relatorios_menu)
+    time.sleep(4)
+
+    # Troca para a nova aba
+    for handle in driver.window_handles:
+        if handle != aba_original:
+            driver.switch_to.window(handle)
+            break
+
+    # Aguarda carregar a fila de relatórios
+    WebDriverWait(driver, 15).until(lambda d: "report-queue" in d.current_url)
+    time.sleep(2)
+    print(f"  📋 Aba de relatórios aberta — {driver.current_url[:60]}")
+
+
+# ─────────────────────────────────────────────────────────────────
+#  ETAPA 1 — Solicitar relatório
+# ─────────────────────────────────────────────────────────────────
+
+def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
     driver = criar_driver()
     try:
-        driver.get("https://radar.timbrasil.com.br/")
-        time.sleep(5)
+        fazer_login(driver, login, sdtid_path)
+        abrir_aba_relatorios(driver)
 
-        # Username
-        try:
-            campo = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "identifierInput")))
-            campo.clear()
-            campo.send_keys(login)
-            btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
-            driver.execute_script("arguments[0].click()", btn)
-            time.sleep(4)
-        except Exception as e:
-            print(f"  ⚠️ Username: {e}")
+        # Clica em "novo"
+        novo_btn = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'novo') or contains(@class,'novo')]"))
+        )
+        driver.execute_script("arguments[0].click()", novo_btn)
+        time.sleep(4)
 
-        # SmartID
-        try:
-            WebDriverWait(driver, 20).until(lambda d: "iam-pf" in d.current_url)
-            time.sleep(3)
-        except Exception:
-            pass
-
-        # Token
-        campo_token = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "password")))
-        campo_token.send_keys(token)
-        time.sleep(1)
-        btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
-        driver.execute_script("arguments[0].click()", btn)
-        time.sleep(8)
-        print(f"  ✅ Login OK — {driver.current_url[:60]}")
-
-        # Lista relatórios
-        driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
-        time.sleep(5)
-
+        # Seleciona "Base Geral - Após 01/05/2009"
         base = WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral')]"))
         )
         driver.execute_script("arguments[0].click()", base)
         time.sleep(5)
 
-        # Datas
+        # Preenche datas
         campo_de = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.NAME, "a.dt_precadastro_de")))
         driver.execute_script("arguments[0].removeAttribute('readonly')", campo_de)
         driver.execute_script(f"arguments[0].value = '{data_inicio}'", campo_de)
@@ -161,6 +221,7 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
         driver.execute_script("arguments[0].removeAttribute('readonly')", campo_ate)
         driver.execute_script(f"arguments[0].value = '{data_fim}'", campo_ate)
 
+        # Checkboxes
         for valor in ["1", "2", "3"]:
             try:
                 cb = driver.find_element(By.XPATH, f"//input[@type='checkbox' and @name='g.idtipocontrata' and @value='{valor}']")
@@ -169,6 +230,7 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
             except Exception:
                 pass
 
+        # Gerar
         gerar = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatório']")))
         driver.execute_script("arguments[0].click()", gerar)
         time.sleep(5)
@@ -194,7 +256,76 @@ def fazer_login_e_solicitar(login, sdtid_path, data_inicio, data_fim):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  IMAP
+#  ETAPA 3 — Baixar relatório mais recente
+# ─────────────────────────────────────────────────────────────────
+
+def baixar_relatorio(login, sdtid_path):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    driver = criar_driver()
+    try:
+        fazer_login(driver, login, sdtid_path)
+        abrir_aba_relatorios(driver)
+
+        # Aguarda aparecer pelo menos uma linha "concluído" com "Após 01/05/2009"
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.XPATH, "//tr[contains(.,'Após 01/05/2009') and contains(.,'concluído')]//a"))
+        )
+        time.sleep(2)
+
+        # Pega todas as linhas concluídas com "Após 01/05/2009"
+        linhas = driver.find_elements(By.XPATH, "//tr[contains(.,'Após 01/05/2009') and contains(.,'concluído')]")
+
+        if not linhas:
+            raise Exception("Nenhum relatório concluído encontrado na fila.")
+
+        # Pega o link da linha com maior ID (mais recente = primeiro da lista)
+        melhor_link = None
+        melhor_id   = -1
+        for linha in linhas:
+            try:
+                link_el = linha.find_element(By.XPATH, ".//a[contains(@href,'report-queue-download')]")
+                href    = link_el.get_attribute("href")
+                match   = re.search(r"idreport=(\d+)", href)
+                if match:
+                    id_rel = int(match.group(1))
+                    if id_rel > melhor_id:
+                        melhor_id   = id_rel
+                        melhor_link = href
+            except Exception:
+                continue
+
+        if not melhor_link:
+            raise Exception("Não foi possível extrair o link de download.")
+
+        print(f"  🔗 Baixando relatório ID {melhor_id}...")
+
+        # Extrai cookies da sessão do Selenium
+        cookies_selenium = driver.get_cookies()
+        sessao = requests.Session()
+        for c in cookies_selenium:
+            sessao.cookies.set(c["name"], c["value"])
+
+        resp = sessao.get(melhor_link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
+        content = resp.content
+
+        # Lê o arquivo
+        try:
+            df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
+        except Exception:
+            df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
+
+        print(f"  ✅ {len(df)} linhas baixadas para {login.upper()}")
+        return df
+
+    finally:
+        driver.quit()
+
+
+# ─────────────────────────────────────────────────────────────────
+#  IMAP — monitora email como gatilho
 # ─────────────────────────────────────────────────────────────────
 
 def verificar_email(email_conta, senha, desde):
@@ -259,19 +390,14 @@ def verificar_email(email_conta, senha, desde):
                 if "Radar" not in assunto and "radar" not in assunto:
                     continue
 
-                for parte in msg.walk():
-                    if parte.get_content_type() in ("text/plain", "text/html"):
-                        corpo = parte.get_payload(decode=True).decode(errors="ignore")
-                        match = re.search(r'https://radar\.timbrasil\.com\.br/[^\s"<>\)]+', corpo)
-                        if match:
-                            mail.logout()
-                            return match.group(0).strip()
+                mail.logout()
+                return True  # só gatilho, sem usar o link
 
         mail.logout()
-        return None
+        return False
     except Exception as e:
         print(f"  ⚠️ Erro IMAP {email_conta}: {e}")
-        return None
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -307,93 +433,79 @@ def main():
     data_inicio, data_fim = calcular_datas()
     print(f"📅 Período: {data_inicio} → {data_fim}")
 
-    # Etapa 1: Solicitar relatórios
+    # ── ETAPA 1: Solicitar relatórios ──────────────────────────
     contas_ok = []
-    posicoes = []
+    posicoes  = []
     for conta in CONTAS:
         print(f"\n🌐 Processando {conta['login'].upper()}...")
         try:
-            posicao = fazer_login_e_solicitar(conta["login"], conta["sdtid"], data_inicio, data_fim)
+            posicao = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
             posicoes.append(posicao)
-            contas_ok.append(conta["login"])
+            contas_ok.append(conta)
         except Exception as e:
             print(f"  ❌ FALHA em {conta['login'].upper()}, pulando: {e}")
             continue
 
-    if not posicoes:
-        print("❌ Nenhuma conta processada com sucesso. Abortando.")
+    if not contas_ok:
+        print("❌ Nenhuma conta processada. Abortando.")
         exit(1)
 
-    # Calcula espera
-    maior = max(posicoes)
-    tempo_total  = (maior * 7) + 2
-    primeira_min = tempo_total // 2
-
-    print(f"\n✅ Contas OK: {', '.join(contas_ok)}")
-    print(f"⏳ Aguardando {primeira_min} min antes da verificação de emails...")
+    # Calcula espera baseada na maior posição na fila
+    maior        = max(posicoes)
+    primeira_min = ((maior * 7) + 2) // 2
+    print(f"\n✅ Contas OK: {', '.join(c['login'].upper() for c in contas_ok)}")
+    print(f"⏳ Aguardando {primeira_min} min antes de verificar emails...")
     time.sleep(primeira_min * 60)
 
-    # Etapa 2: Aguarda emails
-    desde = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
-
-    emails_contas = []
-    if "t3729525" in contas_ok:
-        emails_contas.append({"nome": "Email 1", "email": EMAIL_1, "senha": SENHA_1})
-    if "t3761125" in contas_ok:
-        emails_contas.append({"nome": "Email 2", "email": EMAIL_2, "senha": SENHA_2})
-    if "t3748937" in contas_ok:
-        emails_contas.append({"nome": "Email 3", "email": EMAIL_3, "senha": SENHA_3})
-
-    links = [None] * len(emails_contas)
-    tentativa = 0
+    # ── ETAPA 2: Monitora emails como gatilho ─────────────────
+    desde         = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
+    gatilhos      = {c["login"]: False for c in contas_ok}
+    tentativa     = 0
 
     while tentativa < 12:
         tentativa += 1
-        print(f"\n🔍 Verificação #{tentativa}...")
+        print(f"\n🔍 Verificação de email #{tentativa}...")
 
-        for i, ec in enumerate(emails_contas):
-            if not links[i]:
-                links[i] = verificar_email(ec["email"], ec["senha"], desde)
-                status = "✅ recebido" if links[i] else "⏸ aguardando"
-                print(f"  {ec['nome']}: {status}")
+        for conta in contas_ok:
+            if not gatilhos[conta["login"]]:
+                chegou = verificar_email(conta["email"], conta["senha"], desde)
+                gatilhos[conta["login"]] = chegou
+                status = "✅ recebido" if chegou else "⏸ aguardando"
+                print(f"  {conta['login'].upper()}: {status}")
 
-        if all(links):
+        if all(gatilhos.values()):
+            print("✅ Todos os emails recebidos!")
+            break
+
+        # Se pelo menos metade chegou, espera mais um pouco e segue
+        recebidos = sum(gatilhos.values())
+        if recebidos > 0 and tentativa >= 6:
+            print(f"⚠️ {recebidos}/{len(contas_ok)} emails recebidos. Prosseguindo com os disponíveis...")
             break
 
         print(f"  ⏳ Aguardando {INTERVALO_IMAP // 60} min...")
         time.sleep(INTERVALO_IMAP)
 
-    links_validos = [l for l in links if l]
-    if not links_validos:
-        print("❌ Timeout: nenhum email chegou. Abortando.")
-        exit(1)
-
-    if len(links_validos) < len(emails_contas):
-        print(f"⚠️ Apenas {len(links_validos)} de {len(emails_contas)} emails chegaram. Prosseguindo...")
-
-    # Etapa 3: Download e upload
-    print("\n⬇️ Baixando planilhas...")
-    import io
+    # ── ETAPA 3: Baixar relatórios via novo login ──────────────
+    print("\n⬇️ Baixando relatórios...")
     dfs = []
-    for i, link in enumerate(links_validos):
+    for conta in contas_ok:
+        if not gatilhos[conta["login"]]:
+            print(f"  ⚠️ {conta['login'].upper()}: email não chegou, pulando download.")
+            continue
         try:
-            content = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60).content
-            try:
-                df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
-            except Exception:
-                df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
-            print(f"  Arquivo {i+1}: {len(df)} linhas")
+            df = baixar_relatorio(conta["login"], conta["sdtid"])
             dfs.append(df)
         except Exception as e:
-            print(f"  ⚠️ Erro no download {i+1}: {e}")
+            print(f"  ❌ Erro ao baixar {conta['login'].upper()}: {e}")
 
     if not dfs:
         print("❌ Nenhum arquivo baixado. Abortando.")
         exit(1)
 
+    # ── ETAPA 4: Concat + Upload ───────────────────────────────
     df_final = pd.concat(dfs, ignore_index=True)
-    print(f"  📋 Total: {len(df_final)} linhas")
-
+    print(f"\n📋 Total consolidado: {len(df_final)} linhas")
     subir_para_sheets(df_final)
 
     print("\n🎉 DadosRadar atualizado com sucesso!")
