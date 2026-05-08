@@ -174,9 +174,9 @@ def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
         driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
         time.sleep(5)
 
-        # Seleciona "Base Geral - Após 01/05/2009"
+        # Seleciona especificamente "Base Geral - Após 01/05/2009"
         base = WebDriverWait(driver, 20).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Base Geral')]"))
+            EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Após 01/05/2009')]"))
         )
         driver.execute_script("arguments[0].click()", base)
         time.sleep(5)
