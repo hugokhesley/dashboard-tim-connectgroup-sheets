@@ -332,7 +332,7 @@ def gerar_excel(df_atv, meta_dict, mes):
 
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    # A=Nome, B=Fila, C=Acessos, D=Receita
+    # A=Nome, B=Fila, C=Acessos (total), D=Receita (total)
     ws.column_dimensions["A"].width = 50
     ws.column_dimensions["B"].width = 22
     ws.column_dimensions["C"].width = 12
@@ -354,19 +354,17 @@ def gerar_excel(df_atv, meta_dict, mes):
     ws[f"A{row}"].alignment = al_left
     row += 1
 
-    # Linha em branco
-    row += 1
+    row += 1  # linha em branco
 
     lideres = sorted([l for l in df_atv["lider"].dropna().unique() if l and l not in ("Sem Equipe", "")])
 
     for lider in lideres:
-        df_l  = df_atv[df_atv["lider"] == lider]
-        df_l_atv = df_l[df_l["mes_ativacao"] == mes]
-        ac_l  = int(df_l_atv["acessos"].sum())
-        rec_l = df_l_atv["preco_oferta"].sum()
+        df_l = df_atv[df_atv["lider"] == lider]
+        # Total = ativados + tramitando
+        ac_l  = int(df_l["acessos"].sum())
+        rec_l = df_l["preco_oferta"].sum()
         vends = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
 
-        # Linha líder — mesclada A:B, valores em C e D
         ws.merge_cells(f"A{row}:B{row}")
         ws[f"A{row}"] = f"  {lider}"
         ws[f"A{row}"].font = ft_lider
@@ -385,15 +383,17 @@ def gerar_excel(df_atv, meta_dict, mes):
         row += 1
 
         for vend in vends:
-            df_v     = df_l[df_l["vendedor_real"] == vend]
+            df_v   = df_l[df_l["vendedor_real"] == vend]
+            # Total = ativados + tramitando
+            ac_v   = int(df_v["acessos"].sum())
+            rec_v  = df_v["preco_oferta"].sum()
+            # % meta usa só ativados do mes
             df_v_atv = df_v[df_v["mes_ativacao"] == mes]
-            ac_v     = int(df_v_atv["acessos"].sum())
-            rec_v    = df_v_atv["preco_oferta"].sum()
-            meta_v   = _meta_vend(vend, meta_dict)
-            pct_v    = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
-            cor_v    = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
+            rec_v_atv = df_v_atv["preco_oferta"].sum()
+            meta_v = _meta_vend(vend, meta_dict)
+            pct_v  = min(int(rec_v_atv / meta_v * 100), 100) if meta_v > 0 else 0
+            cor_v  = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
 
-            # Linha vendedor
             ws.merge_cells(f"A{row}:B{row}")
             ws[f"A{row}"] = f"    {vend}"
             ws[f"A{row}"].font = ft_vend
@@ -411,7 +411,7 @@ def gerar_excel(df_atv, meta_dict, mes):
             ws.row_dimensions[row].height = 18
             row += 1
 
-            # Clientes — agrupados por razao_social + fila_atual
+            # Clientes — total por cliente (ativados + tramitando)
             cols_grp = [c for c in ["razao_social", "fila_atual"] if c in df_v.columns]
             if cols_grp:
                 df_g = df_v.copy()
@@ -865,8 +865,25 @@ def main():
         st.stop()
 
     # ── df_atv gerado DEPOIS de todos os filtros e merge ──────────
-    atv    = df[df["mes_ativacao"] == mes_alvo]
-    df_export = df.copy()  # export usa df completo filtrado por lider
+    atv = df[df["mes_ativacao"] == mes_alvo]
+
+    # Export: recarrega sem filtro de mês para incluir tramitando (mes_ativacao nulo)
+    df_export = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], "Todos")
+    if not bko.empty and "pedido" in df_export.columns:
+        df_export["pedido"] = df_export["pedido"].apply(_norm_pedido)
+        bk2 = bko.copy()
+        bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
+        df_export = df_export.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
+        df_export["vendedor_real"] = df_export["vendedor_real"].apply(lambda x: _s(x) if _s(x) else "Sem Vendedor")
+        df_export["lider"]         = df_export["lider"].apply(lambda x: _s(x) if _s(x) else "Sem Equipe")
+    # Aplica mesmo filtro de líder do dashboard
+    if tipo == "lider" and lider_u:
+        df_export = df_export[df_export["lider"].apply(lambda x: _s(x).upper()) == lider_u.upper()]
+    elif tipo == "parceiro" and parceiro_u:
+        if "parceiro" in df_export.columns:
+            df_export = df_export[df_export["parceiro"].apply(lambda x: _s(x).upper()) == parceiro_u.upper()]
+    elif tipo == "admin" and lider_sel:
+        df_export = df_export[df_export["lider"].isin(lider_sel)]
 
     # ── KPIs ──────────────────────────────────────────────────────
     ac_g   = int(atv["acessos"].sum())
