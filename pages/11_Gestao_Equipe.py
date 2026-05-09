@@ -321,162 +321,132 @@ def gerar_excel(df_atv, meta_dict, mes):
     def fill(hex_color):
         return PatternFill("solid", fgColor=hex_color.replace("#",""))
 
-    ft_title  = Font(name="Calibri", bold=True, size=14, color="FFFFFF")
-    ft_header = Font(name="Calibri", bold=True, size=9,  color="94A3B8")
-    ft_lider  = Font(name="Calibri", bold=True, size=11, color="FFFFFF")
-    ft_vend   = Font(name="Calibri", bold=True, size=10, color="E2E8F0")
-    ft_cli    = Font(name="Calibri", size=9,    color="94A3B8")
+    ft_title = Font(name="Calibri", bold=True, size=14, color="FFFFFF")
+    ft_lider = Font(name="Calibri", bold=True, size=11, color="FFFFFF")
+    ft_vend  = Font(name="Calibri", bold=True, size=10, color="E2E8F0")
+    ft_cli   = Font(name="Calibri", size=9,    color="94A3B8")
 
-    al_left   = Alignment(horizontal="left",   vertical="center")
-    al_right  = Alignment(horizontal="right",  vertical="center")
-    al_center = Alignment(horizontal="center", vertical="center")
+    al_left  = Alignment(horizontal="left",  vertical="center")
+    al_right = Alignment(horizontal="right", vertical="center")
+    al_center= Alignment(horizontal="center",vertical="center")
 
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    # A=Nome, B=Ac Ativado, C=Receita Ativada, D=Tramitando (ac), E=% Meta, F=Fila
-    ws.column_dimensions["A"].width = 42
-    ws.column_dimensions["B"].width = 14
-    ws.column_dimensions["C"].width = 18
-    ws.column_dimensions["D"].width = 16
-    ws.column_dimensions["E"].width = 10
-    ws.column_dimensions["F"].width = 22
+    # A=Nome, B=Fila, C=Acessos, D=Receita
+    ws.column_dimensions["A"].width = 50
+    ws.column_dimensions["B"].width = 22
+    ws.column_dimensions["C"].width = 12
+    ws.column_dimensions["D"].width = 18
 
     row = 1
-    ws.merge_cells(f"A{row}:F{row}")
-    ws[f"A{row}"] = f"CONNECT GROUP — Gestão de Vendas {mes}"
+    ws.merge_cells(f"A{row}:D{row}")
+    ws[f"A{row}"] = f"CONNECT GROUP — Gestao de Vendas {mes}"
     ws[f"A{row}"].font = ft_title
     ws[f"A{row}"].fill = fill("#15803d")
     ws[f"A{row}"].alignment = al_left
     ws.row_dimensions[row].height = 28
     row += 1
 
-    ws.merge_cells(f"A{row}:F{row}")
+    ws.merge_cells(f"A{row}:D{row}")
     ws[f"A{row}"] = f"Gerado em {agora}"
     ws[f"A{row}"].font = Font(name="Calibri", size=9, color="94A3B8")
     ws[f"A{row}"].fill = fill("#0f1117")
     ws[f"A{row}"].alignment = al_left
     row += 1
 
-    # Cabeçalho de colunas
-    for col_idx, h in enumerate(["", "Ac Ativado", "Receita Ativada", "Tramitando (ac)", "% Meta", "Fila"], 1):
-        cell = ws.cell(row=row, column=col_idx, value=h)
-        cell.font = ft_header
-        cell.fill = fill("#1e293b")
-        cell.alignment = al_center
-    ws.row_dimensions[row].height = 16
+    # Linha em branco
     row += 1
 
     lideres = sorted([l for l in df_atv["lider"].dropna().unique() if l and l not in ("Sem Equipe", "")])
 
     for lider in lideres:
-        df_l     = df_atv[df_atv["lider"] == lider]
+        df_l  = df_atv[df_atv["lider"] == lider]
         df_l_atv = df_l[df_l["mes_ativacao"] == mes]
-        df_l_pip = df_l[df_l["mes_ativacao"].isna()]
-        ac_l     = int(df_l_atv["acessos"].sum())
-        rec_l    = df_l_atv["preco_oferta"].sum()
-        pip_l    = int(df_l_pip["acessos"].sum())
-        vends    = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
+        ac_l  = int(df_l_atv["acessos"].sum())
+        rec_l = df_l_atv["preco_oferta"].sum()
+        vends = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
 
-        ws.merge_cells(f"A{row}:A{row}")
+        # Linha líder — mesclada A:B, valores em C e D
+        ws.merge_cells(f"A{row}:B{row}")
         ws[f"A{row}"] = f"  {lider}"
         ws[f"A{row}"].font = ft_lider
         ws[f"A{row}"].fill = fill("#1d4ed8")
         ws[f"A{row}"].alignment = al_left
-        ws[f"B{row}"] = ac_l
-        ws[f"B{row}"].font = ft_lider
-        ws[f"B{row}"].fill = fill("#1d4ed8")
-        ws[f"B{row}"].alignment = al_right
-        ws[f"C{row}"] = rec_l
+        ws[f"C{row}"] = ac_l
         ws[f"C{row}"].font = ft_lider
         ws[f"C{row}"].fill = fill("#1d4ed8")
         ws[f"C{row}"].alignment = al_right
-        ws[f"C{row}"].number_format = "R$ #,##0.00"
-        ws[f"D{row}"] = pip_l
+        ws[f"D{row}"] = rec_l
         ws[f"D{row}"].font = ft_lider
         ws[f"D{row}"].fill = fill("#1d4ed8")
         ws[f"D{row}"].alignment = al_right
+        ws[f"D{row}"].number_format = "R$ #,##0.00"
         ws.row_dimensions[row].height = 20
         row += 1
 
         for vend in vends:
             df_v     = df_l[df_l["vendedor_real"] == vend]
             df_v_atv = df_v[df_v["mes_ativacao"] == mes]
-            df_v_pip = df_v[df_v["mes_ativacao"].isna()]
             ac_v     = int(df_v_atv["acessos"].sum())
             rec_v    = df_v_atv["preco_oferta"].sum()
-            ac_pip_v = int(df_v_pip["acessos"].sum())
             meta_v   = _meta_vend(vend, meta_dict)
             pct_v    = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
             cor_v    = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
 
+            # Linha vendedor
+            ws.merge_cells(f"A{row}:B{row}")
             ws[f"A{row}"] = f"    {vend}"
             ws[f"A{row}"].font = ft_vend
             ws[f"A{row}"].fill = fill("#131f2e")
             ws[f"A{row}"].alignment = al_left
-            ws[f"B{row}"] = ac_v
-            ws[f"B{row}"].font = Font(name="Calibri", bold=True, size=10, color=cor_v)
-            ws[f"B{row}"].fill = fill("#131f2e")
-            ws[f"B{row}"].alignment = al_right
-            ws[f"C{row}"] = rec_v
+            ws[f"C{row}"] = ac_v
             ws[f"C{row}"].font = Font(name="Calibri", bold=True, size=10, color=cor_v)
             ws[f"C{row}"].fill = fill("#131f2e")
             ws[f"C{row}"].alignment = al_right
-            ws[f"C{row}"].number_format = "R$ #,##0.00"
-            ws[f"D{row}"] = ac_pip_v
-            ws[f"D{row}"].font = Font(name="Calibri", bold=True, size=10, color="F59E0B")
+            ws[f"D{row}"] = rec_v
+            ws[f"D{row}"].font = Font(name="Calibri", bold=True, size=10, color=cor_v)
             ws[f"D{row}"].fill = fill("#131f2e")
             ws[f"D{row}"].alignment = al_right
-            ws[f"E{row}"] = f"{pct_v}%"
-            ws[f"E{row}"].font = Font(name="Calibri", bold=True, size=10, color=cor_v)
-            ws[f"E{row}"].fill = fill("#131f2e")
-            ws[f"E{row}"].alignment = al_center
+            ws[f"D{row}"].number_format = "R$ #,##0.00"
             ws.row_dimensions[row].height = 18
             row += 1
 
-            # Clientes
-            cols_grp = [c for c in ["razao_social","fila_atual"] if c in df_v.columns]
+            # Clientes — agrupados por razao_social + fila_atual
+            cols_grp = [c for c in ["razao_social", "fila_atual"] if c in df_v.columns]
             if cols_grp:
                 df_g = df_v.copy()
                 for col in cols_grp:
                     df_g[col] = df_g[col].fillna("—")
                 cdf = (df_g.groupby(cols_grp, as_index=False)
-                       .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"),
-                            atv=("mes_ativacao", lambda x: (x == mes).sum()))
-                       .sort_values(["atv","ac"], ascending=[False,False]))
+                       .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"))
+                       .sort_values("ac", ascending=False))
                 for _, crow in cdf.iterrows():
-                    razao  = str(crow.get("razao_social","—"))[:60]
-                    fila   = str(crow.get("fila_atual","—")).upper()
-                    ac_c   = int(crow.get("ac",0))
-                    rec_c  = float(crow.get("rec",0))
-                    atv_c  = int(crow.get("atv",0))
-                    pip_c  = ac_c - atv_c
-                    cor_row = "#080e15"
+                    razao = str(crow.get("razao_social","—"))[:60]
+                    fila  = str(crow.get("fila_atual","—")).upper()
+                    ac_c  = int(crow.get("ac",0))
+                    rec_c = float(crow.get("rec",0))
 
                     ws[f"A{row}"] = f"        {razao}"
                     ws[f"A{row}"].font = ft_cli
-                    ws[f"A{row}"].fill = fill(cor_row)
+                    ws[f"A{row}"].fill = fill("#080e15")
                     ws[f"A{row}"].alignment = al_left
-                    ws[f"B{row}"] = atv_c
+                    ws[f"B{row}"] = fila
                     ws[f"B{row}"].font = ft_cli
-                    ws[f"B{row}"].fill = fill(cor_row)
-                    ws[f"B{row}"].alignment = al_right
-                    ws[f"C{row}"] = rec_c
+                    ws[f"B{row}"].fill = fill("#080e15")
+                    ws[f"B{row}"].alignment = al_center
+                    ws[f"C{row}"] = ac_c
                     ws[f"C{row}"].font = ft_cli
-                    ws[f"C{row}"].fill = fill(cor_row)
+                    ws[f"C{row}"].fill = fill("#080e15")
                     ws[f"C{row}"].alignment = al_right
-                    ws[f"C{row}"].number_format = "R$ #,##0.00"
-                    ws[f"D{row}"] = pip_c if pip_c > 0 else ""
+                    ws[f"D{row}"] = rec_c
                     ws[f"D{row}"].font = ft_cli
-                    ws[f"D{row}"].fill = fill(cor_row)
+                    ws[f"D{row}"].fill = fill("#080e15")
                     ws[f"D{row}"].alignment = al_right
-                    ws[f"F{row}"] = fila
-                    ws[f"F{row}"].font = ft_cli
-                    ws[f"F{row}"].fill = fill(cor_row)
-                    ws[f"F{row}"].alignment = al_center
+                    ws[f"D{row}"].number_format = "R$ #,##0.00"
                     ws.row_dimensions[row].height = 15
                     row += 1
 
-        row += 1
+        row += 1  # linha em branco entre lideres
 
     buf = __import__('io').BytesIO()
     wb.save(buf)
