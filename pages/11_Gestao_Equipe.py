@@ -194,7 +194,6 @@ def gerar_pdf(df_atv, meta_dict, mes):
         leftMargin=14*mm, rightMargin=14*mm,
         topMargin=14*mm, bottomMargin=14*mm)
 
-    VERDE     = colors.HexColor("#22c55e")
     VERDE_ESC = colors.HexColor("#15803d")
     AZUL      = colors.HexColor("#3b82f6")
     AMBER     = colors.HexColor("#f59e0b")
@@ -202,10 +201,10 @@ def gerar_pdf(df_atv, meta_dict, mes):
     CINZA_ESC = colors.HexColor("#1e293b")
     BRANCO    = colors.white
     FL        = colors.HexColor("#131f2e")
-    FV        = colors.HexColor("#0f1820")
     FC        = colors.HexColor("#080e15")
     TEXTO     = colors.HexColor("#e2e8f0")
     TDIM      = colors.HexColor("#94a3b8")
+    VERDE     = colors.HexColor("#22c55e")
 
     def s(name, **kw):
         base = {"fontName": "Helvetica", "fontSize": 9, "textColor": TEXTO, "leading": 13}
@@ -221,7 +220,6 @@ def gerar_pdf(df_atv, meta_dict, mes):
     story = []
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    # Header
     h = Table([[Paragraph(f"<b>CONNECT GROUP — Gestão de Vendas {mes}</b>", sTitle),
                 Paragraph(f"Gerado em {agora}", sRight)]], colWidths=["70%","30%"])
     h.setStyle(TableStyle([
@@ -271,7 +269,6 @@ def gerar_pdf(df_atv, meta_dict, mes):
             ]))
             story.append(vr)
 
-            # Clientes
             cols_grp = [c for c in ["razao_social","fila_atual"] if c in df_v.columns]
             if cols_grp:
                 df_g = df_v.copy()
@@ -315,8 +312,7 @@ def gerar_pdf(df_atv, meta_dict, mes):
 
 def gerar_excel(df_atv, meta_dict, mes):
     from openpyxl import Workbook
-    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
+    from openpyxl.styles import PatternFill, Font, Alignment
 
     wb = Workbook()
     ws = wb.active
@@ -330,9 +326,9 @@ def gerar_excel(df_atv, meta_dict, mes):
     ft_vend  = Font(name="Calibri", bold=True, size=10, color="E2E8F0")
     ft_cli   = Font(name="Calibri", size=9,    color="94A3B8")
 
-    al_left  = Alignment(horizontal="left",  vertical="center")
-    al_right = Alignment(horizontal="right", vertical="center")
-    al_center= Alignment(horizontal="center",vertical="center")
+    al_left   = Alignment(horizontal="left",   vertical="center")
+    al_right  = Alignment(horizontal="right",  vertical="center")
+    al_center = Alignment(horizontal="center", vertical="center")
 
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
 
@@ -482,12 +478,12 @@ def render_detalhado(df, mes_alvo, meta_dict):
         </div>""", unsafe_allow_html=True)
 
         for lider in lideres_p:
-            df_l = df_p[df_p["lider"] == lider]
+            df_l    = df_p[df_p["lider"] == lider]
             df_l_ok = df_l[~df_l["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)] if "fila_atual" in df_l.columns else df_l
-            ac_l  = int(df_l_ok[df_l_ok["mes_ativacao"] == mes_alvo]["acessos"].sum())
-            rec_l = df_l_ok[df_l_ok["mes_ativacao"] == mes_alvo]["preco_oferta"].sum()
-            pip_l = int(df_l_ok[df_l_ok["mes_ativacao"].isna()]["acessos"].sum())
-            vends = sorted([v for v in df_l["vendedor_real"].unique() if v and v not in ("Sem Vendedor", "")])
+            ac_l    = int(df_l_ok[df_l_ok["mes_ativacao"] == mes_alvo]["acessos"].sum())
+            rec_l   = df_l_ok[df_l_ok["mes_ativacao"] == mes_alvo]["preco_oferta"].sum()
+            pip_l   = int(df_l_ok[df_l_ok["mes_ativacao"].isna()]["acessos"].sum())
+            vends   = sorted([v for v in df_l["vendedor_real"].unique() if v and v not in ("Sem Vendedor", "")])
 
             st.markdown(f"""<div class="det-lider">
               <span class="det-lider-nome">👤 {lider}</span>
@@ -499,12 +495,11 @@ def render_detalhado(df, mes_alvo, meta_dict):
             </div>""", unsafe_allow_html=True)
 
             for vend in vends:
-                df_v = df_l[df_l["vendedor_real"] == vend]
+                df_v    = df_l[df_l["vendedor_real"] == vend]
                 df_v_ok = df_v[~df_v["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)] if "fila_atual" in df_v.columns else df_v
 
-                df_atv_v = df_v_ok[df_v_ok["mes_ativacao"] == mes_alvo]
-                df_pip_v = df_v_ok[df_v_ok["mes_ativacao"].isna()]
-
+                df_atv_v  = df_v_ok[df_v_ok["mes_ativacao"] == mes_alvo]
+                df_pip_v  = df_v_ok[df_v_ok["mes_ativacao"].isna()]
                 ac_atv_v  = int(df_atv_v["acessos"].sum())
                 rec_atv_v = df_atv_v["preco_oferta"].sum()
                 ac_pip_v  = int(df_pip_v["acessos"].sum())
@@ -535,9 +530,9 @@ def render_detalhado(df, mes_alvo, meta_dict):
                         razao = str(crow.get("razao_social", "—"))
                         if razao.strip().startswith("#") or razao.strip() == "":
                             razao = "—"
-                        fila  = str(crow.get("fila_atual", crow.get("status_dash", "—")))
-                        ac_c  = int(crow.get("ac", 0))
-                        rec_c = float(crow.get("rec", 0))
+                        fila       = str(crow.get("fila_atual", crow.get("status_dash", "—")))
+                        ac_c       = int(crow.get("ac", 0))
+                        rec_c      = float(crow.get("rec", 0))
                         razao_trunc = (razao[:52] + "…") if len(razao) > 52 else razao
                         clientes_html += f"""<div class="det-cliente-row">
                           <span class="det-cli-nome">{razao_trunc}</span>
@@ -631,6 +626,49 @@ def render_atribuicao(df_pendentes, ws_bko, vendedores):
 
 
 # ─────────────────────────────────────────────────────────────────
+#  EXPORTAR — botões PDF e Excel
+# ─────────────────────────────────────────────────────────────────
+
+def _render_exportar(df_atv, meta_dict, mes_alvo):
+    if df_atv.empty or "lider" not in df_atv.columns:
+        st.info("Sem dados ativados no mês para exportar.")
+        return
+
+    col_pdf, col_xlsx = st.columns(2)
+
+    with col_pdf:
+        if st.button("📄 Gerar PDF", use_container_width=True, type="primary"):
+            with st.spinner("Gerando PDF..."):
+                try:
+                    pdf_bytes = gerar_pdf(df_atv, meta_dict, mes_alvo)
+                    st.download_button(
+                        label="⬇️ Baixar PDF",
+                        data=pdf_bytes,
+                        file_name=f"gestao_vendas_{mes_alvo.replace('/','_')}.pdf",
+                        mime="application/pdf",
+                        type="primary",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao gerar PDF: {e}")
+
+    with col_xlsx:
+        if st.button("📊 Gerar Excel", use_container_width=True):
+            with st.spinner("Gerando Excel..."):
+                try:
+                    xlsx_bytes = gerar_excel(df_atv, meta_dict, mes_alvo)
+                    st.download_button(
+                        label="⬇️ Baixar Excel",
+                        data=xlsx_bytes,
+                        file_name=f"gestao_vendas_{mes_alvo.replace('/','_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"Erro ao gerar Excel: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────
 #  CARREGAMENTO DE DADOS
 # ─────────────────────────────────────────────────────────────────
 
@@ -644,9 +682,9 @@ def _load_all():
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _carregar_pendentes_bko(lider_filtro="", parceiro_filtro="", tipo="admin"):
-    gc       = get_gspread_client()
-    planilha = gc.open_by_key(SPREADSHEET_ID)
-    ws       = planilha.worksheet("BKO-VENDEDOR-REAL")
+    gc         = get_gspread_client()
+    planilha   = gc.open_by_key(SPREADSHEET_ID)
+    ws         = planilha.worksheet("BKO-VENDEDOR-REAL")
     all_values = ws.get_all_values()
     if not all_values or len(all_values) < 3:
         return pd.DataFrame(), ws
@@ -716,7 +754,7 @@ def _carregar_pendentes_bko(lider_filtro="", parceiro_filtro="", tipo="admin"):
 
 def main():
     # ── Auth ──────────────────────────────────────────────────────
-    auth_config = _carregar_auth()
+    auth_config   = _carregar_auth()
     authenticator = stauth.Authenticate(
         auth_config["credentials"],
         auth_config["cookie"]["name"],
@@ -728,9 +766,9 @@ def main():
     if login_result:
         name, authentication_status, username = login_result
     else:
-        name = st.session_state.get("name")
+        name                  = st.session_state.get("name")
         authentication_status = st.session_state.get("authentication_status")
-        username = st.session_state.get("username")
+        username              = st.session_state.get("username")
 
     if authentication_status is False:
         st.error("Usuário ou senha incorretos.")
@@ -740,7 +778,7 @@ def main():
         st.stop()
 
     # ── Usuário logado ────────────────────────────────────────────
-    info = _info_usuario(username)
+    info       = _info_usuario(username)
     tipo       = info["tipo"]
     lider_u    = info["lider"]
     parceiro_u = info["parceiro"]
@@ -782,11 +820,18 @@ def main():
 
         if tipo == "admin":
             parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
-            lider_opts   = ["Todos"] + sorted([l for l in bko["lider"].unique() if l and l != "Sem Equipe"]) if not bko.empty else ["Todos"]
-            lider_sel    = st.selectbox("Equipe / Líder", lider_opts)
+
+            # ── Multiselect de líderes ────────────────────────────
+            lider_opts = sorted([l for l in bko["lider"].unique() if l and l != "Sem Equipe"]) if not bko.empty else []
+            lider_sel  = st.multiselect(
+                "Equipe / Líder",
+                options=lider_opts,
+                default=lider_opts,
+                placeholder="Selecione as equipes..."
+            )
         else:
             parceiro_sel = "Todos"
-            lider_sel    = "Todos"
+            lider_sel    = []
 
         st.markdown("---")
         if st.button("🔄 Atualizar dados"):
@@ -813,13 +858,14 @@ def main():
         df["vendedor_real"] = "Sem Vendedor"
         df["lider"]         = "Sem Equipe"
 
+    # Filtro por tipo de usuário
     if tipo == "lider" and lider_u:
         df = df[df["lider"].apply(lambda x: _s(x).upper()) == lider_u.upper()]
     elif tipo == "parceiro" and parceiro_u:
         if "parceiro" in df.columns:
             df = df[df["parceiro"].apply(lambda x: _s(x).upper()) == parceiro_u.upper()]
-    elif tipo == "admin" and lider_sel != "Todos":
-        df = df[df["lider"] == lider_sel]
+    elif tipo == "admin" and lider_sel:
+        df = df[df["lider"].isin(lider_sel)]
 
     if not is_mes_atual:
         df = df[df["mes_ativacao"] == mes_alvo].copy()
@@ -852,27 +898,22 @@ def main():
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
 
     # ── Tabs ──────────────────────────────────────────────────────
-    df_atv = atv.copy()  # só ativados do mês para exportação
+    df_atv = atv.copy()
 
     if tipo == "parceiro":
         tabs = st.tabs(["📋 Detalhado"])
         with tabs[0]:
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
             render_detalhado(df, mes_alvo, meta_dict)
-
-            # ── Exportar ──────────────────────────────────────────
             st.markdown("---")
             st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
             _render_exportar(df_atv, meta_dict, mes_alvo)
-
     else:
         tab_det, tab_atr = st.tabs(["📋 Detalhado", "👤 Atribuição de Vendedores"])
 
         with tab_det:
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
             render_detalhado(df, mes_alvo, meta_dict)
-
-            # ── Exportar ──────────────────────────────────────────
             st.markdown("---")
             st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
             _render_exportar(df_atv, meta_dict, mes_alvo)
@@ -888,46 +929,6 @@ def main():
                 vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
 
             render_atribuicao(df_pend, ws_bko, vendedores)
-
-
-def _render_exportar(df_atv, meta_dict, mes_alvo):
-    """Botões de exportar PDF e Excel."""
-    if df_atv.empty or "lider" not in df_atv.columns:
-        st.info("Sem dados ativados no mês para exportar.")
-        return
-
-    col_pdf, col_xlsx = st.columns(2)
-
-    with col_pdf:
-        if st.button("📄 Gerar PDF", use_container_width=True, type="primary"):
-            with st.spinner("Gerando PDF..."):
-                try:
-                    pdf_bytes = gerar_pdf(df_atv, meta_dict, mes_alvo)
-                    st.download_button(
-                        label="⬇️ Baixar PDF",
-                        data=pdf_bytes,
-                        file_name=f"gestao_vendas_{mes_alvo.replace('/','_')}.pdf",
-                        mime="application/pdf",
-                        type="primary",
-                        use_container_width=True,
-                    )
-                except Exception as e:
-                    st.error(f"Erro ao gerar PDF: {e}")
-
-    with col_xlsx:
-        if st.button("📊 Gerar Excel", use_container_width=True):
-            with st.spinner("Gerando Excel..."):
-                try:
-                    xlsx_bytes = gerar_excel(df_atv, meta_dict, mes_alvo)
-                    st.download_button(
-                        label="⬇️ Baixar Excel",
-                        data=xlsx_bytes,
-                        file_name=f"gestao_vendas_{mes_alvo.replace('/','_')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                    )
-                except Exception as e:
-                    st.error(f"Erro ao gerar Excel: {e}")
 
 
 main()
