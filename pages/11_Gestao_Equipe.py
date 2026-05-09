@@ -4,11 +4,15 @@
 =====================================================================
   Página isolada para líderes e parceiros visualizarem
   apenas suas próprias vendas (Detalhado + Atribuição).
-  
+
   Níveis de acesso (configurados em secrets [credentials_gestao]):
     - admin   → vê tudo, filtra livremente
     - lider   → vê só a equipe definida em lider = "NOME"
     - parceiro → vê só o parceiro definido em parceiro = "NOME"
+
+  Hierarquia do Detalhado: Líder → Vendedor → Clientes
+  (parceiro ignorado na hierarquia — mesmo líder pode vender
+   por qualquer parceiro credenciado)
 =====================================================================
 """
 
@@ -39,17 +43,12 @@ MESES_PT = {
 MES_ALVO          = datetime.now().strftime("%m/%Y")
 META_VENDEDOR_PAD = 850
 SPREADSHEET_ID    = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
-LINK_ATRIBUICAO   = "https://dashboard-tim-connectgroup-sheets-yhmvrhy6akairuh3yjmbmw.streamlit.app/Atribuicao_Vendedor"
 
 # ─────────────────────────────────────────────────────────────────
 #  CSS
 # ─────────────────────────────────────────────────────────────────
 
-st.markdown("""
-<style>
-  [data-testid="stSidebarNav"] { display: none; }
-</style>
-""", unsafe_allow_html=True)
+st.markdown("<style>[data-testid='stSidebarNav'] { display: none; }</style>", unsafe_allow_html=True)
 
 st.markdown("""
 <style>
@@ -75,13 +74,10 @@ st.markdown("""
   .kpi-value { font-size: 1.6rem; font-weight: 800; color: #f1f5f9; line-height: 1; }
   .kpi-sub   { font-size: 0.72rem; color: #64748b; margin-top: 4px; }
   .section-title { font-size:0.75rem; text-transform:uppercase; letter-spacing:1.5px; color:#22c55e; font-weight:700; margin:24px 0 12px 0; border-left: 3px solid #22c55e; padding-left: 10px; }
-  .det-parceiro { background: linear-gradient(90deg,#0d1f3c,#1e3a5f); border-left:5px solid #3b82f6; border-radius:12px; padding:14px 22px; margin:20px 0 4px 0; display:flex; align-items:center; justify-content:space-between; }
-  .det-parceiro-nome  { font-size:1.05rem; font-weight:800; color:#93c5fd; }
-  .det-parceiro-stats { font-size:0.78rem; color:#64748b; }
-  .det-lider { background:#131f2e; border-left:4px solid #22c55e; border-radius:10px; padding:10px 18px; margin:8px 0 4px 20px; display:flex; align-items:center; justify-content:space-between; }
-  .det-lider-nome  { font-size:0.92rem; font-weight:700; color:#86efac; }
-  .det-lider-stats { font-size:0.75rem; color:#64748b; }
-  .det-vendedor-wrap { background:#0f1820; border-left:3px solid #334155; border-radius:8px; padding:10px 16px; margin:4px 0 4px 40px; }
+  .det-lider { background: linear-gradient(90deg,#0d1f3c,#1e3a5f); border-left:5px solid #3b82f6; border-radius:12px; padding:14px 22px; margin:20px 0 4px 0; display:flex; align-items:center; justify-content:space-between; }
+  .det-lider-nome  { font-size:1.05rem; font-weight:800; color:#93c5fd; }
+  .det-lider-stats { font-size:0.78rem; color:#64748b; }
+  .det-vendedor-wrap { background:#0f1820; border-left:3px solid #334155; border-radius:8px; padding:10px 16px; margin:4px 0 4px 24px; }
   .det-vend-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; flex-wrap:wrap; gap:6px; }
   .det-vend-nome { font-size:0.83rem; font-weight:700; color:#e2e8f0; }
   .det-vend-kpis { display:flex; gap:0; font-size:0.74rem; background:#0a1018; border-radius:8px; overflow:hidden; border:1px solid #1e293b; }
@@ -143,10 +139,6 @@ def _info_usuario(username: str) -> dict:
 #  HELPERS
 # ─────────────────────────────────────────────────────────────────
 
-def _bar(valor, maximo, cor="#22c55e", h=8):
-    pct = min(int(valor / maximo * 100), 100) if maximo > 0 else 0
-    return f'<div class="rank-bg"><div class="rank-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'
-
 def _cor(pct):
     if pct >= 100: return "#22c55e"
     if pct >= 70:  return "#f59e0b"
@@ -157,7 +149,7 @@ def _meta_vend(nome, meta_dict):
 
 def _fila_badge(fila):
     fila_up = str(fila).strip().upper() if fila else "—"
-    cfg = STATUS_COLORS.get(fila_up, {"border": "#64748b", "icon": "▪️"})
+    cfg  = STATUS_COLORS.get(fila_up, {"border": "#64748b", "icon": "▪️"})
     cor  = cfg.get("border", "#64748b")
     icon = cfg.get("icon", "▪️")
     return (f'<span class="det-cli-fila" '
@@ -197,6 +189,7 @@ def gerar_pdf(df_atv, meta_dict, mes):
     VERDE_ESC = colors.HexColor("#15803d")
     AZUL      = colors.HexColor("#3b82f6")
     AMBER     = colors.HexColor("#f59e0b")
+    VERDE     = colors.HexColor("#22c55e")
     CINZA     = colors.HexColor("#64748b")
     CINZA_ESC = colors.HexColor("#1e293b")
     BRANCO    = colors.white
@@ -204,7 +197,6 @@ def gerar_pdf(df_atv, meta_dict, mes):
     FC        = colors.HexColor("#080e15")
     TEXTO     = colors.HexColor("#e2e8f0")
     TDIM      = colors.HexColor("#94a3b8")
-    VERDE     = colors.HexColor("#22c55e")
 
     def s(name, **kw):
         base = {"fontName": "Helvetica", "fontSize": 9, "textColor": TEXTO, "leading": 13}
@@ -447,123 +439,106 @@ def gerar_excel(df_atv, meta_dict, mes):
 
 
 # ─────────────────────────────────────────────────────────────────
-#  RENDER DETALHADO
+#  RENDER DETALHADO — hierarquia: Líder → Vendedor → Clientes
+#  (parceiro ignorado — mesmo líder pode vender por qualquer parceiro)
 # ─────────────────────────────────────────────────────────────────
 
 def render_detalhado(df, mes_alvo, meta_dict):
     FILAS_CANCEL = {"CANCELADO", "CANCELADA", "CANCEL"}
 
-    parceiros = sorted(df["parceiro"].dropna().unique()) if "parceiro" in df.columns else ["—"]
+    if "fila_atual" in df.columns:
+        df = df[~df["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)]
 
-    for parceiro in parceiros:
-        df_p = df[df["parceiro"] == parceiro] if "parceiro" in df.columns else df
-        if df_p.empty:
-            continue
+    lideres = sorted([l for l in df["lider"].dropna().unique() if l and l not in ("Sem Equipe", "")])
 
-        if "fila_atual" in df_p.columns:
-            df_p = df_p[~df_p["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)]
+    if not lideres:
+        st.info("Nenhuma equipe encontrada para os filtros selecionados.")
+        return
 
-        lideres_p = sorted([l for l in df_p["lider"].unique() if l and l not in ("Sem Equipe", "")])
-        ac_p  = int(df_p[df_p["mes_ativacao"] == mes_alvo]["acessos"].sum())
-        rec_p = df_p[df_p["mes_ativacao"] == mes_alvo]["preco_oferta"].sum()
-        pip_p = int(df_p[df_p["mes_ativacao"].isna()]["acessos"].sum())
+    for lider in lideres:
+        df_l    = df[df["lider"] == lider]
+        ac_l    = int(df_l[df_l["mes_ativacao"] == mes_alvo]["acessos"].sum())
+        rec_l   = df_l[df_l["mes_ativacao"] == mes_alvo]["preco_oferta"].sum()
+        pip_l   = int(df_l[df_l["mes_ativacao"].isna()]["acessos"].sum())
+        vends   = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
 
-        st.markdown(f"""<div class="det-parceiro">
-          <span class="det-parceiro-nome">🏢 {parceiro}</span>
-          <span class="det-parceiro-stats">
-            {len(lideres_p)} equipe(s) &nbsp;·&nbsp;
-            ✅ {ac_p} ac / R$ {rec_p:,.2f} &nbsp;·&nbsp;
-            ⏳ {pip_p} ac tramitando
+        st.markdown(f"""<div class="det-lider">
+          <span class="det-lider-nome">👤 {lider}</span>
+          <span class="det-lider-stats">
+            {len(vends)} vend. &nbsp;·&nbsp;
+            ✅ {ac_l} ac / R$ {rec_l:,.2f} &nbsp;·&nbsp;
+            ⏳ {pip_l} ac tramitando
           </span>
         </div>""", unsafe_allow_html=True)
 
-        for lider in lideres_p:
-            df_l    = df_p[df_p["lider"] == lider]
-            df_l_ok = df_l[~df_l["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)] if "fila_atual" in df_l.columns else df_l
-            ac_l    = int(df_l_ok[df_l_ok["mes_ativacao"] == mes_alvo]["acessos"].sum())
-            rec_l   = df_l_ok[df_l_ok["mes_ativacao"] == mes_alvo]["preco_oferta"].sum()
-            pip_l   = int(df_l_ok[df_l_ok["mes_ativacao"].isna()]["acessos"].sum())
-            vends   = sorted([v for v in df_l["vendedor_real"].unique() if v and v not in ("Sem Vendedor", "")])
+        for vend in vends:
+            df_v      = df_l[df_l["vendedor_real"] == vend]
+            df_atv_v  = df_v[df_v["mes_ativacao"] == mes_alvo]
+            df_pip_v  = df_v[df_v["mes_ativacao"].isna()]
+            ac_atv_v  = int(df_atv_v["acessos"].sum())
+            rec_atv_v = df_atv_v["preco_oferta"].sum()
+            ac_pip_v  = int(df_pip_v["acessos"].sum())
+            rec_pip_v = df_pip_v["preco_oferta"].sum()
+            meta_v    = _meta_vend(vend, meta_dict)
+            pct_v     = min(int(rec_atv_v / meta_v * 100), 100) if meta_v > 0 else 0
+            cor_v     = _cor(pct_v)
 
-            st.markdown(f"""<div class="det-lider">
-              <span class="det-lider-nome">👤 {lider}</span>
-              <span class="det-lider-stats">
-                {len(vends)} vend. &nbsp;·&nbsp;
-                ✅ {ac_l} ac / R$ {rec_l:,.2f} &nbsp;·&nbsp;
-                ⏳ {pip_l} ac
-              </span>
-            </div>""", unsafe_allow_html=True)
+            cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"] if c in df_v.columns]
+            if cols_grp:
+                df_grp = df_v.copy()
+                for col in cols_grp:
+                    df_grp[col] = df_grp[col].fillna("—")
+                clientes_df = (
+                    df_grp.groupby(cols_grp, as_index=False)
+                    .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"),
+                         n_atv=("mes_ativacao", lambda x: (x == mes_alvo).sum()))
+                    .sort_values(["n_atv","ac"], ascending=[False, False])
+                )
+            else:
+                clientes_df = pd.DataFrame()
 
-            for vend in vends:
-                df_v    = df_l[df_l["vendedor_real"] == vend]
-                df_v_ok = df_v[~df_v["fila_atual"].str.strip().str.upper().isin(FILAS_CANCEL)] if "fila_atual" in df_v.columns else df_v
+            clientes_html = ""
+            if clientes_df.empty:
+                clientes_html = '<div class="det-empty">Sem pedidos no mês.</div>'
+            else:
+                for _, crow in clientes_df.iterrows():
+                    razao = str(crow.get("razao_social", "—"))
+                    if razao.strip().startswith("#") or razao.strip() == "":
+                        razao = "—"
+                    fila        = str(crow.get("fila_atual", crow.get("status_dash", "—")))
+                    ac_c        = int(crow.get("ac", 0))
+                    rec_c       = float(crow.get("rec", 0))
+                    razao_trunc = (razao[:52] + "…") if len(razao) > 52 else razao
+                    clientes_html += f"""<div class="det-cliente-row">
+                      <span class="det-cli-nome">{razao_trunc}</span>
+                      <span class="det-cli-stats">
+                        <span class="det-cli-ac">🔢 {ac_c} ac</span>
+                        <span class="det-cli-rec">💰 R$ {rec_c:,.2f}</span>
+                        {_fila_badge(fila)}
+                      </span>
+                    </div>"""
 
-                df_atv_v  = df_v_ok[df_v_ok["mes_ativacao"] == mes_alvo]
-                df_pip_v  = df_v_ok[df_v_ok["mes_ativacao"].isna()]
-                ac_atv_v  = int(df_atv_v["acessos"].sum())
-                rec_atv_v = df_atv_v["preco_oferta"].sum()
-                ac_pip_v  = int(df_pip_v["acessos"].sum())
-                rec_pip_v = df_pip_v["preco_oferta"].sum()
-                meta_v    = _meta_vend(vend, meta_dict)
-                pct_v     = min(int(rec_atv_v / meta_v * 100), 100) if meta_v > 0 else 0
-                cor_v     = _cor(pct_v)
-
-                cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"] if c in df_v_ok.columns]
-                if cols_grp:
-                    df_grp = df_v_ok.copy()
-                    for col in cols_grp:
-                        df_grp[col] = df_grp[col].fillna("—")
-                    clientes_df = (
-                        df_grp.groupby(cols_grp, as_index=False)
-                        .agg(ac=("acessos","sum"), rec=("preco_oferta","sum"),
-                             n_atv=("mes_ativacao", lambda x: (x == mes_alvo).sum()))
-                        .sort_values(["n_atv","ac"], ascending=[False, False])
-                    )
-                else:
-                    clientes_df = pd.DataFrame()
-
-                clientes_html = ""
-                if clientes_df.empty:
-                    clientes_html = '<div class="det-empty">Sem pedidos no mês.</div>'
-                else:
-                    for _, crow in clientes_df.iterrows():
-                        razao = str(crow.get("razao_social", "—"))
-                        if razao.strip().startswith("#") or razao.strip() == "":
-                            razao = "—"
-                        fila       = str(crow.get("fila_atual", crow.get("status_dash", "—")))
-                        ac_c       = int(crow.get("ac", 0))
-                        rec_c      = float(crow.get("rec", 0))
-                        razao_trunc = (razao[:52] + "…") if len(razao) > 52 else razao
-                        clientes_html += f"""<div class="det-cliente-row">
-                          <span class="det-cli-nome">{razao_trunc}</span>
-                          <span class="det-cli-stats">
-                            <span class="det-cli-ac">🔢 {ac_c} ac</span>
-                            <span class="det-cli-rec">💰 R$ {rec_c:,.2f}</span>
-                            {_fila_badge(fila)}
-                          </span>
-                        </div>"""
-
-                st.markdown(f"""<div class="det-vendedor-wrap">
-                  <div class="det-vend-header">
-                    <span class="det-vend-nome">📌 {vend}</span>
-                    <div class="det-vend-kpis">
-                      <div class="det-kpi-block">
-                        <span class="det-kpi-label">✅ Ativado</span>
-                        <span class="det-kpi-val" style="color:{cor_v}">
-                          {ac_atv_v} ac · R$ {rec_atv_v:,.2f}
-                          <span style="color:#64748b;font-size:0.68rem"> ({pct_v}%)</span>
-                        </span>
-                      </div>
-                      <div class="det-kpi-block">
-                        <span class="det-kpi-label">⏳ Tramitando</span>
-                        <span class="det-kpi-val" style="color:#f59e0b">
-                          {ac_pip_v} ac · R$ {rec_pip_v:,.2f}
-                        </span>
-                      </div>
-                    </div>
+            st.markdown(f"""<div class="det-vendedor-wrap">
+              <div class="det-vend-header">
+                <span class="det-vend-nome">📌 {vend}</span>
+                <div class="det-vend-kpis">
+                  <div class="det-kpi-block">
+                    <span class="det-kpi-label">✅ Ativado</span>
+                    <span class="det-kpi-val" style="color:{cor_v}">
+                      {ac_atv_v} ac · R$ {rec_atv_v:,.2f}
+                      <span style="color:#64748b;font-size:0.68rem"> ({pct_v}%)</span>
+                    </span>
                   </div>
-                  <div class="det-clientes-wrap">{clientes_html}</div>
-                </div>""", unsafe_allow_html=True)
+                  <div class="det-kpi-block">
+                    <span class="det-kpi-label">⏳ Tramitando</span>
+                    <span class="det-kpi-val" style="color:#f59e0b">
+                      {ac_pip_v} ac · R$ {rec_pip_v:,.2f}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div class="det-clientes-wrap">{clientes_html}</div>
+            </div>""", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -821,7 +796,6 @@ def main():
         if tipo == "admin":
             parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
 
-            # ── Multiselect de líderes ────────────────────────────
             lider_opts = sorted([l for l in bko["lider"].unique() if l and l != "Sem Equipe"]) if not bko.empty else []
             lider_sel  = st.multiselect(
                 "Equipe / Líder",
@@ -844,7 +818,7 @@ def main():
 
     is_mes_atual = (mes_alvo == datetime.now().strftime("%m/%Y"))
 
-    # ── Aplica filtros ────────────────────────────────────────────
+    # ── Aplica filtros e merge com BKO ────────────────────────────
     df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], parceiro_sel)
 
     if not bko.empty and "pedido" in df.columns:
@@ -874,8 +848,11 @@ def main():
         st.info("Nenhum dado para os filtros selecionados.")
         st.stop()
 
-    # ── KPIs ──────────────────────────────────────────────────────
+    # ── df_atv gerado DEPOIS de todos os filtros e merge ──────────
     atv    = df[df["mes_ativacao"] == mes_alvo]
+    df_atv = atv.copy()
+
+    # ── KPIs ──────────────────────────────────────────────────────
     ac_g   = int(atv["acessos"].sum())
     rec_g  = atv["preco_oferta"].sum()
     pip_g  = int(df[df["mes_ativacao"].isna()]["acessos"].sum())
@@ -898,8 +875,6 @@ def main():
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
 
     # ── Tabs ──────────────────────────────────────────────────────
-    df_atv = atv.copy()
-
     if tipo == "parceiro":
         tabs = st.tabs(["📋 Detalhado"])
         with tabs[0]:
