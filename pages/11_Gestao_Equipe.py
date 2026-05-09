@@ -225,13 +225,17 @@ def gerar_pdf(df_atv, meta_dict, mes):
     lideres = sorted([l for l in df_atv["lider"].dropna().unique() if l and l not in ("Sem Equipe", "")])
 
     for lider in lideres:
-        df_l  = df_atv[df_atv["lider"] == lider]
-        ac_l  = int(df_l["acessos"].sum())
-        rec_l = df_l["preco_oferta"].sum()
-        vends = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
+        df_l      = df_atv[df_atv["lider"] == lider]
+        df_l_atv  = df_l[df_l["mes_ativacao"] == mes]
+        df_l_pip  = df_l[df_l["mes_ativacao"].isna()]
+        ac_l      = int(df_l_atv["acessos"].sum())
+        rec_l     = df_l_atv["preco_oferta"].sum()
+        pip_l     = int(df_l_pip["acessos"].sum())
+        vends     = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
+        pip_str_l = f" | ⏳ {pip_l} pip" if pip_l > 0 else ""
 
         lr = Table([[Paragraph(f"  {lider}", sLider),
-                     Paragraph(f"{len(vends)} vend.   {ac_l} ac / R$ {rec_l:,.2f}", sRight)]],
+                     Paragraph(f"{len(vends)} vend.   {ac_l} ac / R$ {rec_l:,.2f}{pip_str_l}", sRight)]],
                    colWidths=["55%","45%"])
         lr.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,-1),AZUL),
@@ -242,15 +246,19 @@ def gerar_pdf(df_atv, meta_dict, mes):
         story.append(lr)
 
         for vend in vends:
-            df_v   = df_l[df_l["vendedor_real"] == vend]
-            ac_v   = int(df_v["acessos"].sum())
-            rec_v  = df_v["preco_oferta"].sum()
-            meta_v = _meta_vend(vend, meta_dict)
-            pct_v  = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
-            cor_v  = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
+            df_v      = df_l[df_l["vendedor_real"] == vend]
+            df_v_atv  = df_v[df_v["mes_ativacao"] == mes]
+            df_v_pip  = df_v[df_v["mes_ativacao"].isna()]
+            ac_v      = int(df_v_atv["acessos"].sum())
+            rec_v     = df_v_atv["preco_oferta"].sum()
+            ac_pip_v  = int(df_v_pip["acessos"].sum())
+            meta_v    = _meta_vend(vend, meta_dict)
+            pct_v     = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            cor_v     = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
+            pip_str   = f" | ⏳ {ac_pip_v} pip" if ac_pip_v > 0 else ""
 
             vr = Table([[Paragraph(f"    {vend}", sVend),
-                         Paragraph(f"{ac_v} ac / R$ {rec_v:,.2f} ({pct_v}%)", sRight)]],
+                         Paragraph(f"{ac_v} ac / R$ {rec_v:,.2f} ({pct_v}%){pip_str}", sRight)]],
                        colWidths=["55%","45%"])
             vr.setStyle(TableStyle([
                 ("BACKGROUND",(0,0),(-1,-1),FL),
@@ -349,13 +357,16 @@ def gerar_excel(df_atv, meta_dict, mes):
     lideres = sorted([l for l in df_atv["lider"].dropna().unique() if l and l not in ("Sem Equipe", "")])
 
     for lider in lideres:
-        df_l  = df_atv[df_atv["lider"] == lider]
-        ac_l  = int(df_l["acessos"].sum())
-        rec_l = df_l["preco_oferta"].sum()
-        vends = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
+        df_l     = df_atv[df_atv["lider"] == lider]
+        df_l_atv = df_l[df_l["mes_ativacao"] == mes]
+        df_l_pip = df_l[df_l["mes_ativacao"].isna()]
+        ac_l     = int(df_l_atv["acessos"].sum())
+        rec_l    = df_l_atv["preco_oferta"].sum()
+        pip_l    = int(df_l_pip["acessos"].sum())
+        vends    = sorted([v for v in df_l["vendedor_real"].dropna().unique() if v and v not in ("Sem Vendedor", "")])
 
         ws.merge_cells(f"A{row}:C{row}")
-        ws[f"A{row}"] = f"  {lider}"
+        ws[f"A{row}"] = f"  {lider}" + (f"  |  ⏳ {pip_l} pip" if pip_l > 0 else "")
         ws[f"A{row}"].font = ft_lider
         ws[f"A{row}"].fill = fill("#1d4ed8")
         ws[f"A{row}"].alignment = al_left
@@ -372,15 +383,18 @@ def gerar_excel(df_atv, meta_dict, mes):
         row += 1
 
         for vend in vends:
-            df_v   = df_l[df_l["vendedor_real"] == vend]
-            ac_v   = int(df_v["acessos"].sum())
-            rec_v  = df_v["preco_oferta"].sum()
-            meta_v = _meta_vend(vend, meta_dict)
-            pct_v  = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
-            cor_v  = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
+            df_v     = df_l[df_l["vendedor_real"] == vend]
+            df_v_atv = df_v[df_v["mes_ativacao"] == mes]
+            df_v_pip = df_v[df_v["mes_ativacao"].isna()]
+            ac_v     = int(df_v_atv["acessos"].sum())
+            rec_v    = df_v_atv["preco_oferta"].sum()
+            ac_pip_v = int(df_v_pip["acessos"].sum())
+            meta_v   = _meta_vend(vend, meta_dict)
+            pct_v    = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            cor_v    = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
 
             ws.merge_cells(f"A{row}:C{row}")
-            ws[f"A{row}"] = f"    {vend}"
+            ws[f"A{row}"] = f"    {vend}" + (f"  | ⏳ {ac_pip_v} pip" if ac_pip_v > 0 else "")
             ws[f"A{row}"].font = ft_vend
             ws[f"A{row}"].fill = fill("#131f2e")
             ws[f"A{row}"].alignment = al_left
@@ -604,8 +618,8 @@ def render_atribuicao(df_pendentes, ws_bko, vendedores):
 #  EXPORTAR — botões PDF e Excel
 # ─────────────────────────────────────────────────────────────────
 
-def _render_exportar(df_atv, meta_dict, mes_alvo):
-    if df_atv.empty or "lider" not in df_atv.columns:
+def _render_exportar(df_export, meta_dict, mes_alvo):
+    if df_export.empty or "lider" not in df_export.columns:
         st.info("Sem dados ativados no mês para exportar.")
         return
 
@@ -615,7 +629,7 @@ def _render_exportar(df_atv, meta_dict, mes_alvo):
         if st.button("📄 Gerar PDF", use_container_width=True, type="primary"):
             with st.spinner("Gerando PDF..."):
                 try:
-                    pdf_bytes = gerar_pdf(df_atv, meta_dict, mes_alvo)
+                    pdf_bytes = gerar_pdf(df_export, meta_dict, mes_alvo)
                     st.download_button(
                         label="⬇️ Baixar PDF",
                         data=pdf_bytes,
@@ -631,7 +645,7 @@ def _render_exportar(df_atv, meta_dict, mes_alvo):
         if st.button("📊 Gerar Excel", use_container_width=True):
             with st.spinner("Gerando Excel..."):
                 try:
-                    xlsx_bytes = gerar_excel(df_atv, meta_dict, mes_alvo)
+                    xlsx_bytes = gerar_excel(df_export, meta_dict, mes_alvo)
                     st.download_button(
                         label="⬇️ Baixar Excel",
                         data=xlsx_bytes,
@@ -819,7 +833,7 @@ def main():
     is_mes_atual = (mes_alvo == datetime.now().strftime("%m/%Y"))
 
     # ── Aplica filtros e merge com BKO ────────────────────────────
-    df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], parceiro_sel)
+    df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], "Todos")  # parceiro ignorado na hierarquia por lider
 
     if not bko.empty and "pedido" in df.columns:
         df["pedido"] = df["pedido"].apply(_norm_pedido)
@@ -850,7 +864,7 @@ def main():
 
     # ── df_atv gerado DEPOIS de todos os filtros e merge ──────────
     atv    = df[df["mes_ativacao"] == mes_alvo]
-    df_atv = atv.copy()
+    df_export = df.copy()  # export usa df completo filtrado por lider
 
     # ── KPIs ──────────────────────────────────────────────────────
     ac_g   = int(atv["acessos"].sum())
@@ -882,7 +896,7 @@ def main():
             render_detalhado(df, mes_alvo, meta_dict)
             st.markdown("---")
             st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
-            _render_exportar(df_atv, meta_dict, mes_alvo)
+            _render_exportar(df_export, meta_dict, mes_alvo)
     else:
         tab_det, tab_atr = st.tabs(["📋 Detalhado", "👤 Atribuição de Vendedores"])
 
@@ -891,7 +905,7 @@ def main():
             render_detalhado(df, mes_alvo, meta_dict)
             st.markdown("---")
             st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
-            _render_exportar(df_atv, meta_dict, mes_alvo)
+            _render_exportar(df_export, meta_dict, mes_alvo)
 
         with tab_atr:
             st.markdown('<p class="section-title">👤 Pedidos sem Vendedor Atribuído</p>', unsafe_allow_html=True)
