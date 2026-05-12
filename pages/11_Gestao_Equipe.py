@@ -724,34 +724,33 @@ def _load_carteira(_gc):
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _load_colab_carteira(_gc):
+def _load_colab_carteira():
+    """Carrega vendedores com lider ativo da aba Colaboradores."""
     import unicodedata
     def _n(s):
         s = str(s).strip().lower()
         return "".join(c for c in unicodedata.normalize("NFD",s) if unicodedata.category(c)!="Mn")
     try:
-        df = load_colaboradores(_gc)
+        df = load_colaboradores()
         if df.empty:
             return [], {}, {}
         col_map = {_n(c): c for c in df.columns}
         col_v = col_map.get("vendedor")
         col_l = col_map.get("lider")
         col_t = col_map.get("tbp")
+        if not col_v:
+            return [], {}, {}
         vendedores, mapa_lider, mapa_tbp = [], {}, {}
-        if col_v:
-            vendedores = sorted([
-                v for v in df[col_v].dropna().unique()
-                if v and str(v).strip() not in ("","nan","None","VENDEDOR")
-            ])
-            for _, row in df.iterrows():
-                v = str(row.get(col_v,"")).strip()
-                l = str(row.get(col_l,"")).strip() if col_l else ""
-                t = str(row.get(col_t,"")).strip() if col_t else ""
-                if v:
-                    if l and l not in ("","nan","None"):
-                        mapa_lider[v] = l
-                    if t and t not in ("","nan","None"):
-                        mapa_tbp[v] = t
+        for _, row in df.iterrows():
+            v = str(row.get(col_v,"")).strip()
+            l = str(row.get(col_l,"")).strip() if col_l else ""
+            t = str(row.get(col_t,"")).strip() if col_t else ""
+            # Só inclui vendedor que tem líder definido (ativo)
+            if v and v not in ("","nan","None","VENDEDOR") and l and l not in ("","nan","None","LIDER","LÍDER"):
+                mapa_lider[v] = l
+                if t and t not in ("","nan","None","TBP"):
+                    mapa_tbp[v] = t
+        vendedores = sorted(mapa_lider.keys())
         return vendedores, mapa_lider, mapa_tbp
     except Exception:
         return [], {}, {}
@@ -1446,7 +1445,7 @@ def main():
         df_carteira = _load_carteira(gc_carteira)
         df_carteira = _atualizar_expirados_gc(gc_carteira, df_carteira.copy())
         try:
-            vends_cart, mapa_lider_cart, mapa_tbp_cart = _load_colab_carteira(gc_carteira)
+            vends_cart, mapa_lider_cart, mapa_tbp_cart = _load_colab_carteira()
         except Exception:
             vends_cart, mapa_lider_cart, mapa_tbp_cart = [], {}, {}
 
