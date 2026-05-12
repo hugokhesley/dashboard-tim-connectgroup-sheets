@@ -1025,42 +1025,75 @@ def _tela_carteira_novo(gc, df_carteira, vendedores, mapa_lider, mapa_tbp, usern
         """, unsafe_allow_html=True)
         return
 
+    # ── Responsável FORA do form para reagir ao selectbox ────────
+    st.markdown('<p class="section-title">👤 RESPONSÁVEL PELO ATENDIMENTO</p>', unsafe_allow_html=True)
+    cv, cl, ct = st.columns(3)
+    with cv:
+        if vendedores:
+            vend_sel = st.selectbox("Vendedor *", vendedores, key="cart_form_vend")
+        else:
+            st.warning("⚠️ Nenhum vendedor com líder encontrado na aba Colaboradores.")
+            vend_sel = st.text_input("Vendedor *", key="cart_form_vend_txt")
+
+    # Preenche líder e TBP automaticamente — reage a cada mudança
+    lider_auto = mapa_lider.get(str(vend_sel), "") if vend_sel else ""
+    tbp_auto   = mapa_tbp.get(str(vend_sel), "")   if vend_sel else ""
+
+    with cl:
+        st.markdown(f"""
+        <div style="background:#0d1f14;border:1px solid #14532d;border-radius:8px;
+                    padding:10px 14px;min-height:46px">
+          <div style="font-size:0.65rem;color:#4ade80;font-weight:700;text-transform:uppercase;
+                      letter-spacing:0.5px;margin-bottom:4px">Líder</div>
+          <div style="font-size:0.92rem;font-weight:700;color:#93c5fd">
+            {lider_auto if lider_auto else "<span style='color:#475569'>—</span>"}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with ct:
+        st.markdown(f"""
+        <div style="background:#150d2b;border:1px solid #3b1f6e;border-radius:8px;
+                    padding:10px 14px;min-height:46px">
+          <div style="font-size:0.65rem;color:#a78bfa;font-weight:700;text-transform:uppercase;
+                      letter-spacing:0.5px;margin-bottom:4px">Escritório (TBP)</div>
+          <div style="font-size:0.92rem;font-weight:700;color:#a78bfa">
+            {tbp_auto if tbp_auto else "<span style='color:#475569'>—</span>"}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("")
+
+    def _sv(d, k):
+        v = d.get(k, "")
+        return str(v) if v is not None else ""
+
     with st.form("form_carteira_novo"):
         st.markdown('<p class="section-title">🏢 DADOS DO CLIENTE</p>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
-            razao    = st.text_input("Razao Social *",  value=c.get("razao_social",""))
-            telefone = st.text_input("Telefone",        value=c.get("telefone",""))
-            cidade   = st.text_input("Cidade",          value=c.get("cidade",""))
+            razao    = st.text_input("Razao Social *",  value=_sv(c,"razao_social"))
+            telefone = st.text_input("Telefone",        value=_sv(c,"telefone"))
+            cidade   = st.text_input("Cidade",          value=_sv(c,"cidade"))
         with c2:
-            fantasia  = st.text_input("Nome Fantasia",  value=c.get("nome_fantasia",""))
-            email     = st.text_input("Email",          value=c.get("email",""))
-            uf        = st.text_input("UF",             value=c.get("uf",""))
+            fantasia  = st.text_input("Nome Fantasia",  value=_sv(c,"nome_fantasia"))
+            email_cli = st.text_input("Email",          value=_sv(c,"email"))
+            uf        = st.text_input("UF",             value=_sv(c,"uf"))
         with c3:
-            atividade = st.text_input("Atividade",      value=c.get("atividade_economica",""))
-            fundacao  = st.text_input("Data Fundacao",  value=c.get("data_fundacao",""))
-            capital   = st.text_input("Capital Social", value=c.get("capital_social",""))
+            atividade = st.text_input("Atividade",      value=_sv(c,"atividade_economica"))
+            fundacao  = st.text_input("Data Fundacao",  value=_sv(c,"data_fundacao"))
+            capital   = st.text_input("Capital Social", value=_sv(c,"capital_social"))
 
-        st.markdown('<p class="section-title">👤 RESPONSAVEL</p>', unsafe_allow_html=True)
-        cv, cl, ct = st.columns(3)
-        with cv:
-            if vendedores:
-                vend_sel = st.selectbox("Vendedor *", vendedores, key="cart_form_vend")
-            else:
-                vend_sel = st.text_input("Vendedor *", key="cart_form_vend_txt")
-        lider_auto = mapa_lider.get(str(vend_sel),"") if vend_sel else ""
-        tbp_auto   = mapa_tbp.get(str(vend_sel),"")   if vend_sel else ""
-        with cl:
-            lider_val = st.text_input("Lider",              value=lider_auto, key="cart_form_lider")
-        with ct:
-            tbp_val   = st.text_input("Escritorio (TBP)",   value=tbp_auto,   key="cart_form_tbp")
         obs_val = st.text_area("Observacoes", height=60, key="cart_form_obs")
 
         submitted = st.form_submit_button("📁 Registrar na Carteira", type="primary", use_container_width=True)
         if submitted:
+            vend_final  = str(st.session_state.get("cart_form_vend", vend_sel)).strip()
+            lider_final = mapa_lider.get(vend_final, "")
+            tbp_final   = mapa_tbp.get(vend_final, "")
             if not razao.strip():
                 st.error("⚠️ Razao Social obrigatoria.")
-            elif not str(vend_sel).strip():
+            elif not vend_final:
                 st.error("⚠️ Selecione o vendedor.")
             else:
                 dados_salvar = {
@@ -1071,23 +1104,23 @@ def _tela_carteira_novo(gc, df_carteira, vendedores, mapa_lider, mapa_tbp, usern
                     "data_fundacao":       fundacao.strip(),
                     "capital_social":      capital.strip(),
                     "telefone":            telefone.strip(),
-                    "email":               email.strip(),
+                    "email":               email_cli.strip(),
                     "cep":                 c.get("cep",""),
                     "logradouro":          c.get("logradouro",""),
                     "numero":              c.get("numero",""),
                     "bairro":              c.get("bairro",""),
                     "cidade":              cidade.strip(),
                     "uf":                  uf.strip(),
-                    "vendedor":            str(vend_sel).strip(),
-                    "lider":               lider_val.strip(),
-                    "tbp":                 tbp_val.strip(),
+                    "vendedor":            vend_final,
+                    "lider":               lider_final,
+                    "tbp":                 tbp_final,
                     "obs":                 obs_val.strip(),
                     "pedido_tim":          "",
                 }
                 with st.spinner("Registrando..."):
                     ok = _registrar_cnpj_carteira(gc, dados_salvar, username)
                 if ok:
-                    st.success(f"✅ **{razao}** registrado! Vendedor: **{vend_sel}** · Escritorio: **{tbp_val}**")
+                    st.success(f"✅ **{razao}** registrado! Vendedor: **{vend_final}** · Líder: **{lider_final}** · Escritório: **{tbp_final}**")
                     st.session_state.pop("cart_dados_receita", None)
                     st.rerun()
 
@@ -1190,6 +1223,291 @@ def _tela_carteira_lista(gc, df, info, username, is_admin):
                            "carteira.csv", "text/csv", key="cart_exp")
 
 
+
+
+# ─────────────────────────────────────────────────────────────────
+#  QUALIDADE — carregamento e render
+# ─────────────────────────────────────────────────────────────────
+
+QUALIDADE_SHEET_ID = "1QO4EpMnVFbHMMGASzjhmemlC2avuyhZ8bHIcdSnAnlU"
+QUALIDADE_ABA      = "BASE_SAFRAS_QUALIDADE"
+
+COR_ADIMPLENTE = {
+    "SIM":           "#22c55e",
+    "NAO":           "#ef4444",
+    "FATURA GERADA": "#f59e0b",
+}
+ICON_ADIMPLENTE = {
+    "SIM":           "\u2705",
+    "NAO":           "\u274c",
+    "FATURA GERADA": "\u23f3",
+}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_qualidade():
+    import unicodedata, gspread
+    from google.oauth2.service_account import Credentials
+    def _nq(s):
+        s = str(s).strip().lower()
+        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                  "https://www.googleapis.com/auth/drive"]
+        creds  = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]), scopes=scopes)
+        gc_q   = gspread.authorize(creds)
+        aba    = gc_q.open_by_key(QUALIDADE_SHEET_ID).worksheet(QUALIDADE_ABA)
+        rows   = aba.get_all_values()
+        if not rows or len(rows) < 2:
+            return pd.DataFrame()
+
+        KEYWORDS = {"cnpj", "safra", "cliente", "adimplente"}
+        header_idx = 0
+        for i, row in enumerate(rows):
+            if {_nq(c) for c in row if str(c).strip()} & KEYWORDS:
+                header_idx = i
+                break
+
+        header_raw = rows[header_idx]
+        data_rows  = rows[header_idx + 1:]
+        n = len(header_raw)
+
+        seen, header = {}, []
+        for h in header_raw:
+            k = _nq(h) or "col"
+            if k in seen:
+                seen[k] += 1; k = f"{k}_{seen[k]}"
+            else:
+                seen[k] = 0
+            header.append(k)
+
+        rows_pad = [r + [""] * (n - len(r)) if len(r) < n else r[:n] for r in data_rows]
+        df = pd.DataFrame(rows_pad, columns=header)
+        df = df[df.apply(lambda r: any(str(v).strip() for v in r), axis=1)].copy()
+
+        col_cnpj = next((c for c in df.columns if "cnpj" in c), None)
+        if col_cnpj:
+            df["cnpj_norm"] = (df[col_cnpj].astype(str)
+                               .str.replace(r"\D", "", regex=True).str.strip())
+        else:
+            df["cnpj_norm"] = ""
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar Qualidade: {e}")
+        return pd.DataFrame()
+
+
+def _cruzar_qualidade_bko(df_qual: pd.DataFrame, df_bko: pd.DataFrame) -> pd.DataFrame:
+    import unicodedata
+    def _nq(s):
+        s = str(s).strip().lower()
+        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+    df_qual["vendedor_real"] = ""
+    df_qual["lider_bko"]    = ""
+    if df_bko.empty or df_qual.empty:
+        return df_qual
+
+    col_map = {_nq(c): c for c in df_bko.columns}
+    col_v  = col_map.get("vendedor_real") or col_map.get("vendedor")
+    col_l  = col_map.get("lider")
+    col_cn = next((c for c in df_bko.columns if "cnpj" in _nq(c)), None)
+    if not col_cn or not col_v:
+        return df_qual
+
+    bko_idx = {}
+    for _, row in df_bko.iterrows():
+        cn = re.sub(r"\D", "", str(row.get(col_cn, ""))).strip()
+        if not cn:
+            continue
+        vd = str(row.get(col_v, "")).strip()
+        ld = str(row.get(col_l, "")).strip() if col_l else ""
+        if vd and vd.lower() not in ("", "nan", "none", "sem vendedor") and cn not in bko_idx:
+            bko_idx[cn] = {"vendedor_real": vd, "lider_bko": ld}
+
+    df_qual["vendedor_real"] = df_qual["cnpj_norm"].map(
+        lambda x: bko_idx.get(x, {}).get("vendedor_real", ""))
+    df_qual["lider_bko"]    = df_qual["cnpj_norm"].map(
+        lambda x: bko_idx.get(x, {}).get("lider_bko", ""))
+    return df_qual
+
+
+def _tela_qualidade(df_bko: pd.DataFrame, info: dict, tipo: str, lider_u: str):
+    import unicodedata
+    def _nq(s):
+        s = str(s).strip().lower()
+        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+
+    st.markdown('<p class="section-title">\U0001f4ca QUALIDADE \u2014 STATUS DE PAGAMENTO</p>',
+                unsafe_allow_html=True)
+
+    with st.spinner("Carregando dados de qualidade..."):
+        df_qual = _cruzar_qualidade_bko(_load_qualidade(), df_bko)
+
+    if df_qual.empty:
+        st.warning("\u26a0\ufe0f Nenhum dado encontrado na planilha de qualidade.")
+        return
+
+    col_map     = {_nq(c): c for c in df_qual.columns}
+    col_safra   = col_map.get("safra")
+    col_cnpj    = col_map.get("cnpj")
+    col_cliente = col_map.get("cliente")
+    col_adim    = col_map.get("adimplente") or next(
+        (c for c in df_qual.columns if "adim" in _nq(c)), None)
+    col_vencto  = col_map.get("vecimento") or col_map.get("vencimento")
+    col_valor   = next((c for c in df_qual.columns if "valor" in _nq(c)), None)
+    col_obs     = col_map.get("observacoes") or col_map.get("obs")
+    col_contato = next((c for c in df_qual.columns
+                        if "contato" in _nq(c) and "cliente" in _nq(c)), None)
+    col_parceiro = col_map.get("parceiro")
+
+    is_admin = (tipo == "admin")
+
+    # Filtros
+    cf1, cf2, cf3, cf4 = st.columns(4)
+    with cf1:
+        safras = ["Todas"]
+        if col_safra:
+            safras += sorted(df_qual[col_safra].dropna().unique().tolist(), reverse=True)
+        safra_f = st.selectbox("\U0001f4c5 Safra", safras, key="qual_safra")
+    with cf2:
+        adim_f = st.selectbox("\U0001f4b3 Adimplente?",
+                              ["Todos", "NAO", "SIM", "FATURA GERADA"], key="qual_adim")
+    with cf3:
+        if is_admin:
+            vends_u = ["Todos"] + sorted(
+                v for v in df_qual["vendedor_real"].dropna().unique()
+                if v and v not in ("", "nan"))
+            vend_f = st.selectbox("\U0001f464 Vendedor", vends_u, key="qual_vend")
+        else:
+            vend_f = "Todos"
+    with cf4:
+        busca = st.text_input("\U0001f50d Empresa / CNPJ", key="qual_busca")
+
+    # Filtro perfil
+    df_f = df_qual.copy()
+    if not is_admin:
+        if tipo == "lider" and lider_u:
+            df_f = df_f[df_f["lider_bko"].astype(str).str.strip().str.upper()
+                        == lider_u.strip().upper()]
+        else:
+            nome_u = info.get("name", "").strip().upper()
+            df_f   = df_f[df_f["vendedor_real"].astype(str).str.strip().str.upper() == nome_u]
+
+    # Filtros UI
+    if safra_f != "Todas" and col_safra:
+        df_f = df_f[df_f[col_safra].astype(str).str.strip() == safra_f]
+    if adim_f != "Todos" and col_adim:
+        df_f = df_f[df_f[col_adim].astype(str).str.strip().str.upper()
+                    .str.replace("\u00c3\u0083O","NAO").str.replace("N\u00c3\u0083O","NAO") == adim_f]
+    if vend_f != "Todos":
+        df_f = df_f[df_f["vendedor_real"].astype(str).str.strip() == vend_f]
+    if busca:
+        mask = pd.Series(False, index=df_f.index)
+        if col_cliente:
+            mask |= df_f[col_cliente].astype(str).str.contains(busca, case=False, na=False)
+        if col_cnpj:
+            mask |= df_f[col_cnpj].astype(str).str.contains(
+                re.sub(r"\D","",busca), na=False)
+        df_f = df_f[mask]
+
+    if col_cliente:
+        df_f = df_f[df_f[col_cliente].astype(str).str.strip() != ""]
+
+    n_total   = len(df_f)
+    n_inad    = len(df_f[df_f[col_adim].astype(str).str.strip().str.upper()
+                         .str.contains("N", na=False)]) if col_adim else 0
+    n_ok      = len(df_f[df_f[col_adim].astype(str).str.strip().str.upper() == "SIM"]) if col_adim else 0
+    n_sem_v   = len(df_f[df_f["vendedor_real"].astype(str).str.strip() == ""])
+
+    k1,k2,k3,k4 = st.columns(4)
+    for col_k, val, label, sub, cor in [
+        (k1, n_total, "\U0001f4cb Total",          "registros",           "blue"),
+        (k2, n_inad,  "\u274c Inadimplentes",       "fatura em aberto",    "red"),
+        (k3, n_ok,    "\u2705 Adimplentes",          "em dia",              "green"),
+        (k4, n_sem_v, "\u26a0\ufe0f Sem Vendedor",  "nao cruzados no BKO", "amber"),
+    ]:
+        with col_k:
+            st.markdown(f'''<div class="kpi-mini {cor}">
+              <div class="kpi-label">{label}</div>
+              <div class="kpi-value">{val}</div>
+              <div class="kpi-sub">{sub}</div></div>''', unsafe_allow_html=True)
+
+    st.markdown(f"<br><span style='color:#64748b;font-size:0.8rem'>{n_total} registro(s)</span>",
+                unsafe_allow_html=True)
+
+    if df_f.empty:
+        st.info("Nenhum registro encontrado para os filtros selecionados.")
+        return
+
+    # Ordena: inadimplentes primeiro
+    if col_adim:
+        df_f = df_f.sort_values(col_adim, ascending=True, key=lambda s: s.astype(str))
+
+    for _, row in df_f.iterrows():
+        cliente  = str(row.get(col_cliente, "\u2014")) if col_cliente else "\u2014"
+        cnpj_raw = str(row.get(col_cnpj, "")) if col_cnpj else ""
+        cnpj_fmt = _formatar_cnpj(cnpj_raw) if cnpj_raw else "\u2014"
+        adim_raw = str(row.get(col_adim, "")).strip().upper() if col_adim else ""
+        # Normaliza NÃO → NAO
+        adim_key = adim_raw.replace("\u00c3O","O").replace("N\u00c3O","NAO")
+        if "N" in adim_key and adim_key not in ("SIM","FATURA GERADA"):
+            adim_key = "NAO"
+        vencto   = str(row.get(col_vencto, "")).strip() if col_vencto else ""
+        valor    = str(row.get(col_valor, "")).strip() if col_valor else ""
+        obs      = str(row.get(col_obs, "")).strip() if col_obs else ""
+        safra    = str(row.get(col_safra, "")).strip() if col_safra else ""
+        parceiro = str(row.get(col_parceiro, "")).strip() if col_parceiro else ""
+        vendedor = str(row.get("vendedor_real", "")).strip()
+        lider_c  = str(row.get("lider_bko", "")).strip()
+
+        cor_c   = COR_ADIMPLENTE.get(adim_key, "#64748b")
+        icon_c  = ICON_ADIMPLENTE.get(adim_key, "\u25aa\ufe0f")
+        adim_lbl = adim_raw if adim_raw else "\u2014"
+
+        valor_html  = f"<span style='color:#f59e0b;font-weight:700'>R$ {valor}</span> &nbsp;\u00b7&nbsp; " if valor and valor not in ("","nan") else ""
+        vencto_html = f"<span style='color:#94a3b8;font-size:0.72rem'>Vence: {vencto}</span>" if vencto and vencto not in ("","nan") else ""
+        obs_html    = (f"<div style='font-size:0.72rem;color:#475569;margin-top:4px;"
+                       f"border-left:2px solid #334155;padding-left:8px'>{obs[:200]}</div>"
+                      ) if obs and obs not in ("","nan") else ""
+        vend_html   = (f"\U0001f464 <b style='color:#e2e8f0'>{vendedor}</b> &nbsp;\u00b7&nbsp; \U0001f3c5 {lider_c}"
+                      if vendedor else
+                      "<span style='color:#ef4444;font-size:0.72rem'>\u26a0\ufe0f Sem vendedor no BKO</span>")
+
+        st.markdown(f"""
+        <div style="background:#111827;border:1px solid #1e3a5f;border-left:5px solid {cor_c};
+                    border-radius:12px;padding:14px 18px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">
+            <div style="flex:1;min-width:200px">
+              <div style="font-size:0.95rem;font-weight:700;color:#f1f5f9">{cliente}</div>
+              <div style="font-size:0.73rem;color:#64748b;margin-top:2px">
+                {cnpj_fmt} &nbsp;\u00b7&nbsp; \U0001f4c5 {safra} &nbsp;\u00b7&nbsp; \U0001f3e2 {parceiro}
+              </div>
+              <div style="font-size:0.73rem;color:#64748b;margin-top:5px">{vend_html}</div>
+              <div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+                {valor_html}{vencto_html}
+              </div>
+              {obs_html}
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+              <span style="display:inline-block;padding:3px 10px;border-radius:99px;
+                           font-size:0.7rem;font-weight:700;color:#fff;background:{cor_c}">
+                {icon_c} {adim_lbl}
+              </span>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("")
+    cols_exp = [c for c in [col_safra, col_parceiro, col_cnpj, col_cliente,
+                              col_adim, col_vencto, col_valor,
+                              "vendedor_real", "lider_bko", col_obs]
+                if c and c in df_f.columns]
+    st.download_button("\u2b07\ufe0f Exportar CSV",
+                       df_f[cols_exp].to_csv(index=False).encode("utf-8"),
+                       "qualidade.csv", "text/csv", key="qual_export")
 
 # ─────────────────────────────────────────────────────────────────
 #  CARREGAMENTO DE DADOS
@@ -1439,6 +1757,413 @@ def main():
         st.markdown(f"""<div class="kpi-mini purple"><div class="kpi-label">👥 Vendedores</div>
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
 
+
+
+# ─────────────────────────────────────────────────────────────────
+#  QUALIDADE — cruzamento Safras × BKO-VENDEDOR-REAL
+# ─────────────────────────────────────────────────────────────────
+
+QUALIDADE_SPREADSHEET_ID = "1QO4EpMnVFbHMMGASzjhmemlC2avuyhZ8bHIcdSnAnlU"
+ABA_QUALIDADE            = "BASE_SAFRAS_QUALIDADE"
+ABA_RADAR_QUAL           = "DadosRadar"
+ABA_BKO_QUAL             = "BKO-VENDEDOR-REAL"
+
+COR_ADIM = {
+    "SIM":           "#22c55e",
+    "NÃO":           "#ef4444",
+    "FATURA GERADA": "#f59e0b",
+}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_qualidade_raw(_gc_qual):
+    """Carrega BASE_SAFRAS_QUALIDADE da planilha separada."""
+    try:
+        sh  = _gc_qual.open_by_key(QUALIDADE_SPREADSHEET_ID)
+        aba = sh.worksheet(ABA_QUALIDADE)
+        rows = aba.get_all_values()
+        if not rows or len(rows) < 2:
+            return pd.DataFrame()
+
+        import unicodedata
+        def _nc(s):
+            s = str(s).strip().lower().replace(" ", "_")
+            return "".join(c for c in unicodedata.normalize("NFD", s)
+                           if unicodedata.category(c) != "Mn")
+
+        # Detecta header (linha que contém "cnpj" ou "safra")
+        header_idx = 0
+        KEYS = {"cnpj", "safra", "cliente", "adimplente"}
+        for i, row in enumerate(rows):
+            if {_nc(c) for c in row} & KEYS:
+                header_idx = i
+                break
+
+        header_raw = rows[header_idx]
+        data_rows  = rows[header_idx + 1:]
+        n = len(header_raw)
+
+        seen = {}
+        header = []
+        for h in header_raw:
+            k = _nc(h) or "col"
+            if k in seen:
+                seen[k] += 1
+                k = f"{k}_{seen[k]}"
+            else:
+                seen[k] = 0
+            header.append(k)
+
+        data_rows = [r + [""] * (n - len(r)) if len(r) < n else r[:n]
+                     for r in data_rows]
+        df = pd.DataFrame(data_rows, columns=header)
+        df = df[df.apply(lambda r: any(str(v).strip() for v in r), axis=1)]
+
+        # Normaliza CNPJ
+        cnpj_col = next((c for c in df.columns if "cnpj" in c), None)
+        if cnpj_col:
+            df["cnpj_norm"] = df[cnpj_col].astype(str).apply(
+                lambda x: re.sub(r"\D", "", x))
+            df = df[df["cnpj_norm"].str.len() == 14].copy()
+
+        return df.reset_index(drop=True)
+    except Exception as e:
+        st.warning(f"Qualidade: erro ao carregar safras — {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_radar_cnpj_pedido(_gc_qual):
+    """Carrega DadosRadar: retorna dict {cnpj_norm: pedido_norm}."""
+    try:
+        sh   = _gc_qual.open_by_key(QUALIDADE_SPREADSHEET_ID)
+        # Tenta na mesma planilha de qualidade; se não tiver, usa a do Dashboard
+        try:
+            aba = sh.worksheet(ABA_RADAR_QUAL)
+        except Exception:
+            from data_loader import get_gspread_client as _gc2
+            sh2 = _gc2().open_by_key("1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg")
+            aba = sh2.worksheet("DadosRadar")
+
+        rows = aba.get_all_values()
+        if not rows or len(rows) < 2:
+            return {}
+
+        header = [str(h).strip().lower() for h in rows[0]]
+        col_cn = next((i for i, h in enumerate(header) if h == "cnpj"), None)
+        col_pd = next((i for i, h in enumerate(header) if h == "pedido"), None)
+        if col_cn is None or col_pd is None:
+            return {}
+
+        mapa = {}
+        for row in rows[1:]:
+            if not row or len(row) <= max(col_cn, col_pd):
+                continue
+            cnpj = re.sub(r"\D", "", str(row[col_cn]).strip())
+            ped  = str(row[col_pd]).strip()
+            if ped.endswith(".0"):
+                ped = ped[:-2]
+            ped = ped.lstrip("0") or ped
+            if cnpj and ped and len(cnpj) == 14:
+                mapa[cnpj] = ped
+        return mapa
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_bko_pedido_vendedor(_gc_qual):
+    """Carrega BKO-VENDEDOR-REAL da planilha do dashboard: {pedido_norm: {vendedor, lider}}."""
+    try:
+        import unicodedata
+        def _normaliza_col(s):
+            s = str(s).strip().lower().replace(" ", "_")
+            return "".join(c for c in unicodedata.normalize("NFD", s)
+                           if unicodedata.category(c) != "Mn")
+
+        sh  = _gc_qual.open_by_key("1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg")
+        aba = sh.worksheet("BKO-VENDEDOR-REAL")
+        rows = aba.get_all_values()
+        if not rows or len(rows) < 2:
+            return {}
+
+        KEYS = {"pedido", "vendedor", "razao", "lider"}
+        header_idx = 0
+        for i, row in enumerate(rows):
+            row_norm = {_normaliza_col(c) for c in row if str(c).strip()}
+            if row_norm & KEYS:
+                header_idx = i
+                break
+
+        header = [_normaliza_col(h) for h in rows[header_idx]]
+        data   = rows[header_idx + 1:]
+
+        col_ped  = next((i for i, h in enumerate(header) if h == "pedido"), None)
+        col_vend = next((i for i, h in enumerate(header)
+                         if "vendedor" in h), None)
+        col_lid  = next((i for i, h in enumerate(header)
+                         if "lider" in h or "lider" in h.replace("í","i")), None)
+
+        if col_ped is None or col_vend is None:
+            return {}
+
+        mapa = {}
+        for row in data:
+            if not row or len(row) <= max(col_ped, col_vend):
+                continue
+            ped = str(row[col_ped]).strip()
+            if ped.endswith(".0"):
+                ped = ped[:-2]
+            ped = ped.lstrip("0") or ped
+            vend = str(row[col_vend]).strip()
+            lid  = str(row[col_lid]).strip() if col_lid and len(row) > col_lid else ""
+            if ped and vend and vend.lower() not in ("nan", "none", "sem vendedor", ""):
+                mapa[ped] = {"vendedor": vend, "lider": lid}
+        return mapa
+    except Exception as e:
+        return {}
+
+
+def _enriquecer_qualidade(df: pd.DataFrame) -> pd.DataFrame:
+    """Cruza qualidade com DadosRadar + BKO para adicionar vendedor/líder."""
+    if df.empty or "cnpj_norm" not in df.columns:
+        return df
+
+    gc_qual = get_gspread_client()
+    mapa_cn_ped  = _load_radar_cnpj_pedido(gc_qual)
+    mapa_ped_vend = _load_bko_pedido_vendedor(gc_qual)
+
+    vendedores_col = []
+    lideres_col    = []
+    pedidos_col    = []
+
+    for _, row in df.iterrows():
+        cnpj = str(row.get("cnpj_norm", "")).strip()
+        ped  = mapa_cn_ped.get(cnpj, "")
+        info = mapa_ped_vend.get(ped, {})
+        vendedores_col.append(info.get("vendedor", ""))
+        lideres_col.append(info.get("lider", ""))
+        pedidos_col.append(ped)
+
+    df = df.copy()
+    df["vendedor_real"] = vendedores_col
+    df["lider_real"]    = lideres_col
+    df["pedido_radar"]  = pedidos_col
+    return df
+
+
+def _filtrar_qualidade_por_perfil(df: pd.DataFrame, info: dict, tipo: str,
+                                   lider_u: str, parceiro_u: str) -> pd.DataFrame:
+    if df.empty or "vendedor_real" not in df.columns:
+        return df
+    if tipo == "admin":
+        return df
+    if tipo == "lider":
+        return df[df["lider_real"].str.strip().str.upper() == lider_u.strip().upper()]
+    # parceiro / vendedor — filtra pelo vínculo (nome do parceiro)
+    return df[df["vendedor_real"].str.strip().str.upper() == parceiro_u.strip().upper()]
+
+
+def _tela_qualidade(df_qual: pd.DataFrame, info: dict, tipo: str,
+                    lider_u: str, parceiro_u: str, is_admin: bool):
+    """Renderiza a aba Qualidade."""
+
+    if df_qual.empty:
+        st.info("Nenhum dado de qualidade disponível.")
+        return
+
+    # ── Detecta colunas dinamicamente ────────────────────────────
+    import unicodedata
+    def _nc(s):
+        s = str(s).strip().lower()
+        return "".join(c for c in unicodedata.normalize("NFD", s)
+                       if unicodedata.category(c) != "Mn")
+
+    col_map = {_nc(c): c for c in df_qual.columns}
+    COL_SAFRA   = col_map.get("safra", "safra")
+    COL_PARCEIRO= col_map.get("parceiro", "parceiro")
+    COL_CNPJ    = col_map.get("cnpj", "cnpj")
+    COL_CLIENTE = col_map.get("cliente", "cliente")
+    COL_VENDA   = col_map.get("venda", "venda")
+    COL_ADIM    = col_map.get("adimplente", "adimplente_")
+    COL_VENC    = col_map.get("vecimento", col_map.get("vencimento", "vecimento"))
+    COL_VALOR   = col_map.get("valor_r$", col_map.get("valor", "valor_r$"))
+    COL_ANALISE = col_map.get("ultima_analise_p2b", "ultima_analise_p2b")
+    COL_OBS     = col_map.get("observacoes", col_map.get("observaoes", "observacoes"))
+
+    # ── Filtros ───────────────────────────────────────────────────
+    st.markdown('<p class="section-title">🔍 FILTROS</p>', unsafe_allow_html=True)
+    cf1, cf2, cf3, cf4 = st.columns(4)
+
+    with cf1:
+        safras = ["Todas"] + sorted(
+            df_qual[COL_SAFRA].dropna().unique().tolist(), reverse=True
+        ) if COL_SAFRA in df_qual.columns else ["Todas"]
+        safra_f = st.selectbox("Safra", safras, key="qual_safra")
+
+    with cf2:
+        adim_opts = ["Todos", "NÃO", "SIM", "FATURA GERADA"]
+        adim_f = st.selectbox("Adimplência", adim_opts, key="qual_adim")
+
+    with cf3:
+        busca_qual = st.text_input("Empresa / CNPJ", key="qual_busca")
+
+    with cf4:
+        if is_admin and "parceiro" in col_map:
+            parcs = ["Todos"] + sorted(df_qual[COL_PARCEIRO].dropna().unique().tolist())
+            parc_f = st.selectbox("Parceiro (TBP)", parcs, key="qual_parc")
+        else:
+            parc_f = "Todos"
+
+    df_f = df_qual.copy()
+    if safra_f != "Todas" and COL_SAFRA in df_f.columns:
+        df_f = df_f[df_f[COL_SAFRA].astype(str).str.strip() == safra_f]
+    if adim_f != "Todos" and COL_ADIM in df_f.columns:
+        df_f = df_f[df_f[COL_ADIM].astype(str).str.strip().str.upper() == adim_f.upper()]
+    if busca_qual and COL_CLIENTE in df_f.columns:
+        mask = (
+            df_f[COL_CLIENTE].astype(str).str.contains(busca_qual, case=False, na=False) |
+            df_f.get("cnpj_norm", pd.Series(dtype=str)).str.contains(
+                re.sub(r"\D", "", busca_qual), na=False)
+        )
+        df_f = df_f[mask]
+    if parc_f != "Todos" and COL_PARCEIRO in df_f.columns:
+        df_f = df_f[df_f[COL_PARCEIRO].astype(str).str.strip().str.upper() == parc_f.upper()]
+
+    # ── KPIs ─────────────────────────────────────────────────────
+    n_total  = len(df_f)
+    n_inad   = len(df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
+                         .str.strip().str.upper() == "NÃO"]) if COL_ADIM in df_f.columns else 0
+    n_adim   = len(df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
+                         .str.strip().str.upper() == "SIM"]) if COL_ADIM in df_f.columns else 0
+    n_fgerad = len(df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
+                         .str.strip().str.upper() == "FATURA GERADA"]) if COL_ADIM in df_f.columns else 0
+
+    # Calcula valor total inadimplente
+    valor_total = 0.0
+    if COL_VALOR in df_f.columns:
+        def _parse_val(v):
+            try:
+                return float(str(v).replace("R$","").replace(".","")
+                             .replace(",",".").strip().split("/")[0].strip())
+            except Exception:
+                return 0.0
+        inad_rows = df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
+                          .str.strip().str.upper() == "NÃO"] if COL_ADIM in df_f.columns else pd.DataFrame()
+        if not inad_rows.empty:
+            valor_total = inad_rows[COL_VALOR].apply(_parse_val).sum()
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f"""<div class="kpi-mini blue">
+          <div class="kpi-label">📋 Total Clientes</div>
+          <div class="kpi-value">{n_total}</div>
+          <div class="kpi-sub">na safra selecionada</div></div>""", unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"""<div class="kpi-mini red">
+          <div class="kpi-label">❌ Inadimplentes</div>
+          <div class="kpi-value">{n_inad}</div>
+          <div class="kpi-sub">fatura em aberto</div></div>""", unsafe_allow_html=True)
+    with k3:
+        st.markdown(f"""<div class="kpi-mini green">
+          <div class="kpi-label">✅ Adimplentes</div>
+          <div class="kpi-value">{n_adim}</div>
+          <div class="kpi-sub">em dia</div></div>""", unsafe_allow_html=True)
+    with k4:
+        st.markdown(f"""<div class="kpi-mini amber">
+          <div class="kpi-label">💰 Valor Inadimplente</div>
+          <div class="kpi-value" style="font-size:1.2rem">R$ {valor_total:,.2f}</div>
+          <div class="kpi-sub">estimado</div></div>""", unsafe_allow_html=True)
+
+    st.markdown(f"<br><span style='color:#64748b;font-size:0.8rem'>{n_total} cliente(s) · {n_fgerad} com fatura gerada</span>",
+                unsafe_allow_html=True)
+
+    if df_f.empty:
+        st.markdown("""
+        <div style="background:#0d1f14;border:1px solid #14532d;border-radius:10px;
+                    padding:24px;text-align:center;margin-top:16px">
+          <div style="font-size:2rem">📭</div>
+          <div style="color:#4ade80;font-weight:700;margin-top:8px">Nenhum cliente encontrado</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    # ── Cards por cliente ─────────────────────────────────────────
+    for _, row in df_f.iterrows():
+        adim    = str(row.get(COL_ADIM, "")).strip().upper()
+        cor     = COR_ADIM.get(adim, "#64748b")
+        cliente = str(row.get(COL_CLIENTE, "—")).strip() or "—"
+        cnpj_f  = _formatar_cnpj(str(row.get("cnpj_norm", row.get(COL_CNPJ, ""))))
+        safra   = str(row.get(COL_SAFRA, "")).strip()
+        parceiro= str(row.get(COL_PARCEIRO, "")).strip()
+        vend    = str(row.get("vendedor_real", "")).strip() or "—"
+        lid     = str(row.get("lider_real", "")).strip() or "—"
+        pedido  = str(row.get("pedido_radar", "")).strip()
+        venc    = str(row.get(COL_VENC, "")).strip()
+        valor   = str(row.get(COL_VALOR, "")).strip()
+        analise = str(row.get(COL_ANALISE, "")).strip()
+        obs     = str(row.get(COL_OBS, "")).strip()
+        venda   = str(row.get(COL_VENDA, "")).strip()
+
+        # Badge de adimplência
+        adim_label = {"NÃO": "❌ Inadimplente", "SIM": "✅ Adimplente",
+                      "FATURA GERADA": "🧾 Fat. Gerada"}.get(adim, adim)
+
+        pedido_html = f"<span style='color:#60a5fa;font-size:0.72rem'>📌 Pedido: {pedido}</span>" if pedido else ""
+        venc_html   = f"<span style='color:#fbbf24;font-size:0.72rem'>📅 Venc: {venc}</span>" if venc and venc not in ("","nan") else ""
+        valor_html  = f"<span style='color:#f87171;font-size:0.72rem'>💰 {valor}</span>" if valor and valor not in ("","nan") else ""
+        obs_html    = f"<div style='font-size:0.71rem;color:#475569;margin-top:4px;border-top:1px solid #1e3a5f;padding-top:4px'>📝 {obs[:120]}{'...' if len(obs)>120 else ''}</div>" if obs and obs not in ("","nan") else ""
+
+        st.markdown(f"""
+        <div style="background:#111827;border:1px solid #1e3a5f;border-left:5px solid {cor};
+                    border-radius:12px;padding:14px 18px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">
+            <div style="flex:1;min-width:200px">
+              <div style="font-size:0.95rem;font-weight:700;color:#f1f5f9">{cliente}</div>
+              <div style="font-size:0.72rem;color:#64748b;margin-top:2px">
+                {cnpj_f} · Safra: {safra} · TBP: <span style="color:#a78bfa">{parceiro}</span> · {venda} linha(s)
+              </div>
+              <div style="font-size:0.72rem;color:#64748b;margin-top:4px">
+                👤 <b style="color:#e2e8f0">{vend}</b> · 🏅 {lid}
+              </div>
+              <div style="margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                {pedido_html} {venc_html} {valor_html}
+              </div>
+              {obs_html}
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
+              <span style="display:inline-block;padding:3px 10px;border-radius:99px;
+                           font-size:0.7rem;font-weight:700;color:#fff;background:{cor}">{adim_label}</span>
+              {f"<span style='font-size:0.67rem;color:#475569'>Análise: {analise}</span>" if analise and analise not in ("","nan") else ""}
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Export
+    st.markdown("")
+    cols_export = [c for c in [COL_SAFRA, COL_PARCEIRO, COL_CNPJ, COL_CLIENTE,
+                                COL_VENDA, COL_ADIM, COL_VENC, COL_VALOR,
+                                "vendedor_real", "lider_real", "pedido_radar", COL_OBS]
+                   if c in df_f.columns]
+    st.download_button(
+        "⬇️ Exportar CSV",
+        df_f[cols_export].to_csv(index=False).encode("utf-8"),
+        "qualidade.csv", "text/csv", key="qual_export"
+    )
+
+
+    # ── Qualidade — carrega e enriquece ─────────────────────────
+    with st.spinner("Carregando qualidade..."):
+        gc_qual   = get_gspread_client()
+        df_qual_raw = _load_qualidade_raw(gc_qual)
+        if not df_qual_raw.empty:
+            df_qual_enrich = _enriquecer_qualidade(df_qual_raw)
+            df_qual_filtrado = _filtrar_qualidade_por_perfil(
+                df_qual_enrich, info, tipo, lider_u, parceiro_u)
+        else:
+            df_qual_filtrado = pd.DataFrame()
+
     # ── Carteira — carrega gc e dados uma vez ────────────────────
     gc_carteira = get_gspread_client()
     with st.spinner("Carregando carteira..."):
@@ -1451,7 +2176,7 @@ def main():
 
     # ── Tabs ──────────────────────────────────────────────────────
     if tipo == "parceiro":
-        tabs = st.tabs(["📋 Detalhado", "📁 Carteira", "➕ Novo Atendimento"])
+        tabs = st.tabs(["📋 Detalhado", "📊 Qualidade", "📁 Carteira", "➕ Novo Atendimento"])
         with tabs[0]:
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
             render_detalhado(df, mes_alvo, meta_dict)
@@ -1459,13 +2184,16 @@ def main():
             st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
             _render_exportar(df_export, meta_dict, mes_alvo)
         with tabs[1]:
-            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
+            _tela_qualidade(df_qual_filtrado, info, tipo, lider_u, parceiro_u, is_admin=(tipo=="admin"))
         with tabs[2]:
+            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
+        with tabs[3]:
             _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
     else:
-        tab_det, tab_atr, tab_cart, tab_novo = st.tabs([
+        tab_det, tab_atr, tab_qual, tab_cart, tab_novo = st.tabs([
             "📋 Detalhado",
             "👤 Atribuição de Vendedores",
+            "📊 Qualidade",
             "📁 Carteira",
             "➕ Novo Atendimento",
         ])
@@ -1488,6 +2216,9 @@ def main():
                 vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
 
             render_atribuicao(df_pend, ws_bko, vendedores)
+
+        with tab_qual:
+            _tela_qualidade(df_qual_filtrado, info, tipo, lider_u, parceiro_u, is_admin=(tipo=="admin"))
 
         with tab_cart:
             _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
