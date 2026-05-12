@@ -27,6 +27,9 @@ from data_loader import (
     get_parceiros, STATUS_COLORS, _s, _norm_pedido, get_gspread_client
 )
 
+import re
+import requests
+
 st.set_page_config(
     page_title="Gestão de Vendas — Connect Group",
     page_icon="📊",
@@ -660,6 +663,536 @@ def _render_exportar(df_export, meta_dict, mes_alvo):
 
 
 # ─────────────────────────────────────────────────────────────────
+#  CARTEIRA DE ATENDIMENTO — constantes, helpers e UI
+# ─────────────────────────────────────────────────────────────────
+
+ABA_CARTEIRA    = "CarteiraAtendimento"
+DIAS_EXPIRACAO  = 60
+STATUS_CARTEIRA = ["Em Atendimento", "Ativado", "Expirado", "Liberado pelo Admin"]
+COR_STATUS_CART = {
+    "Em Atendimento":      "#f59e0b",
+    "Ativado":             "#22c55e",
+    "Expirado":            "#64748b",
+    "Liberado pelo Admin": "#8b5cf6",
+}
+HEADER_CARTEIRA = [
+    "cnpj","razao_social","nome_fantasia","atividade_economica",
+    "data_fundacao","capital_social","telefone","email",
+    "cep","logradouro","numero","bairro","cidade","uf",
+    "vendedor","lider","tbp",
+    "status","data_registro","data_atualizacao",
+    "pedido_tim","obs","registrado_por",
+]
+
+
+def _formatar_cnpj(cnpj: str) -> str:
+    c = re.sub(r"\D","",str(cnpj))
+    if len(c) == 14:
+        return f"{c[:2]}.{c[2:5]}.{c[5:8]}/{c[8:12]}-{c[12:]}"
+    return cnpj
+
+
+def _dias_restantes_cart(data_registro: str) -> int:
+    try:
+        dt = datetime.strptime(str(data_registro).strip(), "%d/%m/%Y %H:%M")
+        return max(DIAS_EXPIRACAO - (datetime.now() - dt).days, 0)
+    except Exception:
+        return DIAS_EXPIRACAO
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _load_carteira(_gc):
+    try:
+        sh = _gc.open_by_key(SPREADSHEET_ID)
+        try:
+            aba = sh.worksheet(ABA_CARTEIRA)
+        except Exception:
+            aba = sh.add_worksheet(title=ABA_CARTEIRA, rows=2000, cols=len(HEADER_CARTEIRA)+2)
+            aba.append_row(HEADER_CARTEIRA)
+            return pd.DataFrame(columns=HEADER_CARTEIRA)
+        rows = aba.get_all_records()
+        if not rows:
+            return pd.DataFrame(columns=HEADER_CARTEIRA)
+        df = pd.DataFrame(rows)
+        for col in HEADER_CARTEIRA:
+            if col not in df.columns:
+                df[col] = ""
+        return df
+    except Exception as e:
+        st.error(f"Erro ao carregar carteira: {e}")
+        return pd.DataFrame(columns=HEADER_CARTEIRA)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_colab_carteira(_gc):
+    import unicodedata
+    def _n(s):
+        s = str(s).strip().lower()
+        return "".join(c for c in unicodedata.normalize("NFD",s) if unicodedata.category(c)!="Mn")
+    try:
+        df = load_colaboradores(_gc)
+        if df.empty:
+            return [], {}, {}
+        col_map = {_n(c): c for c in df.columns}
+        col_v = col_map.get("vendedor")
+        col_l = col_map.get("lider")
+        col_t = col_map.get("tbp")
+        vendedores, mapa_lider, mapa_tbp = [], {}, {}
+        if col_v:
+            vendedores = sorted([
+                v for v in df[col_v].dropna().unique()
+                if v and str(v).strip() not in ("","nan","None","VENDEDOR")
+            ])
+            for _, row in df.iterrows():
+                v = str(row.get(col_v,"")).strip()
+                l = str(row.get(col_l,"")).strip() if col_l else ""
+                t = str(row.get(col_t,"")).strip() if col_t else ""
+                if v:
+                    if l and l not in ("","nan","None"):
+                        mapa_lider[v] = l
+                    if t and t not in ("","nan","None"):
+                        mapa_tbp[v] = t
+        return vendedores, mapa_lider, mapa_tbp
+    except Exception:
+        return [], {}, {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _buscar_cnpj_receita(cnpj: str) -> dict:
+    cnpj_limpo = re.sub(r"\D","",cnpj)
+    if len(cnpj_limpo) != 14:
+        return {"erro": "CNPJ deve ter 14 digitos"}
+    try:
+        r = requests.get(f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_limpo}", timeout=10)
+        if r.status_code == 200:
+            d = r.json()
+            return {
+                "cnpj":                cnpj_limpo,
+                "razao_social":        d.get("razao_social",""),
+                "nome_fantasia":       d.get("nome_fantasia","") or d.get("razao_social",""),
+                "atividade_economica": (d.get("cnae_fiscal_descricao") or "")[:60],
+                "data_fundacao":       d.get("data_inicio_atividade",""),
+                "capital_social":      f"R$ {d.get('capital_social',0):,.2f}",
+                "telefone":            d.get("ddd_telefone_1",""),
+                "email":               d.get("email",""),
+                "cep":                 re.sub(r"\D","",d.get("cep","")),
+                "logradouro":          d.get("logradouro",""),
+                "numero":              d.get("numero",""),
+                "bairro":              d.get("bairro",""),
+                "cidade":              d.get("municipio",""),
+                "uf":                  d.get("uf",""),
+            }
+        return {"erro": "CNPJ nao encontrado na Receita Federal"}
+    except Exception as e:
+        return {"erro": str(e)}
+
+
+def _cnpj_disponivel(df: pd.DataFrame, cnpj: str):
+    cnpj_limpo = re.sub(r"\D","",cnpj)
+    if df.empty:
+        return True, None
+    match = df[df["cnpj"].astype(str).str.replace(r"\D","",regex=True) == cnpj_limpo]
+    if match.empty:
+        return True, None
+    row = match.iloc[0]
+    if str(row.get("status","")) == "Em Atendimento":
+        return False, row.to_dict()
+    return True, row.to_dict()
+
+
+def _atualizar_expirados_gc(gc, df: pd.DataFrame) -> pd.DataFrame:
+    hoje = datetime.now()
+    atualizados = []
+    for idx, row in df.iterrows():
+        if str(row.get("status","")) != "Em Atendimento":
+            continue
+        try:
+            dt = datetime.strptime(str(row.get("data_registro","")).strip(), "%d/%m/%Y %H:%M")
+            if (hoje - dt).days >= DIAS_EXPIRACAO:
+                df.at[idx,"status"] = "Expirado"
+                df.at[idx,"data_atualizacao"] = hoje.strftime("%d/%m/%Y %H:%M")
+                atualizados.append(str(row.get("cnpj","")))
+        except Exception:
+            pass
+    if atualizados:
+        try:
+            sh    = gc.open_by_key(SPREADSHEET_ID)
+            aba   = sh.worksheet(ABA_CARTEIRA)
+            todos = aba.get_all_values()
+            header= [str(h).strip() for h in todos[0]] if todos else []
+            if "status" in header and "cnpj" in header:
+                col_st = header.index("status")+1
+                col_da = header.index("data_atualizacao")+1
+                col_cn = header.index("cnpj")+1
+                for i, r2 in enumerate(todos[1:], start=2):
+                    if re.sub(r"\D","",str(r2[col_cn-1]).strip()) in [re.sub(r"\D","",c) for c in atualizados]:
+                        aba.update_cell(i, col_st, "Expirado")
+                        aba.update_cell(i, col_da, hoje.strftime("%d/%m/%Y %H:%M"))
+        except Exception:
+            pass
+    return df
+
+
+def _registrar_cnpj_carteira(gc, dados: dict, usuario: str) -> bool:
+    try:
+        sh    = gc.open_by_key(SPREADSHEET_ID)
+        aba   = sh.worksheet(ABA_CARTEIRA)
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        linha = []
+        for c in HEADER_CARTEIRA:
+            if c == "status":                          linha.append("Em Atendimento")
+            elif c in ("data_registro","data_atualizacao"): linha.append(agora)
+            elif c == "registrado_por":                linha.append(usuario)
+            else:                                      linha.append(dados.get(c,""))
+        aba.append_row(linha)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao registrar: {e}")
+        return False
+
+
+def _atualizar_campo_carteira(gc, cnpj: str, campos: dict) -> bool:
+    try:
+        sh    = gc.open_by_key(SPREADSHEET_ID)
+        aba   = sh.worksheet(ABA_CARTEIRA)
+        todos = aba.get_all_values()
+        if not todos:
+            return False
+        header     = [str(h).strip() for h in todos[0]]
+        cnpj_limpo = re.sub(r"\D","",cnpj)
+        col_cn     = header.index("cnpj") if "cnpj" in header else None
+        if col_cn is None:
+            return False
+        campos["data_atualizacao"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+        for i, r2 in enumerate(todos[1:], start=2):
+            if not r2:
+                continue
+            if re.sub(r"\D","",str(r2[col_cn]).strip()) == cnpj_limpo:
+                for campo, valor in campos.items():
+                    if campo in header:
+                        aba.update_cell(i, header.index(campo)+1, valor)
+                st.cache_data.clear()
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Erro ao atualizar: {e}")
+        return False
+
+
+def _card_cliente_carteira(row: dict, is_admin: bool, gc, username: str):
+    cnpj    = _formatar_cnpj(str(row.get("cnpj","")))
+    razao   = str(row.get("razao_social","—"))
+    fantasia= str(row.get("nome_fantasia",""))
+    vend    = str(row.get("vendedor","—"))
+    lider_c = str(row.get("lider","—"))
+    tbp     = str(row.get("tbp","—"))
+    status  = str(row.get("status","Em Atendimento"))
+    data_r  = str(row.get("data_registro",""))
+    pedido  = str(row.get("pedido_tim",""))
+    obs     = str(row.get("obs",""))
+    cidade  = str(row.get("cidade",""))
+    uf      = str(row.get("uf",""))
+    cor     = COR_STATUS_CART.get(status,"#64748b")
+    dias    = _dias_restantes_cart(data_r) if status == "Em Atendimento" else None
+
+    dias_html = pedido_html = obs_html = ""
+    if dias is not None:
+        cor_d = "#22c55e" if dias>30 else "#f59e0b" if dias>10 else "#ef4444"
+        dias_html = f"<span style='color:{cor_d};font-weight:700;font-size:0.73rem'>⏱ {dias} dias restantes</span>"
+    if pedido and pedido not in ("","nan"):
+        pedido_html = f"<span style='color:#60a5fa;font-size:0.73rem'>📌 TIM: {pedido}</span>"
+    if obs and obs not in ("","nan"):
+        obs_html = f"<div style='font-size:0.72rem;color:#475569;margin-top:4px'>📝 {obs}</div>"
+    fantasia_html = f"{fantasia} · " if fantasia and fantasia != razao else ""
+
+    st.markdown(f"""
+    <div style="background:#111827;border:1px solid #1e3a5f;border-left:5px solid {cor};
+                border-radius:12px;padding:14px 18px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:0.95rem;font-weight:700;color:#f1f5f9">{razao}</div>
+          <div style="font-size:0.73rem;color:#64748b;margin-top:2px">{fantasia_html}{cnpj} · {cidade}/{uf}</div>
+          <div style="font-size:0.73rem;color:#64748b;margin-top:5px">
+            👤 <b style="color:#e2e8f0">{vend}</b> · 🏅 {lider_c} · 🏢 <span style="color:#a78bfa">{tbp}</span>
+          </div>
+          <div style="margin-top:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            {dias_html} {pedido_html}
+          </div>
+          {obs_html}
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          <span style="display:inline-block;padding:3px 10px;border-radius:99px;
+                       font-size:0.7rem;font-weight:700;color:#fff;background:{cor}">{status}</span>
+          <span style="font-size:0.67rem;color:#475569">{data_r[:10] if data_r else ""}</span>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if is_admin:
+        with st.expander(f"⚙️ Editar — {razao[:40]}"):
+            c1, c2, c3, c4 = st.columns([2,2,3,1])
+            with c1:
+                ns = st.selectbox("Status", STATUS_CARTEIRA,
+                    index=STATUS_CARTEIRA.index(status) if status in STATUS_CARTEIRA else 0,
+                    key=f"cst_{row.get('cnpj','')}")
+            with c2:
+                np_ = st.text_input("Nº Pedido TIM",
+                    value=pedido if pedido not in ("","nan") else "",
+                    key=f"cpt_{row.get('cnpj','')}")
+            with c3:
+                no_ = st.text_input("Observação",
+                    value=obs if obs not in ("","nan") else "",
+                    key=f"cob_{row.get('cnpj','')}")
+            with c4:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("💾", key=f"csv_{row.get('cnpj','')}", use_container_width=True):
+                    ok = _atualizar_campo_carteira(gc, str(row.get("cnpj","")),
+                                                   {"status":ns,"pedido_tim":np_,"obs":no_})
+                    if ok:
+                        st.success("✅ Salvo!")
+                        st.rerun()
+    elif status == "Em Atendimento" and pedido in ("","nan"):
+        with st.expander(f"📌 Registrar pedido TIM — {razao[:35]}"):
+            c1, c2 = st.columns([3,1])
+            with c1:
+                np2 = st.text_input("Nº Pedido TIM *", placeholder="ex: 6341069",
+                                    key=f"cnp2_{row.get('cnpj','')}")
+            with c2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("✅", key=f"cnpbt_{row.get('cnpj','')}",
+                             type="primary", use_container_width=True):
+                    if np2.strip():
+                        ok = _atualizar_campo_carteira(gc, str(row.get("cnpj","")),
+                                                       {"pedido_tim": np2.strip()})
+                        if ok:
+                            st.success("📌 Registrado!")
+                            st.rerun()
+                    else:
+                        st.error("Informe o numero.")
+
+
+def _tela_carteira_novo(gc, df_carteira, vendedores, mapa_lider, mapa_tbp, username, info):
+    st.markdown('<p class="section-title">🔍 BUSCAR CLIENTE PELO CNPJ</p>', unsafe_allow_html=True)
+    col_ci, col_cb = st.columns([3,1])
+    with col_ci:
+        cnpj_in = st.text_input("CNPJ do cliente", placeholder="00.000.000/0000-00", key="cart_cnpj_in")
+    with col_cb:
+        st.markdown("<br>", unsafe_allow_html=True)
+        buscar = st.button("🔍 Consultar Receita", use_container_width=True, key="cart_btn_buscar")
+
+    if buscar and cnpj_in:
+        cnpj_limpo = re.sub(r"\D","",cnpj_in)
+        df_atual = _atualizar_expirados_gc(gc, df_carteira.copy())
+        disponivel, row_existe = _cnpj_disponivel(df_atual, cnpj_limpo)
+
+        if not disponivel and row_existe:
+            vb  = row_existe.get("vendedor","—")
+            lb  = row_existe.get("lider","—")
+            tb  = row_existe.get("tbp","—")
+            db  = row_existe.get("data_registro","")
+            dr  = _dias_restantes_cart(db)
+            st.markdown(f"""
+            <div style="background:#1c0a0a;border:1px solid #7f1d1d;border-radius:10px;
+                        padding:16px 20px;margin:12px 0;color:#fca5a5">
+              <div style="font-size:1rem;font-weight:800;color:#f87171;margin-bottom:8px">🔒 Cliente ja em atendimento</div>
+              <div><b>Vendedor:</b> {vb} &nbsp;·&nbsp; <b>Lider:</b> {lb} &nbsp;·&nbsp; <b>Escritorio:</b> {tb}</div>
+              <div style="margin-top:4px"><b>Desde:</b> {db[:10]} &nbsp;·&nbsp; <b>Expira em:</b> {dr} dias</div>
+              <div style="margin-top:10px;font-size:0.82rem">⚠️ Para liberar, entre em contato com o <b>administrador</b>.</div>
+            </div>
+            """, unsafe_allow_html=True)
+            return
+
+        with st.spinner("Consultando Receita Federal..."):
+            dados_rec = _buscar_cnpj_receita(cnpj_limpo)
+        if "erro" in dados_rec:
+            st.error(f"❌ {dados_rec['erro']}")
+            return
+        if row_existe:
+            st.info(f"ℹ️ CNPJ ja esteve na carteira com status **{row_existe.get('status','')}**. Pode registrar novamente.")
+        st.success(f"✅ **{dados_rec['razao_social']}** encontrado!")
+        st.session_state["cart_dados_receita"] = dados_rec
+
+    c = st.session_state.get("cart_dados_receita", {})
+    if not c:
+        st.markdown("""
+        <div style="background:#0d1f14;border:1px solid #14532d;border-radius:10px;
+                    padding:24px;text-align:center;margin-top:20px">
+          <div style="font-size:2.5rem">📁</div>
+          <div style="color:#4ade80;font-weight:700;margin-top:8px">Digite o CNPJ para iniciar o atendimento</div>
+          <div style="color:#64748b;font-size:0.82rem;margin-top:4px">Dados preenchidos automaticamente pela Receita Federal</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    with st.form("form_carteira_novo"):
+        st.markdown('<p class="section-title">🏢 DADOS DO CLIENTE</p>', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            razao    = st.text_input("Razao Social *",  value=c.get("razao_social",""))
+            telefone = st.text_input("Telefone",        value=c.get("telefone",""))
+            cidade   = st.text_input("Cidade",          value=c.get("cidade",""))
+        with c2:
+            fantasia  = st.text_input("Nome Fantasia",  value=c.get("nome_fantasia",""))
+            email     = st.text_input("Email",          value=c.get("email",""))
+            uf        = st.text_input("UF",             value=c.get("uf",""))
+        with c3:
+            atividade = st.text_input("Atividade",      value=c.get("atividade_economica",""))
+            fundacao  = st.text_input("Data Fundacao",  value=c.get("data_fundacao",""))
+            capital   = st.text_input("Capital Social", value=c.get("capital_social",""))
+
+        st.markdown('<p class="section-title">👤 RESPONSAVEL</p>', unsafe_allow_html=True)
+        cv, cl, ct = st.columns(3)
+        with cv:
+            if vendedores:
+                vend_sel = st.selectbox("Vendedor *", vendedores, key="cart_form_vend")
+            else:
+                vend_sel = st.text_input("Vendedor *", key="cart_form_vend_txt")
+        lider_auto = mapa_lider.get(str(vend_sel),"") if vend_sel else ""
+        tbp_auto   = mapa_tbp.get(str(vend_sel),"")   if vend_sel else ""
+        with cl:
+            lider_val = st.text_input("Lider",              value=lider_auto, key="cart_form_lider")
+        with ct:
+            tbp_val   = st.text_input("Escritorio (TBP)",   value=tbp_auto,   key="cart_form_tbp")
+        obs_val = st.text_area("Observacoes", height=60, key="cart_form_obs")
+
+        submitted = st.form_submit_button("📁 Registrar na Carteira", type="primary", use_container_width=True)
+        if submitted:
+            if not razao.strip():
+                st.error("⚠️ Razao Social obrigatoria.")
+            elif not str(vend_sel).strip():
+                st.error("⚠️ Selecione o vendedor.")
+            else:
+                dados_salvar = {
+                    "cnpj":                re.sub(r"\D","",c.get("cnpj","")),
+                    "razao_social":        razao.strip(),
+                    "nome_fantasia":       fantasia.strip(),
+                    "atividade_economica": atividade.strip(),
+                    "data_fundacao":       fundacao.strip(),
+                    "capital_social":      capital.strip(),
+                    "telefone":            telefone.strip(),
+                    "email":               email.strip(),
+                    "cep":                 c.get("cep",""),
+                    "logradouro":          c.get("logradouro",""),
+                    "numero":              c.get("numero",""),
+                    "bairro":              c.get("bairro",""),
+                    "cidade":              cidade.strip(),
+                    "uf":                  uf.strip(),
+                    "vendedor":            str(vend_sel).strip(),
+                    "lider":               lider_val.strip(),
+                    "tbp":                 tbp_val.strip(),
+                    "obs":                 obs_val.strip(),
+                    "pedido_tim":          "",
+                }
+                with st.spinner("Registrando..."):
+                    ok = _registrar_cnpj_carteira(gc, dados_salvar, username)
+                if ok:
+                    st.success(f"✅ **{razao}** registrado! Vendedor: **{vend_sel}** · Escritorio: **{tbp_val}**")
+                    st.session_state.pop("cart_dados_receita", None)
+                    st.rerun()
+
+
+def _tela_carteira_lista(gc, df, info, username, is_admin):
+    tipo    = info.get("tipo","lider")
+    lider_u = info.get("lider","")
+
+    st.markdown('<p class="section-title">🔍 FILTROS</p>', unsafe_allow_html=True)
+    cf1, cf2, cf3, cf4 = st.columns(4)
+    with cf1:
+        busca = st.text_input("Empresa / CNPJ", key="cart_lst_busca")
+    with cf2:
+        sf = st.selectbox("Status", ["Todos"]+STATUS_CARTEIRA, key="cart_lst_sf")
+    with cf3:
+        if is_admin and "tbp" in df.columns:
+            tbp_f = st.selectbox("Escritorio (TBP)", ["Todos"]+sorted(df["tbp"].dropna().unique().tolist()), key="cart_lst_tbp")
+        else:
+            tbp_f = "Todos"
+    with cf4:
+        if is_admin and "lider" in df.columns:
+            lider_f = st.selectbox("Lider", ["Todos"]+sorted(df["lider"].dropna().unique().tolist()), key="cart_lst_lf")
+        else:
+            lider_f = "Todos"
+
+    df_f = df.copy()
+    if not is_admin and tipo == "lider" and lider_u:
+        df_f = df_f[df_f["lider"].astype(str).str.strip().str.upper() == lider_u.strip().upper()]
+    if busca:
+        mask = (df_f["razao_social"].astype(str).str.contains(busca,case=False,na=False) |
+                df_f["cnpj"].astype(str).str.contains(re.sub(r"\D","",busca),na=False))
+        df_f = df_f[mask]
+    if sf != "Todos":
+        df_f = df_f[df_f["status"] == sf]
+    if tbp_f != "Todos" and "tbp" in df_f.columns:
+        df_f = df_f[df_f["tbp"].astype(str).str.strip() == tbp_f]
+    if lider_f != "Todos" and "lider" in df_f.columns:
+        df_f = df_f[df_f["lider"].astype(str).str.strip() == lider_f]
+    if "data_registro" in df_f.columns:
+        df_f = df_f.sort_values("data_registro", ascending=False)
+
+    n_total = len(df_f)
+    n_atend = len(df_f[df_f["status"]=="Em Atendimento"])
+    n_ativ  = len(df_f[df_f["status"]=="Ativado"])
+    n_exp   = len(df_f[df_f["status"]=="Expirado"])
+
+    k1,k2,k3,k4 = st.columns(4)
+    for col_k, val, label, sub, cor in [
+        (k1, n_total, "📁 Total",          "na carteira",          "blue"),
+        (k2, n_atend, "⏳ Em Atendimento", "em andamento",          "amber"),
+        (k3, n_ativ,  "✅ Ativados",        "fechados",              "green"),
+        (k4, n_exp,   "💤 Expirados",       f"{DIAS_EXPIRACAO}+ d", "purple"),
+    ]:
+        with col_k:
+            st.markdown(f"""<div class="kpi-mini {cor}">
+              <div class="kpi-label">{label}</div>
+              <div class="kpi-value">{val}</div>
+              <div class="kpi-sub">{sub}</div></div>""", unsafe_allow_html=True)
+
+    st.markdown(f"<br><span style='color:#64748b;font-size:0.8rem'>{n_total} cliente(s)</span>", unsafe_allow_html=True)
+
+    if df_f.empty:
+        st.markdown("""
+        <div style="background:#0d1f14;border:1px solid #14532d;border-radius:10px;
+                    padding:24px;text-align:center;margin-top:16px">
+          <div style="font-size:2rem">📭</div>
+          <div style="color:#4ade80;font-weight:700;margin-top:8px">Nenhum cliente encontrado</div>
+          <div style="color:#64748b;font-size:0.82rem">Use <b>➕ Novo Registro</b> para adicionar</div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+
+    for _, row in df_f.iterrows():
+        _card_cliente_carteira(row.to_dict(), is_admin, gc, username)
+
+    if is_admin:
+        st.markdown('<p class="section-title">🔓 LIBERAR CNPJ</p>', unsafe_allow_html=True)
+        cl1, cl2, cl3 = st.columns([2,3,1])
+        with cl1:
+            cnpj_lib = st.text_input("CNPJ", placeholder="00.000.000/0000-00", key="cart_lib_cnpj")
+        with cl2:
+            mot_lib  = st.text_input("Motivo", key="cart_lib_mot")
+        with cl3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔓 Liberar", type="primary", use_container_width=True, key="cart_lib_btn"):
+                if cnpj_lib.strip():
+                    ok = _atualizar_campo_carteira(gc, cnpj_lib.strip(), {
+                        "status": "Liberado pelo Admin",
+                        "obs": f"[Admin] {mot_lib.strip()}" if mot_lib.strip() else "[Admin] Liberado manualmente",
+                    })
+                    if ok:
+                        st.success(f"✅ {_formatar_cnpj(cnpj_lib)} liberado!")
+                        st.rerun()
+                    else:
+                        st.error("CNPJ nao encontrado.")
+                else:
+                    st.error("Informe o CNPJ.")
+        st.markdown("")
+        st.download_button("⬇️ Exportar CSV", df_f.to_csv(index=False).encode("utf-8"),
+                           "carteira.csv", "text/csv", key="cart_exp")
+
+
+
+# ─────────────────────────────────────────────────────────────────
 #  CARREGAMENTO DE DADOS
 # ─────────────────────────────────────────────────────────────────
 
@@ -907,17 +1440,36 @@ def main():
         st.markdown(f"""<div class="kpi-mini purple"><div class="kpi-label">👥 Vendedores</div>
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
 
+    # ── Carteira — carrega gc e dados uma vez ────────────────────
+    gc_carteira = get_gspread_client()
+    with st.spinner("Carregando carteira..."):
+        df_carteira = _load_carteira(gc_carteira)
+        df_carteira = _atualizar_expirados_gc(gc_carteira, df_carteira.copy())
+        try:
+            vends_cart, mapa_lider_cart, mapa_tbp_cart = _load_colab_carteira(gc_carteira)
+        except Exception:
+            vends_cart, mapa_lider_cart, mapa_tbp_cart = [], {}, {}
+
     # ── Tabs ──────────────────────────────────────────────────────
     if tipo == "parceiro":
-        tabs = st.tabs(["📋 Detalhado"])
+        tabs = st.tabs(["📋 Detalhado", "📁 Carteira", "➕ Novo Atendimento"])
         with tabs[0]:
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
             render_detalhado(df, mes_alvo, meta_dict)
             st.markdown("---")
             st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
             _render_exportar(df_export, meta_dict, mes_alvo)
+        with tabs[1]:
+            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
+        with tabs[2]:
+            _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
     else:
-        tab_det, tab_atr = st.tabs(["📋 Detalhado", "👤 Atribuição de Vendedores"])
+        tab_det, tab_atr, tab_cart, tab_novo = st.tabs([
+            "📋 Detalhado",
+            "👤 Atribuição de Vendedores",
+            "📁 Carteira",
+            "➕ Novo Atendimento",
+        ])
 
         with tab_det:
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
@@ -937,6 +1489,12 @@ def main():
                 vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
 
             render_atribuicao(df_pend, ws_bko, vendedores)
+
+        with tab_cart:
+            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
+
+        with tab_novo:
+            _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
 
 
 main()
