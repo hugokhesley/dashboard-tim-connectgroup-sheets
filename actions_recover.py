@@ -26,12 +26,12 @@ from google.oauth2.service_account import Credentials
 # CONFIGURACOES
 # ---------------------------------------------------------------------
 
-EMAIL_1        = os.environ["IMAP_EMAIL_1"]
-SENHA_1        = os.environ["IMAP_SENHA_1"]
-EMAIL_2        = os.environ["IMAP_EMAIL_2"]
-SENHA_2        = os.environ["IMAP_SENHA_2"]
-EMAIL_3        = os.environ["IMAP_EMAIL_3"]
-SENHA_3        = os.environ["IMAP_SENHA_3"]
+EMAIL_1        = os.environ["EMAIL_1"]
+SENHA_1        = os.environ["SENHA_1"]
+EMAIL_2        = os.environ["EMAIL_2"]
+SENHA_2        = os.environ["SENHA_2"]
+EMAIL_3        = os.environ["EMAIL_3"]
+SENHA_3        = os.environ["SENHA_3"]
 SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 
 JANELA_HORAS   = int(os.environ.get("JANELA_HORAS", "6"))
