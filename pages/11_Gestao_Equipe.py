@@ -1,6 +1,6 @@
 """
 =====================================================================
-  11_Gestao_Equipe.py — Gestão de Vendas · Connect Group
+  11_Gestao_Equipe.py — Connect Valore · Connect Group
 =====================================================================
   Página isolada para líderes e parceiros visualizarem
   apenas suas próprias vendas (Detalhado + Atribuição).
@@ -31,8 +31,8 @@ import re
 import requests
 
 st.set_page_config(
-    page_title="Gestão de Vendas — Connect Group",
-    page_icon="📊",
+    page_title="Connect Valore — Connect Group",
+    page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -215,7 +215,7 @@ def gerar_pdf(df_atv, meta_dict, mes):
     story = []
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-    h = Table([[Paragraph(f"<b>CONNECT GROUP — Gestão de Vendas {mes}</b>", sTitle),
+    h = Table([[Paragraph(f"<b>CONNECT GROUP — Connect Valore {mes}</b>", sTitle),
                 Paragraph(f"Gerado em {agora}", sRight)]], colWidths=["70%","30%"])
     h.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,-1),VERDE_ESC),
@@ -343,7 +343,7 @@ def gerar_excel(df_atv, meta_dict, mes):
 
     row = 1
     ws.merge_cells(f"A{row}:D{row}")
-    ws[f"A{row}"] = f"CONNECT GROUP — Gestao de Vendas {mes}"
+    ws[f"A{row}"] = f"CONNECT GROUP — Connect Valore {mes}"
     ws[f"A{row}"].font = ft_title
     ws[f"A{row}"].fill = fill("#15803d")
     ws[f"A{row}"].alignment = al_left
@@ -929,47 +929,487 @@ def _card_cliente_carteira(row: dict, is_admin: bool, gc, username: str):
     </div>
     """, unsafe_allow_html=True)
 
-    if is_admin:
-        with st.expander(f"⚙️ Editar — {razao[:40]}"):
-            c1, c2, c3, c4 = st.columns([2,2,3,1])
-            with c1:
-                ns = st.selectbox("Status", STATUS_CARTEIRA,
-                    index=STATUS_CARTEIRA.index(status) if status in STATUS_CARTEIRA else 0,
-                    key=f"cst_{row.get('cnpj','')}")
-            with c2:
-                np_ = st.text_input("Nº Pedido TIM",
-                    value=pedido if pedido not in ("","nan") else "",
-                    key=f"cpt_{row.get('cnpj','')}")
-            with c3:
-                no_ = st.text_input("Observação",
-                    value=obs if obs not in ("","nan") else "",
-                    key=f"cob_{row.get('cnpj','')}")
-            with c4:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("💾", key=f"csv_{row.get('cnpj','')}", use_container_width=True):
-                    ok = _atualizar_campo_carteira(gc, str(row.get("cnpj","")),
-                                                   {"status":ns,"pedido_tim":np_,"obs":no_})
-                    if ok:
-                        st.success("✅ Salvo!")
-                        st.rerun()
+
+    cnpj_key = re.sub(r"\D", "", str(row.get("cnpj","")))
+    key_dossie = f"dossie_{cnpj_key}"
+
+    # Botões de ação
+    col_atend, col_edit = st.columns([1, 1])
+    with col_atend:
+        if st.button("📋 Atendimento", key=f"btn_atend_{cnpj_key}",
+                     use_container_width=True, type="primary"):
+            if st.session_state.get(key_dossie):
+                del st.session_state[key_dossie]
+            else:
+                st.session_state[key_dossie] = True
+            st.rerun()
+    with col_edit:
+        if st.button("⚙️ Editar", key=f"btn_edit_{cnpj_key}", use_container_width=True):
+            toggle_key = f"edit_open_{cnpj_key}"
+            st.session_state[toggle_key] = not st.session_state.get(toggle_key, False)
+            st.rerun()
+
+    # Painel de edição admin
+    if st.session_state.get(f"edit_open_{cnpj_key}"):
+        c1, c2, c3, c4 = st.columns([2,2,3,1])
+        with c1:
+            ns = st.selectbox("Status", STATUS_CARTEIRA,
+                index=STATUS_CARTEIRA.index(status) if status in STATUS_CARTEIRA else 0,
+                key=f"cst_{cnpj_key}")
+        with c2:
+            np_ = st.text_input("Nº Pedido TIM",
+                value=pedido if pedido not in ("","nan") else "",
+                key=f"cpt_{cnpj_key}")
+        with c3:
+            no_ = st.text_input("Observação",
+                value=obs if obs not in ("","nan") else "",
+                key=f"cob_{cnpj_key}")
+        with c4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("💾", key=f"csv_{cnpj_key}", use_container_width=True):
+                ok = _atualizar_campo_carteira(gc, cnpj_key,
+                                               {"status":ns,"pedido_tim":np_,"obs":no_})
+                if ok:
+                    st.success("✅ Salvo!")
+                    st.session_state.pop(f"edit_open_{cnpj_key}", None)
+                    st.rerun()
     elif status == "Em Atendimento" and pedido in ("","nan"):
-        with st.expander(f"📌 Registrar pedido TIM — {razao[:35]}"):
-            c1, c2 = st.columns([3,1])
-            with c1:
-                np2 = st.text_input("Nº Pedido TIM *", placeholder="ex: 6341069",
-                                    key=f"cnp2_{row.get('cnpj','')}")
-            with c2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("✅", key=f"cnpbt_{row.get('cnpj','')}",
-                             type="primary", use_container_width=True):
-                    if np2.strip():
-                        ok = _atualizar_campo_carteira(gc, str(row.get("cnpj","")),
-                                                       {"pedido_tim": np2.strip()})
-                        if ok:
-                            st.success("📌 Registrado!")
-                            st.rerun()
-                    else:
-                        st.error("Informe o numero.")
+        col_p1, col_p2 = st.columns([3,1])
+        with col_p1:
+            np2 = st.text_input("Nº Pedido TIM *", placeholder="ex: 6341069",
+                                key=f"cnp2_{cnpj_key}")
+        with col_p2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("📌 Registrar", key=f"cnpbt_{cnpj_key}",
+                         type="primary", use_container_width=True):
+                if np2.strip():
+                    ok = _atualizar_campo_carteira(gc, cnpj_key,
+                                                   {"pedido_tim": np2.strip()})
+                    if ok:
+                        st.success("📌 Registrado!")
+                        st.rerun()
+                else:
+                    st.error("Informe o número.")
+
+    # Dossiê expandido
+    if st.session_state.get(key_dossie):
+        st.markdown("---")
+        if st.button("✖ Fechar dossiê", key=f"fechar_{cnpj_key}"):
+            del st.session_state[key_dossie]
+            st.rerun()
+        _tela_dossie(gc, cnpj_key, row, username, is_admin)
+        st.markdown("---")
+
+
+
+# ─────────────────────────────────────────────────────────────────
+#  DOSSIÊ DO CLIENTE — Contatos, Pedidos, Qualidade
+# ─────────────────────────────────────────────────────────────────
+
+ABA_CONTATOS = "CarteiraContatos"
+HEADER_CONTATOS = [
+    "cnpj", "data", "tipo", "responsavel", "obs", "registrado_em"
+]
+TIPOS_CONTATO = ["📞 Ligação", "🏠 Visita", "💬 WhatsApp",
+                  "📧 Email", "📋 Reunião", "📝 Outro"]
+
+
+def _get_aba_contatos(gc):
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        return sh.worksheet(ABA_CONTATOS)
+    except Exception:
+        aba = sh.add_worksheet(title=ABA_CONTATOS, rows=5000, cols=len(HEADER_CONTATOS)+2)
+        aba.append_row(HEADER_CONTATOS)
+        return aba
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _load_contatos_cnpj(_gc, cnpj_norm: str) -> pd.DataFrame:
+    try:
+        aba  = _get_aba_contatos(_gc)
+        rows = aba.get_all_records()
+        if not rows:
+            return pd.DataFrame(columns=HEADER_CONTATOS)
+        df = pd.DataFrame(rows)
+        for col in HEADER_CONTATOS:
+            if col not in df.columns:
+                df[col] = ""
+        df["cnpj"] = df["cnpj"].astype(str).str.replace(r"\D","",regex=True).str.strip()
+        return df[df["cnpj"] == cnpj_norm].sort_values(
+            "registrado_em", ascending=False).reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=HEADER_CONTATOS)
+
+
+def _salvar_contato(gc, cnpj_norm: str, tipo: str, obs: str, usuario: str) -> bool:
+    try:
+        aba   = _get_aba_contatos(gc)
+        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        aba.append_row([
+            cnpj_norm,
+            agora[:10],
+            tipo,
+            usuario,
+            obs,
+            agora,
+        ])
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar contato: {e}")
+        return False
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _pedidos_por_cnpj(_gc, cnpj_norm: str) -> pd.DataFrame:
+    """Busca pedidos do cliente no DadosRadar pelo CNPJ."""
+    try:
+        sh     = _gc.open_by_key(SPREADSHEET_ID)
+        radar  = sh.worksheet("DadosRadar")
+        rows   = radar.get_all_values()
+        if not rows or len(rows) < 2:
+            return pd.DataFrame()
+        header = [str(h).strip().lower() for h in rows[0]]
+        n = len(header)
+        data = [r + [""]*(n-len(r)) if len(r)<n else r[:n] for r in rows[1:]]
+        df = pd.DataFrame(data, columns=header)
+        ci = next((i for i,h in enumerate(header) if h=="cnpj"), None)
+        if ci is None:
+            return pd.DataFrame()
+        df["_cnpj_norm"] = df.iloc[:,ci].astype(str).str.replace(r"\D","",regex=True)
+        return df[df["_cnpj_norm"] == cnpj_norm].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _qualidade_por_cnpj(cnpj_norm: str) -> pd.DataFrame:
+    """Busca histórico de qualidade/adimplência do CNPJ."""
+    try:
+        import gspread as _gs
+        from google.oauth2.service_account import Credentials as _Creds
+        scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                  "https://www.googleapis.com/auth/drive"]
+        creds  = _Creds.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]), scopes=scopes)
+        gc_q   = _gs.authorize(creds)
+        sh_q   = gc_q.open_by_key(QUALIDADE_SHEET_ID)
+        aba    = sh_q.worksheet(QUALIDADE_ABA)
+        rows   = aba.get_all_values()
+        if not rows or len(rows) < 2:
+            return pd.DataFrame()
+        import unicodedata as _ud
+        def _nc(s):
+            s = str(s).strip().lower().replace(" ","_")
+            return "".join(c for c in _ud.normalize("NFD",s) if _ud.category(c)!="Mn")
+        KEYS = {"cnpj","safra","cliente","adimplente"}
+        hidx = 0
+        for i,row in enumerate(rows):
+            if {_nc(c) for c in row if str(c).strip()} & KEYS:
+                hidx = i; break
+        header_raw = rows[hidx]
+        data_rows  = rows[hidx+1:]
+        seen,header = {},[]
+        for h in header_raw:
+            k = _nc(h) or "col"
+            if k in seen: seen[k]+=1; k=f"{k}_{seen[k]}"
+            else: seen[k]=0
+            header.append(k)
+        n = len(header)
+        data_rows = [r+[""]*(n-len(r)) if len(r)<n else r[:n] for r in data_rows]
+        df = pd.DataFrame(data_rows, columns=header)
+        col_cn = next((c for c in df.columns if "cnpj" in c), None)
+        if not col_cn:
+            return pd.DataFrame()
+        df["_cn"] = df[col_cn].astype(str).str.replace(r"\D","",regex=True)
+        return df[df["_cn"] == cnpj_norm].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _tela_dossie(gc, cnpj_norm: str, row_carteira: dict, username: str, is_admin: bool):
+    """Dossiê completo do cliente."""
+    razao   = str(row_carteira.get("razao_social","—"))
+    fantasia= str(row_carteira.get("nome_fantasia",""))
+    vend    = str(row_carteira.get("vendedor","—"))
+    lider_c = str(row_carteira.get("lider","—"))
+    tbp     = str(row_carteira.get("tbp","—"))
+    status  = str(row_carteira.get("status","Em Atendimento"))
+    telefone= str(row_carteira.get("telefone",""))
+    email_c = str(row_carteira.get("email",""))
+    cidade  = str(row_carteira.get("cidade",""))
+    uf      = str(row_carteira.get("uf",""))
+    logr    = str(row_carteira.get("logradouro",""))
+    bairro  = str(row_carteira.get("bairro",""))
+    ativid  = str(row_carteira.get("atividade_economica",""))
+    data_r  = str(row_carteira.get("data_registro",""))
+    cor     = COR_STATUS_CART.get(status,"#64748b")
+    cnpj_fmt= _formatar_cnpj(cnpj_norm)
+
+    # ── Header do dossiê ─────────────────────────────────────────
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#0d2b1a,#14532d);border-radius:14px;
+                padding:20px 24px;margin-bottom:20px;border:1px solid #1a4731">
+      <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-size:1.2rem;font-weight:800;color:#f1f5f9">{razao}</div>
+          <div style="font-size:0.8rem;color:#86efac;margin-top:3px">
+            {fantasia + " · " if fantasia and fantasia!=razao else ""}{cnpj_fmt}
+          </div>
+          <div style="font-size:0.75rem;color:#4ade80;margin-top:4px">
+            📍 {logr}{", " + bairro if bairro else ""} · {cidade}/{uf}
+          </div>
+          <div style="font-size:0.75rem;color:#4ade80;margin-top:2px">
+            🏭 {ativid}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          <span style="background:{cor};color:#fff;padding:4px 12px;border-radius:99px;
+                       font-size:0.75rem;font-weight:700">{status}</span>
+          <div style="font-size:0.72rem;color:#86efac">📅 Desde {data_r[:10]}</div>
+        </div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:20px;flex-wrap:wrap">
+        <span style="font-size:0.78rem;color:#86efac">
+          👤 <b style="color:#f1f5f9">{vend}</b> · 🏅 {lider_c} · 🏢 {tbp}
+        </span>
+        <span style="font-size:0.78rem;color:#86efac">
+          📞 {telefone or "—"} · 📧 {email_c or "—"}
+        </span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Três seções em tabs ───────────────────────────────────────
+    td_hist, td_ped, td_qual = st.tabs([
+        "📞 Histórico de Contatos",
+        "📦 Pedidos / Funil",
+        "💳 Qualidade",
+    ])
+
+    # ── Tab: Histórico de Contatos ────────────────────────────────
+    with td_hist:
+        st.markdown('<p class="section-title">➕ REGISTRAR CONTATO</p>',
+                    unsafe_allow_html=True)
+
+        col_t, col_o, col_btn = st.columns([2, 4, 1])
+        with col_t:
+            tipo_contato = st.selectbox(
+                "Tipo", TIPOS_CONTATO,
+                key=f"tipo_contato_{cnpj_norm}"
+            )
+        with col_o:
+            obs_contato = st.text_input(
+                "Observação *",
+                placeholder="Ex: Cliente demonstrou interesse em 5 linhas móveis...",
+                key=f"obs_contato_{cnpj_norm}"
+            )
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("✅ Salvar", key=f"btn_contato_{cnpj_norm}",
+                         type="primary", use_container_width=True):
+                if not obs_contato.strip():
+                    st.error("Informe a observação.")
+                else:
+                    ok = _salvar_contato(gc, cnpj_norm, tipo_contato,
+                                         obs_contato.strip(), username)
+                    if ok:
+                        st.success("📋 Contato registrado!")
+                        st.rerun()
+
+        st.markdown('<p class="section-title">📋 HISTÓRICO</p>', unsafe_allow_html=True)
+
+        df_cont = _load_contatos_cnpj(gc, cnpj_norm)
+
+        if df_cont.empty:
+            st.markdown("""
+            <div style="background:#0d1f14;border:1px solid #14532d;border-radius:10px;
+                        padding:20px;text-align:center;color:#4ade80">
+              📭 Nenhum contato registrado ainda. Registre o primeiro acima!
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            ICONE_TIPO = {
+                "📞 Ligação":"📞","🏠 Visita":"🏠","💬 WhatsApp":"💬",
+                "📧 Email":"📧","📋 Reunião":"📋","📝 Outro":"📝"
+            }
+            for _, c_row in df_cont.iterrows():
+                tipo_c = str(c_row.get("tipo",""))
+                icone  = next((v for k,v in ICONE_TIPO.items() if icone_k in tipo_c
+                               for icone_k in [k]), "📝")
+                data_c = str(c_row.get("data",""))
+                resp_c = str(c_row.get("responsavel",""))
+                obs_c  = str(c_row.get("obs",""))
+
+                st.markdown(f"""
+                <div style="background:#111827;border:1px solid #1e3a5f;border-left:4px solid #3b82f6;
+                            border-radius:10px;padding:12px 16px;margin-bottom:6px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <div>
+                      <span style="font-size:0.8rem;font-weight:700;color:#93c5fd">{tipo_c}</span>
+                      <span style="font-size:0.72rem;color:#475569;margin-left:10px">
+                        📅 {data_c} · 👤 {resp_c}
+                      </span>
+                    </div>
+                  </div>
+                  <div style="font-size:0.78rem;color:#cbd5e1;margin-top:6px">{obs_c}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── Tab: Pedidos / Funil ──────────────────────────────────────
+    with td_ped:
+        st.markdown('<p class="section-title">📦 PEDIDOS DO CLIENTE</p>',
+                    unsafe_allow_html=True)
+
+        df_ped = _pedidos_por_cnpj(gc, cnpj_norm)
+
+        if df_ped.empty:
+            st.markdown("""
+            <div style="background:#150d2b;border:1px solid #3b1f6e;border-radius:10px;
+                        padding:20px;text-align:center;color:#a78bfa">
+              📭 Nenhum pedido encontrado no DadosRadar para este CNPJ.<br>
+              <span style="font-size:0.8rem;color:#64748b">
+                Este cliente está em prospecção — registre contatos na aba anterior.
+              </span>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            import unicodedata as _ud2
+            def _nc2(s):
+                s=str(s).strip().lower()
+                return "".join(c for c in _ud2.normalize("NFD",s) if _ud2.category(c)!="Mn")
+            col_map_r = {_nc2(c):c for c in df_ped.columns}
+            col_ped   = col_map_r.get("pedido")
+            col_fila  = next((c for c in df_ped.columns if "fila" in _nc2(c)),None)
+            col_ac    = next((c for c in df_ped.columns if "acess" in _nc2(c)),None)
+            col_preco = next((c for c in df_ped.columns if "preco" in _nc2(c) or "valor" in _nc2(c)),None)
+            col_atv   = next((c for c in df_ped.columns if "ativac" in _nc2(c) or "data_at" in _nc2(c)),None)
+            col_safra = next((c for c in df_ped.columns if "safra" in _nc2(c) or "mes" in _nc2(c)),None)
+
+            # KPIs rápidos
+            total_ped = len(df_ped)
+            total_ac  = 0
+            try:
+                total_ac = int(pd.to_numeric(df_ped[col_ac], errors="coerce").sum()) if col_ac else 0
+            except Exception:
+                pass
+
+            k1, k2 = st.columns(2)
+            with k1:
+                st.markdown(f"""<div class="kpi-mini blue">
+                  <div class="kpi-label">📦 Total Pedidos</div>
+                  <div class="kpi-value">{total_ped}</div></div>""",
+                  unsafe_allow_html=True)
+            with k2:
+                st.markdown(f"""<div class="kpi-mini green">
+                  <div class="kpi-label">📶 Total Acessos</div>
+                  <div class="kpi-value">{total_ac}</div></div>""",
+                  unsafe_allow_html=True)
+
+            st.markdown("")
+
+            for _, p_row in df_ped.iterrows():
+                num_ped = str(p_row.get(col_ped,"—")) if col_ped else "—"
+                fila    = str(p_row.get(col_fila,"—")) if col_fila else "—"
+                acessos = str(p_row.get(col_ac,"")) if col_ac else ""
+                preco   = str(p_row.get(col_preco,"")) if col_preco else ""
+                atv     = str(p_row.get(col_atv,"")) if col_atv else ""
+                safra   = str(p_row.get(col_safra,"")) if col_safra else ""
+
+                COR_FILA = {
+                    "ATIVADO":"#22c55e","APROVADO":"#16a34a",
+                    "EM TRAMITACAO":"#f59e0b","PRE-VENDA":"#f59e0b",
+                    "DEVOLVIDO":"#ef4444","CANCELADO":"#dc2626",
+                }
+                fila_u  = fila.strip().upper()
+                cor_f   = next((v for k,v in COR_FILA.items() if k in fila_u),"#64748b")
+                preco_f = ""
+                try:
+                    preco_f = f"R$ {float(str(preco).replace(',','.').replace('R$','').strip()):,.2f}"
+                except Exception:
+                    preco_f = preco
+
+                st.markdown(f"""
+                <div style="background:#111827;border:1px solid #1e3a5f;border-left:4px solid {cor_f};
+                            border-radius:10px;padding:12px 16px;margin-bottom:6px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                    <div>
+                      <span style="font-size:0.85rem;font-weight:700;color:#f1f5f9">Pedido #{num_ped}</span>
+                      <span style="font-size:0.72rem;color:#64748b;margin-left:10px">
+                        {("📅 " + atv) if atv and atv not in ("","nan") else ""}
+                        {(" · 🗓 " + safra) if safra and safra not in ("","nan") else ""}
+                      </span>
+                    </div>
+                    <span style="background:{cor_f};color:#fff;padding:2px 10px;border-radius:99px;
+                                 font-size:0.7rem;font-weight:700">{fila}</span>
+                  </div>
+                  <div style="font-size:0.75rem;color:#94a3b8;margin-top:6px;display:flex;gap:16px">
+                    {(f"📶 {acessos} acessos") if acessos and acessos not in ("","nan","0") else ""}
+                    {(" · 💰 " + preco_f) if preco_f and preco_f not in ("","nan") else ""}
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ── Tab: Qualidade ────────────────────────────────────────────
+    with td_qual:
+        st.markdown('<p class="section-title">💳 HISTÓRICO DE ADIMPLÊNCIA</p>',
+                    unsafe_allow_html=True)
+
+        df_q = _qualidade_por_cnpj(cnpj_norm)
+
+        if df_q.empty:
+            st.info("Nenhum registro de qualidade encontrado para este cliente.")
+        else:
+            import unicodedata as _ud3
+            def _nc3(s):
+                s=str(s).strip().lower()
+                return "".join(c for c in _ud3.normalize("NFD",s) if _ud3.category(c)!="Mn")
+            col_map_q = {_nc3(c):c for c in df_q.columns}
+            col_safra_q = col_map_q.get("safra")
+            col_adim_q  = col_map_q.get("adimplente") or next(
+                (c for c in df_q.columns if "adim" in _nc3(c)), None)
+            col_venc_q  = col_map_q.get("vecimento") or col_map_q.get("vencimento")
+            col_valor_q = next((c for c in df_q.columns if "valor" in _nc3(c)), None)
+            col_obs_q   = col_map_q.get("observacoes") or col_map_q.get("obs")
+
+            for _, q_row in df_q.iterrows():
+                safra_q = str(q_row.get(col_safra_q,"")) if col_safra_q else ""
+                adim_q  = str(q_row.get(col_adim_q,"")).strip().upper() if col_adim_q else ""
+                venc_q  = str(q_row.get(col_venc_q,"")).strip() if col_venc_q else ""
+                valor_q = str(q_row.get(col_valor_q,"")).strip() if col_valor_q else ""
+                obs_q   = str(q_row.get(col_obs_q,"")).strip()[:150] if col_obs_q else ""
+
+                adim_key_q = adim_q
+                if "N" in adim_key_q and adim_key_q not in ("SIM","FATURA GERADA"):
+                    adim_key_q = "NAO"
+
+                cor_q  = COR_ADIMPLENTE.get(adim_key_q, "#64748b")
+                icon_q = ICON_ADIMPLENTE.get(adim_key_q, "▪️")
+
+                preco_q = ""
+                try:
+                    preco_q = f"R$ {float(valor_q.split('/')[0].replace(',','.').replace('R$','').strip()):,.2f}"
+                except Exception:
+                    preco_q = valor_q
+
+                st.markdown(f"""
+                <div style="background:#111827;border:1px solid #1e3a5f;border-left:4px solid {cor_q};
+                            border-radius:10px;padding:12px 16px;margin-bottom:6px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+                    <div>
+                      <span style="font-size:0.85rem;font-weight:700;color:#f1f5f9">Safra {safra_q}</span>
+                      {(f'<span style="font-size:0.72rem;color:#64748b;margin-left:10px">Vence: {venc_q}</span>') if venc_q else ""}
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      {(f'<span style="color:#f59e0b;font-weight:700;font-size:0.82rem">{preco_q}</span>') if preco_q and preco_q not in ("","nan") else ""}
+                      <span style="background:{cor_q};color:#fff;padding:2px 10px;border-radius:99px;
+                                   font-size:0.7rem;font-weight:700">{icon_q} {adim_q or "—"}</span>
+                    </div>
+                  </div>
+                  {(f'<div style="font-size:0.75rem;color:#6b7280;margin-top:6px">{obs_q}</div>') if obs_q else ""}
+                </div>
+                """, unsafe_allow_html=True)
 
 
 def _tela_carteira_novo(gc, df_carteira, vendedores, mapa_lider, mapa_tbp, username, info):
@@ -1073,11 +1513,11 @@ def _tela_carteira_novo(gc, df_carteira, vendedores, mapa_lider, mapa_tbp, usern
         c1, c2, c3 = st.columns(3)
         with c1:
             razao    = st.text_input("Razao Social *",  value=_sv(c,"razao_social"))
-            telefone = st.text_input("Telefone",        value=_sv(c,"telefone"))
+            telefone = st.text_input("Telefone *",       value=_sv(c,"telefone"))
             cidade   = st.text_input("Cidade",          value=_sv(c,"cidade"))
         with c2:
             fantasia  = st.text_input("Nome Fantasia",  value=_sv(c,"nome_fantasia"))
-            email_cli = st.text_input("Email",          value=_sv(c,"email"))
+            email_cli = st.text_input("Email *",         value=_sv(c,"email"))
             uf        = st.text_input("UF",             value=_sv(c,"uf"))
         with c3:
             atividade = st.text_input("Atividade",      value=_sv(c,"atividade_economica"))
@@ -1092,7 +1532,11 @@ def _tela_carteira_novo(gc, df_carteira, vendedores, mapa_lider, mapa_tbp, usern
             lider_final = mapa_lider.get(vend_final, "")
             tbp_final   = mapa_tbp.get(vend_final, "")
             if not razao.strip():
-                st.error("⚠️ Razao Social obrigatoria.")
+                st.error("⚠️ Razão Social obrigatória.")
+            elif not telefone.strip():
+                st.error("⚠️ Telefone de contato é obrigatório.")
+            elif not email_cli.strip():
+                st.error("⚠️ Email de contato é obrigatório.")
             elif not vend_final:
                 st.error("⚠️ Selecione o vendedor.")
             else:
@@ -1735,8 +2179,19 @@ def main():
     badge   = "🔑 ADMIN" if tipo == "admin" else ("👤 LÍDER" if tipo == "lider" else "🏢 PARCEIRO")
     st.markdown(f"""<div class="header-gestao">
       <div>
-        <p class="header-title">📊 GESTÃO DE VENDAS — CONNECT GROUP</p>
-        <p class="header-sub">TIM Corporate · {mes_str} · Bem-vindo, {name}</p>
+        <p class="header-title">
+          <span style="font-size:0.65rem;font-weight:500;color:rgba(255,255,255,0.45);
+                       letter-spacing:3px;text-transform:uppercase;display:block;
+                       margin-bottom:4px">CONNECT GROUP</span>
+          Connect Valore
+        </p>
+        <p class="header-sub">
+          TIM Corporate · {mes_str} · Bem-vindo, {name}
+          <span style="display:block;margin-top:5px;font-size:0.72rem;
+                       color:rgba(255,255,255,0.35);font-style:italic;letter-spacing:0.5px">
+            Conexões que geram valor
+          </span>
+        </p>
       </div>
       <div style="display:flex;align-items:center;gap:12px">
         <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png"
