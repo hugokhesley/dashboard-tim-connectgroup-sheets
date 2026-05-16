@@ -1776,16 +1776,6 @@ def main():
 
     st.markdown("")
 
-    # ── Qualidade — carrega e enriquece ──────────────────────────
-    with st.spinner("Carregando qualidade..."):
-        gc_qual = get_gspread_client()
-        df_qual_raw = _load_qualidade()
-        if not df_qual_raw.empty and not bko.empty:
-            df_qual_enrich   = _cruzar_qualidade_bko(df_qual_raw, bko)
-            df_qual_filtrado = _filtrar_qualidade_por_perfil_local(df_qual_enrich, tipo, lider_u, parceiro_u)
-        else:
-            df_qual_filtrado = pd.DataFrame()
-
     # ── Carteira — carrega gc e dados ────────────────────────────
     gc_carteira = get_gspread_client()
     with st.spinner("Carregando carteira..."):
@@ -1805,7 +1795,7 @@ def main():
             st.markdown("---")
             _render_exportar(df_export, meta_dict, mes_alvo)
         with tabs[1]:
-            _tela_qualidade(df_qual_filtrado, bko, info, tipo, lider_u, parceiro_u)
+            _tela_qualidade(bko, info, tipo, lider_u)
         with tabs[2]:
             _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
         with tabs[3]:
@@ -1831,7 +1821,7 @@ def main():
                 vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
             render_atribuicao(df_pend, ws_bko, vendedores)
         with tab_qual:
-            _tela_qualidade(df_qual_filtrado, bko, info, tipo, lider_u, parceiro_u)
+            _tela_qualidade(bko, info, tipo, lider_u)
         with tab_cart:
             _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
         with tab_novo:
