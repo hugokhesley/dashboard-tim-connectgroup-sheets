@@ -1299,37 +1299,84 @@ def _load_qualidade():
 
 
 def _cruzar_qualidade_bko(df_qual: pd.DataFrame, df_bko: pd.DataFrame) -> pd.DataFrame:
-    import unicodedata
+    """
+    Cruza qualidade com BKO via DadosRadar como intermediário:
+    Qualidade(CNPJ) → DadosRadar(CNPJ→pedido) → BKO(pedido→vendedor+líder)
+    """
+    import unicodedata, gspread
     def _nq(s):
         s = str(s).strip().lower()
         return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    def _np(v):
+        s = str(v).strip()
+        if s.endswith(".0"): s = s[:-2]
+        return s.lstrip("0") or s
 
     df_qual["vendedor_real"] = ""
     df_qual["lider_bko"]    = ""
-    if df_bko.empty or df_qual.empty:
+
+    if df_qual.empty or "cnpj_norm" not in df_qual.columns:
         return df_qual
 
-    col_map = {_nq(c): c for c in df_bko.columns}
-    col_v  = col_map.get("vendedor_real") or col_map.get("vendedor")
-    col_l  = col_map.get("lider")
-    col_cn = next((c for c in df_bko.columns if "cnpj" in _nq(c)), None)
-    if not col_cn or not col_v:
-        return df_qual
+    try:
+        # ── 1. DadosRadar: CNPJ → pedido ─────────────────────────
+        from google.oauth2.service_account import Credentials
+        scopes = ["https://www.googleapis.com/auth/spreadsheets",
+                  "https://www.googleapis.com/auth/drive"]
+        creds  = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]), scopes=scopes)
+        gc_r   = gspread.authorize(creds)
+        sh     = gc_r.open_by_key(SPREADSHEET_ID)
+        radar  = sh.worksheet("DadosRadar")
+        r_rows = radar.get_all_values()
 
-    bko_idx = {}
-    for _, row in df_bko.iterrows():
-        cn = re.sub(r"\D", "", str(row.get(col_cn, ""))).strip()
-        if not cn:
-            continue
-        vd = str(row.get(col_v, "")).strip()
-        ld = str(row.get(col_l, "")).strip() if col_l else ""
-        if vd and vd.lower() not in ("", "nan", "none", "sem vendedor") and cn not in bko_idx:
-            bko_idx[cn] = {"vendedor_real": vd, "lider_bko": ld}
+        mapa_cnpj_pedido = {}
+        if r_rows and len(r_rows) > 1:
+            r_header = [str(h).strip().lower() for h in r_rows[0]]
+            ci_cn = next((i for i,h in enumerate(r_header) if h == "cnpj"), None)
+            ci_pd = next((i for i,h in enumerate(r_header) if h == "pedido"), None)
+            if ci_cn is not None and ci_pd is not None:
+                for row in r_rows[1:]:
+                    if not row or len(row) <= max(ci_cn, ci_pd):
+                        continue
+                    cn = re.sub(r"\D","",str(row[ci_cn]).strip())
+                    pd_ = _np(str(row[ci_pd]))
+                    if cn and pd_ and len(cn) == 14:
+                        mapa_cnpj_pedido[cn] = pd_
 
-    df_qual["vendedor_real"] = df_qual["cnpj_norm"].map(
-        lambda x: bko_idx.get(x, {}).get("vendedor_real", ""))
-    df_qual["lider_bko"]    = df_qual["cnpj_norm"].map(
-        lambda x: bko_idx.get(x, {}).get("lider_bko", ""))
+        # ── 2. BKO-VENDEDOR-REAL: pedido → vendedor + líder ──────
+        col_map = {_nq(c): c for c in df_bko.columns}
+        col_ped = col_map.get("pedido")
+        col_v   = col_map.get("vendedor_real") or next(
+            (c for c in df_bko.columns if "vendedor" in _nq(c)), None)
+        col_l   = col_map.get("lider")
+
+        mapa_ped_vend = {}
+        if col_ped and col_v and not df_bko.empty:
+            for _, row in df_bko.iterrows():
+                ped = _np(str(row.get(col_ped, "")))
+                vd  = str(row.get(col_v, "")).strip()
+                ld  = str(row.get(col_l, "")).strip() if col_l else ""
+                if ped and vd and vd.lower() not in ("","nan","none","sem vendedor"):
+                    mapa_ped_vend[ped] = {"vendedor_real": vd, "lider_bko": ld}
+
+        # ── 3. Aplica o cruzamento ────────────────────────────────
+        def _get_vendedor(cnpj):
+            ped  = mapa_cnpj_pedido.get(cnpj, "")
+            info = mapa_ped_vend.get(ped, {})
+            return info.get("vendedor_real", "")
+
+        def _get_lider(cnpj):
+            ped  = mapa_cnpj_pedido.get(cnpj, "")
+            info = mapa_ped_vend.get(ped, {})
+            return info.get("lider_bko", "")
+
+        df_qual["vendedor_real"] = df_qual["cnpj_norm"].apply(_get_vendedor)
+        df_qual["lider_bko"]    = df_qual["cnpj_norm"].apply(_get_lider)
+
+    except Exception as e:
+        st.warning(f"Qualidade: erro no cruzamento — {e}")
+
     return df_qual
 
 
@@ -1364,28 +1411,7 @@ def _tela_qualidade(df_bko: pd.DataFrame, info: dict, tipo: str, lider_u: str):
 
     is_admin = (tipo == "admin")
 
-    # Filtros
-    cf1, cf2, cf3, cf4 = st.columns(4)
-    with cf1:
-        safras = ["Todas"]
-        if col_safra:
-            safras += sorted(df_qual[col_safra].dropna().unique().tolist(), reverse=True)
-        safra_f = st.selectbox("\U0001f4c5 Safra", safras, key="qual_safra")
-    with cf2:
-        adim_f = st.selectbox("\U0001f4b3 Adimplente?",
-                              ["Todos", "NAO", "SIM", "FATURA GERADA"], key="qual_adim")
-    with cf3:
-        if is_admin:
-            vends_u = ["Todos"] + sorted(
-                v for v in df_qual["vendedor_real"].dropna().unique()
-                if v and v not in ("", "nan"))
-            vend_f = st.selectbox("\U0001f464 Vendedor", vends_u, key="qual_vend")
-        else:
-            vend_f = "Todos"
-    with cf4:
-        busca = st.text_input("\U0001f50d Empresa / CNPJ", key="qual_busca")
-
-    # Filtro perfil
+    # ── Aplica filtro de perfil primeiro (antes de montar listas) ─
     df_f = df_qual.copy()
     if not is_admin:
         if tipo == "lider" and lider_u:
@@ -1395,14 +1421,71 @@ def _tela_qualidade(df_bko: pd.DataFrame, info: dict, tipo: str, lider_u: str):
             nome_u = info.get("name", "").strip().upper()
             df_f   = df_f[df_f["vendedor_real"].astype(str).str.strip().str.upper() == nome_u]
 
-    # Filtros UI
+    # ── Filtros de UI ─────────────────────────────────────────────
+    if is_admin:
+        cf1, cf2, cf3, cf4, cf5, cf6 = st.columns(6)
+    else:
+        cf1, cf2, cf3, cf4 = st.columns(4)
+        cf5 = cf6 = None
+
+    with cf1:
+        safras = ["Todas"]
+        if col_safra:
+            safras += sorted(df_qual[col_safra].dropna().unique().tolist(), reverse=True)
+        safra_f = st.selectbox("📅 Safra", safras, key="qual_safra")
+
+    with cf2:
+        adim_f = st.selectbox("💳 Adimplente?",
+                              ["Todos", "NAO", "SIM", "FATURA GERADA"], key="qual_adim")
+
+    with cf3:
+        if is_admin:
+            lideres_u = ["Todos"] + sorted(
+                v for v in df_qual["lider_bko"].dropna().unique()
+                if v and v not in ("", "nan"))
+            lider_f = st.selectbox("🏅 Líder", lideres_u, key="qual_lider_f")
+        else:
+            lider_f = "Todos"
+            busca = st.text_input("🔍 Empresa / CNPJ", key="qual_busca")
+
+    with cf4:
+        if is_admin:
+            vends_u = ["Todos"] + sorted(
+                v for v in df_qual["vendedor_real"].dropna().unique()
+                if v and v not in ("", "nan"))
+            vend_f = st.selectbox("👤 Vendedor", vends_u, key="qual_vend")
+        else:
+            vend_f = "Todos"
+
+    if is_admin and cf5:
+        with cf5:
+            parcs_u = ["Todos"]
+            if col_parceiro and col_parceiro in df_qual.columns:
+                parcs_u += sorted(
+                    v for v in df_qual[col_parceiro].dropna().unique()
+                    if v and v not in ("", "nan"))
+            parc_f = st.selectbox("🏢 Parceiro (TBP)", parcs_u, key="qual_parc_f")
+        with cf6:
+            busca = st.text_input("🔍 Empresa / CNPJ", key="qual_busca")
+    else:
+        parc_f = "Todos"
+        if not cf5:  # não-admin já definiu busca no cf3
+            pass
+        else:
+            busca = ""
+
+    # ── Aplica filtros de UI ──────────────────────────────────────
     if safra_f != "Todas" and col_safra:
         df_f = df_f[df_f[col_safra].astype(str).str.strip() == safra_f]
     if adim_f != "Todos" and col_adim:
         df_f = df_f[df_f[col_adim].astype(str).str.strip().str.upper()
-                    .str.replace("\u00c3\u0083O","NAO").str.replace("N\u00c3\u0083O","NAO") == adim_f]
+                    .str.replace("NÃO","NAO").str.replace("N\u00c3O","NAO") == adim_f]
+    if lider_f != "Todos":
+        df_f = df_f[df_f["lider_bko"].astype(str).str.strip() == lider_f]
     if vend_f != "Todos":
         df_f = df_f[df_f["vendedor_real"].astype(str).str.strip() == vend_f]
+    if parc_f != "Todos" and col_parceiro and col_parceiro in df_f.columns:
+        df_f = df_f[df_f[col_parceiro].astype(str).str.strip() == parc_f]
     if busca:
         mask = pd.Series(False, index=df_f.index)
         if col_cliente:
@@ -1468,8 +1551,9 @@ def _tela_qualidade(df_bko: pd.DataFrame, info: dict, tipo: str, lider_u: str):
 
         valor_html  = f"<span style='color:#f59e0b;font-weight:700'>R$ {valor}</span> &nbsp;\u00b7&nbsp; " if valor and valor not in ("","nan") else ""
         vencto_html = f"<span style='color:#94a3b8;font-size:0.72rem'>Vence: {vencto}</span>" if vencto and vencto not in ("","nan") else ""
+        obs_safe    = obs[:200].replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("'","&#39;")
         obs_html    = (f"<div style='font-size:0.72rem;color:#475569;margin-top:4px;"
-                       f"border-left:2px solid #334155;padding-left:8px'>{obs[:200]}</div>"
+                       f"border-left:2px solid #334155;padding-left:8px'>{obs_safe}</div>"
                       ) if obs and obs not in ("","nan") else ""
         vend_html   = (f"\U0001f464 <b style='color:#e2e8f0'>{vendedor}</b> &nbsp;\u00b7&nbsp; \U0001f3c5 {lider_c}"
                       if vendedor else
