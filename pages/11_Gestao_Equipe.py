@@ -1514,6 +1514,23 @@ def _tela_qualidade(df_bko: pd.DataFrame, info: dict, tipo: str, lider_u: str):
 # ─────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=600, show_spinner=False)
+def _filtrar_qualidade_por_perfil_local(df: pd.DataFrame, tipo: str,
+                                         lider_u: str, parceiro_u: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if tipo == "admin":
+        return df
+    if tipo == "lider" and lider_u:
+        col = next((c for c in df.columns if "lider" in c.lower()), None)
+        if col:
+            return df[df[col].astype(str).str.strip().str.upper() == lider_u.strip().upper()]
+    if tipo == "parceiro" and parceiro_u:
+        col = next((c for c in df.columns if "vendedor" in c.lower()), None)
+        if col:
+            return df[df[col].astype(str).str.strip().str.upper() == parceiro_u.strip().upper()]
+    return df
+
+
 def _load_all():
     raw   = load_data()
     bko   = load_bko()
@@ -1757,6 +1774,68 @@ def main():
         st.markdown(f"""<div class="kpi-mini purple"><div class="kpi-label">👥 Vendedores</div>
           <div class="kpi-value">{nv_g}</div><div class="kpi-sub">ativos</div></div>""", unsafe_allow_html=True)
 
+    st.markdown("")
+
+    # ── Qualidade — carrega e enriquece ──────────────────────────
+    with st.spinner("Carregando qualidade..."):
+        gc_qual = get_gspread_client()
+        df_qual_raw = _load_qualidade()
+        if not df_qual_raw.empty and not bko.empty:
+            df_qual_enrich   = _cruzar_qualidade_bko(df_qual_raw, bko)
+            df_qual_filtrado = _filtrar_qualidade_por_perfil_local(df_qual_enrich, tipo, lider_u, parceiro_u)
+        else:
+            df_qual_filtrado = pd.DataFrame()
+
+    # ── Carteira — carrega gc e dados ────────────────────────────
+    gc_carteira = get_gspread_client()
+    with st.spinner("Carregando carteira..."):
+        df_carteira = _load_carteira(gc_carteira)
+        df_carteira = _atualizar_expirados_gc(gc_carteira, df_carteira.copy())
+        try:
+            vends_cart, mapa_lider_cart, mapa_tbp_cart = _load_colab_carteira()
+        except Exception:
+            vends_cart, mapa_lider_cart, mapa_tbp_cart = [], {}, {}
+
+    # ── Tabs ─────────────────────────────────────────────────────
+    if tipo == "parceiro":
+        tabs = st.tabs(["📋 Detalhado", "📊 Qualidade", "📁 Carteira", "➕ Novo Atendimento"])
+        with tabs[0]:
+            st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
+            render_detalhado(df, mes_alvo, meta_dict)
+            st.markdown("---")
+            _render_exportar(df_export, meta_dict, mes_alvo)
+        with tabs[1]:
+            _tela_qualidade(df_qual_filtrado, bko, info, tipo, lider_u, parceiro_u)
+        with tabs[2]:
+            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
+        with tabs[3]:
+            _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
+    else:
+        tab_det, tab_atr, tab_qual, tab_cart, tab_novo = st.tabs([
+            "📋 Detalhado",
+            "👤 Atribuição de Vendedores",
+            "📊 Qualidade",
+            "📁 Carteira",
+            "➕ Novo Atendimento",
+        ])
+        with tab_det:
+            st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
+            render_detalhado(df, mes_alvo, meta_dict)
+            st.markdown("---")
+            _render_exportar(df_export, meta_dict, mes_alvo)
+        with tab_atr:
+            st.markdown('<p class="section-title">👤 Pedidos sem Vendedor Atribuído</p>', unsafe_allow_html=True)
+            with st.spinner("Carregando pendentes..."):
+                df_pend, ws_bko = _carregar_pendentes_bko(
+                    lider_filtro=lider_u, parceiro_filtro=parceiro_u, tipo=tipo)
+                vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
+            render_atribuicao(df_pend, ws_bko, vendedores)
+        with tab_qual:
+            _tela_qualidade(df_qual_filtrado, bko, info, tipo, lider_u, parceiro_u)
+        with tab_cart:
+            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
+        with tab_novo:
+            _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1774,457 +1853,6 @@ COR_ADIM = {
     "FATURA GERADA": "#f59e0b",
 }
 
-
-@st.cache_data(ttl=120, show_spinner=False)
-def _load_qualidade_raw(_gc_qual):
-    """Carrega BASE_SAFRAS_QUALIDADE da planilha separada."""
-    try:
-        sh  = _gc_qual.open_by_key(QUALIDADE_SPREADSHEET_ID)
-        aba = sh.worksheet(ABA_QUALIDADE)
-        rows = aba.get_all_values()
-        if not rows or len(rows) < 2:
-            return pd.DataFrame()
-
-        import unicodedata
-        def _nc(s):
-            s = str(s).strip().lower().replace(" ", "_")
-            return "".join(c for c in unicodedata.normalize("NFD", s)
-                           if unicodedata.category(c) != "Mn")
-
-        # Detecta header (linha que contém "cnpj" ou "safra")
-        header_idx = 0
-        KEYS = {"cnpj", "safra", "cliente", "adimplente"}
-        for i, row in enumerate(rows):
-            if {_nc(c) for c in row} & KEYS:
-                header_idx = i
-                break
-
-        header_raw = rows[header_idx]
-        data_rows  = rows[header_idx + 1:]
-        n = len(header_raw)
-
-        seen = {}
-        header = []
-        for h in header_raw:
-            k = _nc(h) or "col"
-            if k in seen:
-                seen[k] += 1
-                k = f"{k}_{seen[k]}"
-            else:
-                seen[k] = 0
-            header.append(k)
-
-        data_rows = [r + [""] * (n - len(r)) if len(r) < n else r[:n]
-                     for r in data_rows]
-        df = pd.DataFrame(data_rows, columns=header)
-        df = df[df.apply(lambda r: any(str(v).strip() for v in r), axis=1)]
-
-        # Normaliza CNPJ
-        cnpj_col = next((c for c in df.columns if "cnpj" in c), None)
-        if cnpj_col:
-            df["cnpj_norm"] = df[cnpj_col].astype(str).apply(
-                lambda x: re.sub(r"\D", "", x))
-            df = df[df["cnpj_norm"].str.len() == 14].copy()
-
-        return df.reset_index(drop=True)
-    except Exception as e:
-        st.warning(f"Qualidade: erro ao carregar safras — {e}")
-        return pd.DataFrame()
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def _load_radar_cnpj_pedido(_gc_qual):
-    """Carrega DadosRadar: retorna dict {cnpj_norm: pedido_norm}."""
-    try:
-        sh   = _gc_qual.open_by_key(QUALIDADE_SPREADSHEET_ID)
-        # Tenta na mesma planilha de qualidade; se não tiver, usa a do Dashboard
-        try:
-            aba = sh.worksheet(ABA_RADAR_QUAL)
-        except Exception:
-            from data_loader import get_gspread_client as _gc2
-            sh2 = _gc2().open_by_key("1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg")
-            aba = sh2.worksheet("DadosRadar")
-
-        rows = aba.get_all_values()
-        if not rows or len(rows) < 2:
-            return {}
-
-        header = [str(h).strip().lower() for h in rows[0]]
-        col_cn = next((i for i, h in enumerate(header) if h == "cnpj"), None)
-        col_pd = next((i for i, h in enumerate(header) if h == "pedido"), None)
-        if col_cn is None or col_pd is None:
-            return {}
-
-        mapa = {}
-        for row in rows[1:]:
-            if not row or len(row) <= max(col_cn, col_pd):
-                continue
-            cnpj = re.sub(r"\D", "", str(row[col_cn]).strip())
-            ped  = str(row[col_pd]).strip()
-            if ped.endswith(".0"):
-                ped = ped[:-2]
-            ped = ped.lstrip("0") or ped
-            if cnpj and ped and len(cnpj) == 14:
-                mapa[cnpj] = ped
-        return mapa
-    except Exception:
-        return {}
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def _load_bko_pedido_vendedor(_gc_qual):
-    """Carrega BKO-VENDEDOR-REAL da planilha do dashboard: {pedido_norm: {vendedor, lider}}."""
-    try:
-        import unicodedata
-        def _normaliza_col(s):
-            s = str(s).strip().lower().replace(" ", "_")
-            return "".join(c for c in unicodedata.normalize("NFD", s)
-                           if unicodedata.category(c) != "Mn")
-
-        sh  = _gc_qual.open_by_key("1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg")
-        aba = sh.worksheet("BKO-VENDEDOR-REAL")
-        rows = aba.get_all_values()
-        if not rows or len(rows) < 2:
-            return {}
-
-        KEYS = {"pedido", "vendedor", "razao", "lider"}
-        header_idx = 0
-        for i, row in enumerate(rows):
-            row_norm = {_normaliza_col(c) for c in row if str(c).strip()}
-            if row_norm & KEYS:
-                header_idx = i
-                break
-
-        header = [_normaliza_col(h) for h in rows[header_idx]]
-        data   = rows[header_idx + 1:]
-
-        col_ped  = next((i for i, h in enumerate(header) if h == "pedido"), None)
-        col_vend = next((i for i, h in enumerate(header)
-                         if "vendedor" in h), None)
-        col_lid  = next((i for i, h in enumerate(header)
-                         if "lider" in h or "lider" in h.replace("í","i")), None)
-
-        if col_ped is None or col_vend is None:
-            return {}
-
-        mapa = {}
-        for row in data:
-            if not row or len(row) <= max(col_ped, col_vend):
-                continue
-            ped = str(row[col_ped]).strip()
-            if ped.endswith(".0"):
-                ped = ped[:-2]
-            ped = ped.lstrip("0") or ped
-            vend = str(row[col_vend]).strip()
-            lid  = str(row[col_lid]).strip() if col_lid and len(row) > col_lid else ""
-            if ped and vend and vend.lower() not in ("nan", "none", "sem vendedor", ""):
-                mapa[ped] = {"vendedor": vend, "lider": lid}
-        return mapa
-    except Exception as e:
-        return {}
-
-
-def _enriquecer_qualidade(df: pd.DataFrame) -> pd.DataFrame:
-    """Cruza qualidade com DadosRadar + BKO para adicionar vendedor/líder."""
-    if df.empty or "cnpj_norm" not in df.columns:
-        return df
-
-    gc_qual = get_gspread_client()
-    mapa_cn_ped  = _load_radar_cnpj_pedido(gc_qual)
-    mapa_ped_vend = _load_bko_pedido_vendedor(gc_qual)
-
-    vendedores_col = []
-    lideres_col    = []
-    pedidos_col    = []
-
-    for _, row in df.iterrows():
-        cnpj = str(row.get("cnpj_norm", "")).strip()
-        ped  = mapa_cn_ped.get(cnpj, "")
-        info = mapa_ped_vend.get(ped, {})
-        vendedores_col.append(info.get("vendedor", ""))
-        lideres_col.append(info.get("lider", ""))
-        pedidos_col.append(ped)
-
-    df = df.copy()
-    df["vendedor_real"] = vendedores_col
-    df["lider_real"]    = lideres_col
-    df["pedido_radar"]  = pedidos_col
-    return df
-
-
-def _filtrar_qualidade_por_perfil(df: pd.DataFrame, info: dict, tipo: str,
-                                   lider_u: str, parceiro_u: str) -> pd.DataFrame:
-    if df.empty or "vendedor_real" not in df.columns:
-        return df
-    if tipo == "admin":
-        return df
-    if tipo == "lider":
-        return df[df["lider_real"].str.strip().str.upper() == lider_u.strip().upper()]
-    # parceiro / vendedor — filtra pelo vínculo (nome do parceiro)
-    return df[df["vendedor_real"].str.strip().str.upper() == parceiro_u.strip().upper()]
-
-
-def _tela_qualidade(df_qual: pd.DataFrame, info: dict, tipo: str,
-                    lider_u: str, parceiro_u: str, is_admin: bool):
-    """Renderiza a aba Qualidade."""
-
-    if df_qual.empty:
-        st.info("Nenhum dado de qualidade disponível.")
-        return
-
-    # ── Detecta colunas dinamicamente ────────────────────────────
-    import unicodedata
-    def _nc(s):
-        s = str(s).strip().lower()
-        return "".join(c for c in unicodedata.normalize("NFD", s)
-                       if unicodedata.category(c) != "Mn")
-
-    col_map = {_nc(c): c for c in df_qual.columns}
-    COL_SAFRA   = col_map.get("safra", "safra")
-    COL_PARCEIRO= col_map.get("parceiro", "parceiro")
-    COL_CNPJ    = col_map.get("cnpj", "cnpj")
-    COL_CLIENTE = col_map.get("cliente", "cliente")
-    COL_VENDA   = col_map.get("venda", "venda")
-    COL_ADIM    = col_map.get("adimplente", "adimplente_")
-    COL_VENC    = col_map.get("vecimento", col_map.get("vencimento", "vecimento"))
-    COL_VALOR   = col_map.get("valor_r$", col_map.get("valor", "valor_r$"))
-    COL_ANALISE = col_map.get("ultima_analise_p2b", "ultima_analise_p2b")
-    COL_OBS     = col_map.get("observacoes", col_map.get("observaoes", "observacoes"))
-
-    # ── Filtros ───────────────────────────────────────────────────
-    st.markdown('<p class="section-title">🔍 FILTROS</p>', unsafe_allow_html=True)
-    cf1, cf2, cf3, cf4 = st.columns(4)
-
-    with cf1:
-        safras = ["Todas"] + sorted(
-            df_qual[COL_SAFRA].dropna().unique().tolist(), reverse=True
-        ) if COL_SAFRA in df_qual.columns else ["Todas"]
-        safra_f = st.selectbox("Safra", safras, key="qual_safra")
-
-    with cf2:
-        adim_opts = ["Todos", "NÃO", "SIM", "FATURA GERADA"]
-        adim_f = st.selectbox("Adimplência", adim_opts, key="qual_adim")
-
-    with cf3:
-        busca_qual = st.text_input("Empresa / CNPJ", key="qual_busca")
-
-    with cf4:
-        if is_admin and "parceiro" in col_map:
-            parcs = ["Todos"] + sorted(df_qual[COL_PARCEIRO].dropna().unique().tolist())
-            parc_f = st.selectbox("Parceiro (TBP)", parcs, key="qual_parc")
-        else:
-            parc_f = "Todos"
-
-    df_f = df_qual.copy()
-    if safra_f != "Todas" and COL_SAFRA in df_f.columns:
-        df_f = df_f[df_f[COL_SAFRA].astype(str).str.strip() == safra_f]
-    if adim_f != "Todos" and COL_ADIM in df_f.columns:
-        df_f = df_f[df_f[COL_ADIM].astype(str).str.strip().str.upper() == adim_f.upper()]
-    if busca_qual and COL_CLIENTE in df_f.columns:
-        mask = (
-            df_f[COL_CLIENTE].astype(str).str.contains(busca_qual, case=False, na=False) |
-            df_f.get("cnpj_norm", pd.Series(dtype=str)).str.contains(
-                re.sub(r"\D", "", busca_qual), na=False)
-        )
-        df_f = df_f[mask]
-    if parc_f != "Todos" and COL_PARCEIRO in df_f.columns:
-        df_f = df_f[df_f[COL_PARCEIRO].astype(str).str.strip().str.upper() == parc_f.upper()]
-
-    # ── KPIs ─────────────────────────────────────────────────────
-    n_total  = len(df_f)
-    n_inad   = len(df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
-                         .str.strip().str.upper() == "NÃO"]) if COL_ADIM in df_f.columns else 0
-    n_adim   = len(df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
-                         .str.strip().str.upper() == "SIM"]) if COL_ADIM in df_f.columns else 0
-    n_fgerad = len(df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
-                         .str.strip().str.upper() == "FATURA GERADA"]) if COL_ADIM in df_f.columns else 0
-
-    # Calcula valor total inadimplente
-    valor_total = 0.0
-    if COL_VALOR in df_f.columns:
-        def _parse_val(v):
-            try:
-                return float(str(v).replace("R$","").replace(".","")
-                             .replace(",",".").strip().split("/")[0].strip())
-            except Exception:
-                return 0.0
-        inad_rows = df_f[df_f.get(COL_ADIM, pd.Series(dtype=str)).astype(str)
-                          .str.strip().str.upper() == "NÃO"] if COL_ADIM in df_f.columns else pd.DataFrame()
-        if not inad_rows.empty:
-            valor_total = inad_rows[COL_VALOR].apply(_parse_val).sum()
-
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.markdown(f"""<div class="kpi-mini blue">
-          <div class="kpi-label">📋 Total Clientes</div>
-          <div class="kpi-value">{n_total}</div>
-          <div class="kpi-sub">na safra selecionada</div></div>""", unsafe_allow_html=True)
-    with k2:
-        st.markdown(f"""<div class="kpi-mini red">
-          <div class="kpi-label">❌ Inadimplentes</div>
-          <div class="kpi-value">{n_inad}</div>
-          <div class="kpi-sub">fatura em aberto</div></div>""", unsafe_allow_html=True)
-    with k3:
-        st.markdown(f"""<div class="kpi-mini green">
-          <div class="kpi-label">✅ Adimplentes</div>
-          <div class="kpi-value">{n_adim}</div>
-          <div class="kpi-sub">em dia</div></div>""", unsafe_allow_html=True)
-    with k4:
-        st.markdown(f"""<div class="kpi-mini amber">
-          <div class="kpi-label">💰 Valor Inadimplente</div>
-          <div class="kpi-value" style="font-size:1.2rem">R$ {valor_total:,.2f}</div>
-          <div class="kpi-sub">estimado</div></div>""", unsafe_allow_html=True)
-
-    st.markdown(f"<br><span style='color:#64748b;font-size:0.8rem'>{n_total} cliente(s) · {n_fgerad} com fatura gerada</span>",
-                unsafe_allow_html=True)
-
-    if df_f.empty:
-        st.markdown("""
-        <div style="background:#0d1f14;border:1px solid #14532d;border-radius:10px;
-                    padding:24px;text-align:center;margin-top:16px">
-          <div style="font-size:2rem">📭</div>
-          <div style="color:#4ade80;font-weight:700;margin-top:8px">Nenhum cliente encontrado</div>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    # ── Cards por cliente ─────────────────────────────────────────
-    for _, row in df_f.iterrows():
-        adim    = str(row.get(COL_ADIM, "")).strip().upper()
-        cor     = COR_ADIM.get(adim, "#64748b")
-        cliente = str(row.get(COL_CLIENTE, "—")).strip() or "—"
-        cnpj_f  = _formatar_cnpj(str(row.get("cnpj_norm", row.get(COL_CNPJ, ""))))
-        safra   = str(row.get(COL_SAFRA, "")).strip()
-        parceiro= str(row.get(COL_PARCEIRO, "")).strip()
-        vend    = str(row.get("vendedor_real", "")).strip() or "—"
-        lid     = str(row.get("lider_real", "")).strip() or "—"
-        pedido  = str(row.get("pedido_radar", "")).strip()
-        venc    = str(row.get(COL_VENC, "")).strip()
-        valor   = str(row.get(COL_VALOR, "")).strip()
-        analise = str(row.get(COL_ANALISE, "")).strip()
-        obs     = str(row.get(COL_OBS, "")).strip()
-        venda   = str(row.get(COL_VENDA, "")).strip()
-
-        # Badge de adimplência
-        adim_label = {"NÃO": "❌ Inadimplente", "SIM": "✅ Adimplente",
-                      "FATURA GERADA": "🧾 Fat. Gerada"}.get(adim, adim)
-
-        pedido_html = f"<span style='color:#60a5fa;font-size:0.72rem'>📌 Pedido: {pedido}</span>" if pedido else ""
-        venc_html   = f"<span style='color:#fbbf24;font-size:0.72rem'>📅 Venc: {venc}</span>" if venc and venc not in ("","nan") else ""
-        valor_html  = f"<span style='color:#f87171;font-size:0.72rem'>💰 {valor}</span>" if valor and valor not in ("","nan") else ""
-        obs_html    = f"<div style='font-size:0.71rem;color:#475569;margin-top:4px;border-top:1px solid #1e3a5f;padding-top:4px'>📝 {obs[:120]}{'...' if len(obs)>120 else ''}</div>" if obs and obs not in ("","nan") else ""
-
-        st.markdown(f"""
-        <div style="background:#111827;border:1px solid #1e3a5f;border-left:5px solid {cor};
-                    border-radius:12px;padding:14px 18px;margin-bottom:8px">
-          <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">
-            <div style="flex:1;min-width:200px">
-              <div style="font-size:0.95rem;font-weight:700;color:#f1f5f9">{cliente}</div>
-              <div style="font-size:0.72rem;color:#64748b;margin-top:2px">
-                {cnpj_f} · Safra: {safra} · TBP: <span style="color:#a78bfa">{parceiro}</span> · {venda} linha(s)
-              </div>
-              <div style="font-size:0.72rem;color:#64748b;margin-top:4px">
-                👤 <b style="color:#e2e8f0">{vend}</b> · 🏅 {lid}
-              </div>
-              <div style="margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                {pedido_html} {venc_html} {valor_html}
-              </div>
-              {obs_html}
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px">
-              <span style="display:inline-block;padding:3px 10px;border-radius:99px;
-                           font-size:0.7rem;font-weight:700;color:#fff;background:{cor}">{adim_label}</span>
-              {f"<span style='font-size:0.67rem;color:#475569'>Análise: {analise}</span>" if analise and analise not in ("","nan") else ""}
-            </div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Export
-    st.markdown("")
-    cols_export = [c for c in [COL_SAFRA, COL_PARCEIRO, COL_CNPJ, COL_CLIENTE,
-                                COL_VENDA, COL_ADIM, COL_VENC, COL_VALOR,
-                                "vendedor_real", "lider_real", "pedido_radar", COL_OBS]
-                   if c in df_f.columns]
-    st.download_button(
-        "⬇️ Exportar CSV",
-        df_f[cols_export].to_csv(index=False).encode("utf-8"),
-        "qualidade.csv", "text/csv", key="qual_export"
-    )
-
-
-    # ── Qualidade — carrega e enriquece ─────────────────────────
-    with st.spinner("Carregando qualidade..."):
-        gc_qual   = get_gspread_client()
-        df_qual_raw = _load_qualidade_raw(gc_qual)
-        if not df_qual_raw.empty:
-            df_qual_enrich = _enriquecer_qualidade(df_qual_raw)
-            df_qual_filtrado = _filtrar_qualidade_por_perfil(
-                df_qual_enrich, info, tipo, lider_u, parceiro_u)
-        else:
-            df_qual_filtrado = pd.DataFrame()
-
-    # ── Carteira — carrega gc e dados uma vez ────────────────────
-    gc_carteira = get_gspread_client()
-    with st.spinner("Carregando carteira..."):
-        df_carteira = _load_carteira(gc_carteira)
-        df_carteira = _atualizar_expirados_gc(gc_carteira, df_carteira.copy())
-        try:
-            vends_cart, mapa_lider_cart, mapa_tbp_cart = _load_colab_carteira()
-        except Exception:
-            vends_cart, mapa_lider_cart, mapa_tbp_cart = [], {}, {}
-
-    # ── Tabs ──────────────────────────────────────────────────────
-    if tipo == "parceiro":
-        tabs = st.tabs(["📋 Detalhado", "📊 Qualidade", "📁 Carteira", "➕ Novo Atendimento"])
-        with tabs[0]:
-            st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
-            render_detalhado(df, mes_alvo, meta_dict)
-            st.markdown("---")
-            st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
-            _render_exportar(df_export, meta_dict, mes_alvo)
-        with tabs[1]:
-            _tela_qualidade(df_qual_filtrado, info, tipo, lider_u, parceiro_u, is_admin=(tipo=="admin"))
-        with tabs[2]:
-            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
-        with tabs[3]:
-            _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
-    else:
-        tab_det, tab_atr, tab_qual, tab_cart, tab_novo = st.tabs([
-            "📋 Detalhado",
-            "👤 Atribuição de Vendedores",
-            "📊 Qualidade",
-            "📁 Carteira",
-            "➕ Novo Atendimento",
-        ])
-
-        with tab_det:
-            st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
-            render_detalhado(df, mes_alvo, meta_dict)
-            st.markdown("---")
-            st.markdown('<p class="section-title">📥 Exportar Relatório</p>', unsafe_allow_html=True)
-            _render_exportar(df_export, meta_dict, mes_alvo)
-
-        with tab_atr:
-            st.markdown('<p class="section-title">👤 Pedidos sem Vendedor Atribuído</p>', unsafe_allow_html=True)
-            with st.spinner("Carregando pendentes..."):
-                df_pend, ws_bko = _carregar_pendentes_bko(
-                    lider_filtro=lider_u,
-                    parceiro_filtro=parceiro_u,
-                    tipo=tipo
-                )
-                vendedores = sorted([v for v in colab["vendedor"].dropna().unique() if _s(v)]) if not colab.empty else []
-
-            render_atribuicao(df_pend, ws_bko, vendedores)
-
-        with tab_qual:
-            _tela_qualidade(df_qual_filtrado, info, tipo, lider_u, parceiro_u, is_admin=(tipo=="admin"))
-
-        with tab_cart:
-            _tela_carteira_lista(gc_carteira, df_carteira, info, username, is_admin=(tipo=="admin"))
-
-        with tab_novo:
-            _tela_carteira_novo(gc_carteira, df_carteira, vends_cart, mapa_lider_cart, mapa_tbp_cart, username, info)
 
 
 main()
