@@ -1528,61 +1528,66 @@ def _tela_qualidade(df_bko: pd.DataFrame, info: dict, tipo: str, lider_u: str):
     if col_adim:
         df_f = df_f.sort_values(col_adim, ascending=True, key=lambda s: s.astype(str))
 
+    def _esc(v, maxlen=None):
+        s = str(v).strip()
+        if maxlen:
+            s = s[:maxlen]
+        return (s.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                 .replace('"',"&quot;").replace("'","&#39;"))
+
     for _, row in df_f.iterrows():
-        cliente  = str(row.get(col_cliente, "\u2014")) if col_cliente else "\u2014"
-        cnpj_raw = str(row.get(col_cnpj, "")) if col_cnpj else ""
-        cnpj_fmt = _formatar_cnpj(cnpj_raw) if cnpj_raw else "\u2014"
-        adim_raw = str(row.get(col_adim, "")).strip().upper() if col_adim else ""
-        # Normaliza NÃO → NAO
-        adim_key = adim_raw.replace("\u00c3O","O").replace("N\u00c3O","NAO")
+        cliente  = _esc(row.get(col_cliente,"") if col_cliente else "")  or "—"
+        cnpj_raw = str(row.get(col_cnpj,"")) if col_cnpj else ""
+        cnpj_fmt = _esc(_formatar_cnpj(cnpj_raw)) if cnpj_raw else "—"
+        adim_raw = str(row.get(col_adim,"")).strip().upper() if col_adim else ""
+        adim_key = adim_raw
         if "N" in adim_key and adim_key not in ("SIM","FATURA GERADA"):
             adim_key = "NAO"
-        vencto   = str(row.get(col_vencto, "")).strip() if col_vencto else ""
-        valor    = str(row.get(col_valor, "")).strip() if col_valor else ""
-        obs      = str(row.get(col_obs, "")).strip() if col_obs else ""
-        safra    = str(row.get(col_safra, "")).strip() if col_safra else ""
-        parceiro = str(row.get(col_parceiro, "")).strip() if col_parceiro else ""
-        vendedor = str(row.get("vendedor_real", "")).strip()
-        lider_c  = str(row.get("lider_bko", "")).strip()
+        vencto   = _esc(row.get(col_vencto,"") if col_vencto else "")
+        valor    = _esc(row.get(col_valor,"") if col_valor else "")
+        obs      = _esc(row.get(col_obs,"") if col_obs else "", maxlen=200)
+        safra    = _esc(row.get(col_safra,"") if col_safra else "")
+        parceiro = _esc(row.get(col_parceiro,"") if col_parceiro else "")
+        vendedor = _esc(row.get("vendedor_real",""))
+        lider_c  = _esc(row.get("lider_bko",""))
+        adim_lbl = _esc(adim_raw) if adim_raw else "—"
 
-        cor_c   = COR_ADIMPLENTE.get(adim_key, "#64748b")
-        icon_c  = ICON_ADIMPLENTE.get(adim_key, "\u25aa\ufe0f")
-        adim_lbl = adim_raw if adim_raw else "\u2014"
+        cor_c  = COR_ADIMPLENTE.get(adim_key, "#64748b")
+        icon_c = ICON_ADIMPLENTE.get(adim_key, "▪️")
 
-        valor_html  = f"<span style='color:#f59e0b;font-weight:700'>R$ {valor}</span> &nbsp;\u00b7&nbsp; " if valor and valor not in ("","nan") else ""
-        vencto_html = f"<span style='color:#94a3b8;font-size:0.72rem'>Vence: {vencto}</span>" if vencto and vencto not in ("","nan") else ""
-        obs_safe    = obs[:200].replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace('"',"&quot;").replace("'","&#39;")
-        obs_html    = (f"<div style='font-size:0.72rem;color:#475569;margin-top:4px;"
-                       f"border-left:2px solid #334155;padding-left:8px'>{obs_safe}</div>"
+        valor_html  = (f'<span style="color:#f59e0b;font-weight:700">R$ {valor}</span>'
+                       f' &nbsp;·&nbsp;') if valor and valor not in ("","nan") else ""
+        vencto_html = (f'<span style="color:#94a3b8;font-size:0.72rem">Vence: {vencto}</span>'
+                      ) if vencto and vencto not in ("","nan") else ""
+        obs_html    = (f'<div style="font-size:0.72rem;color:#6b7280;margin-top:6px;'
+                       f'border-left:2px solid #334155;padding-left:8px">{obs}</div>'
                       ) if obs and obs not in ("","nan") else ""
-        vend_html   = (f"\U0001f464 <b style='color:#e2e8f0'>{vendedor}</b> &nbsp;\u00b7&nbsp; \U0001f3c5 {lider_c}"
-                      if vendedor else
-                      "<span style='color:#ef4444;font-size:0.72rem'>\u26a0\ufe0f Sem vendedor no BKO</span>")
+        vend_html   = (f'👤 <b style="color:#e2e8f0">{vendedor}</b> &nbsp;·&nbsp; 🏅 {lider_c}'
+                       if vendedor else
+                       '<span style="color:#ef4444;font-size:0.72rem">⚠️ Sem vendedor no BKO</span>')
 
-        st.markdown(f"""
-        <div style="background:#111827;border:1px solid #1e3a5f;border-left:5px solid {cor_c};
-                    border-radius:12px;padding:14px 18px;margin-bottom:8px">
-          <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:8px">
-            <div style="flex:1;min-width:200px">
-              <div style="font-size:0.95rem;font-weight:700;color:#f1f5f9">{cliente}</div>
-              <div style="font-size:0.73rem;color:#64748b;margin-top:2px">
-                {cnpj_fmt} &nbsp;\u00b7&nbsp; \U0001f4c5 {safra} &nbsp;\u00b7&nbsp; \U0001f3e2 {parceiro}
-              </div>
-              <div style="font-size:0.73rem;color:#64748b;margin-top:5px">{vend_html}</div>
-              <div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">
-                {valor_html}{vencto_html}
-              </div>
-              {obs_html}
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-              <span style="display:inline-block;padding:3px 10px;border-radius:99px;
-                           font-size:0.7rem;font-weight:700;color:#fff;background:{cor_c}">
-                {icon_c} {adim_lbl}
-              </span>
-            </div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        html_card = (
+            f'<div style="background:#111827;border:1px solid #1e3a5f;'
+            f'border-left:5px solid {cor_c};border-radius:12px;'
+            f'padding:14px 18px;margin-bottom:8px">'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'align-items:start;flex-wrap:wrap;gap:8px">'
+            f'<div style="flex:1;min-width:200px">'
+            f'<div style="font-size:0.95rem;font-weight:700;color:#f1f5f9">{cliente}</div>'
+            f'<div style="font-size:0.73rem;color:#64748b;margin-top:2px">'
+            f'{cnpj_fmt} · 📅 {safra} · 🏢 {parceiro}</div>'
+            f'<div style="font-size:0.73rem;color:#64748b;margin-top:5px">{vend_html}</div>'
+            f'<div style="margin-top:6px;display:flex;align-items:center;'
+            f'flex-wrap:wrap;gap:4px">{valor_html}{vencto_html}</div>'
+            f'{obs_html}'
+            f'</div>'
+            f'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">'
+            f'<span style="display:inline-block;padding:3px 10px;border-radius:99px;'
+            f'font-size:0.7rem;font-weight:700;color:#fff;background:{cor_c}">'
+            f'{icon_c} {adim_lbl}</span>'
+            f'</div></div></div>'
+        )
+        st.markdown(html_card, unsafe_allow_html=True)
 
     st.markdown("")
     cols_exp = [c for c in [col_safra, col_parceiro, col_cnpj, col_cliente,
