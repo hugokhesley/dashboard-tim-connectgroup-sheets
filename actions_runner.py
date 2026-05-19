@@ -2,26 +2,27 @@
 =====================================================================
   ACTIONS RUNNER — Roda no GitHub Actions
 =====================================================================
-  Fluxo:
-  1. Login RSA + solicitar relatório para cada conta
-  2. IMAP monitora email como gatilho (sem usar o link)
-  3. Novo login RSA + baixa o relatório mais recente da fila
-  4. Concat + upload para o Google Sheets
+  Fluxo 100% via Radar (sem IMAP/email):
+  1. Login RSA + solicitar relatório para cada conta (lista2.asp)
+  2. Para cada conta: abre 1 driver, faz login e fica em polling
+     em report-queue.asp a cada 60s até achar linha
+     "Após 01/05/2009" com status de pronto.
+     - Relogin RSA automático se a sessão cair durante o poll.
+     - Timeout 90 min por conta.
+  3. Download via cookies do Selenium.
+  4. Concat + upload para a aba DadosRadar.
 =====================================================================
 """
 
 import os
 import io
-import time
-import imaplib
-import email
 import re
+import time
+import unicodedata
 import requests
 import pandas as pd
 import gspread
-from datetime import datetime, timezone, timedelta
-from email.header import decode_header
-from email.utils import parsedate_to_datetime
+from datetime import datetime
 from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
 
@@ -29,25 +30,29 @@ from securid.sdtid import SdtidFile
 #  ⚙️  CONFIGURAÇÕES
 # ─────────────────────────────────────────────────────────────────
 
-EMAIL_1         = os.environ["EMAIL_1"]
-SENHA_1         = os.environ["SENHA_1"]
-EMAIL_2         = os.environ["EMAIL_2"]
-SENHA_2         = os.environ["SENHA_2"]
-EMAIL_3         = os.environ["EMAIL_3"]
-SENHA_3         = os.environ["SENHA_3"]
-SPREADSHEET_ID  = os.environ["SPREADSHEET_ID"]
-POSICAO_FILA    = int(os.environ.get("POSICAO_FILA", "3"))
+SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 
-IMAP_HOST       = "imap.titan.email"
-IMAP_PORT       = 993
-JANELA_MINUTOS  = 40
-INTERVALO_IMAP  = 300
-ABA_DESTINO     = "DadosRadar"
+ABA_DESTINO       = "DadosRadar"
+INTERVALO_POLL    = 60          # segundos entre cada checagem
+TIMEOUT_POLL_MIN  = 90          # timeout por conta
+
+URL_RADAR         = "https://radar.timbrasil.com.br/"
+URL_LISTA         = "https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp"
+URL_FILA          = "https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp"
+
+# Palavras que indicam relatório pronto (comparadas sem acento e em minúsculo)
+PALAVRAS_PRONTO   = ("concluido", "concluida", "pronto", "disponivel", "finalizado", "ok")
+
+# Palavras que indicam relatório ainda na fila / em processamento
+PALAVRAS_PENDENTE = ("pendente", "processando", "fila", "aguardando", "executando", "em andamento")
+
+# Termos na URL que indicam que a sessão caiu e a página voltou pro login
+TERMOS_LOGIN_URL  = ("iam-pf", "signon", "login", "authn")
 
 CONTAS = [
-    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid", "email": EMAIL_1, "senha": SENHA_1},
-    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid", "email": EMAIL_2, "senha": SENHA_2},
-    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid", "email": EMAIL_3, "senha": SENHA_3},
+    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
+    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
+    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
 ]
 
 # ─────────────────────────────────────────────────────────────────
@@ -73,6 +78,26 @@ def calcular_datas():
         mes += 12
         ano -= 1
     return f"01/{mes:02d}/{ano}", hoje.strftime("%d/%m/%Y")
+
+
+def _normalizar(texto: str) -> str:
+    nfd = unicodedata.normalize("NFD", texto or "")
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn").lower()
+
+
+def esta_pronto(texto_linha: str) -> bool:
+    n = _normalizar(texto_linha)
+    return any(p in n for p in PALAVRAS_PRONTO)
+
+
+def esta_pendente(texto_linha: str) -> bool:
+    n = _normalizar(texto_linha)
+    return any(p in n for p in PALAVRAS_PENDENTE)
+
+
+def sessao_caiu(driver) -> bool:
+    url = (driver.current_url or "").lower()
+    return any(t in url for t in TERMOS_LOGIN_URL)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -116,7 +141,7 @@ def fazer_login(driver, login, sdtid_path):
     token = gerar_token(sdtid_path)
     print(f"  🔐 Token gerado para {login.upper()}")
 
-    driver.get("https://radar.timbrasil.com.br/")
+    driver.get(URL_RADAR)
     time.sleep(5)
 
     # Username
@@ -170,11 +195,10 @@ def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
     try:
         fazer_login(driver, login, sdtid_path)
 
-        # Vai direto para a lista de relatórios
-        driver.get("https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp")
+        driver.get(URL_LISTA)
         time.sleep(5)
 
-        # Seleciona especificamente "Base Geral - Após 01/05/2009"
+        # Seleciona "Base Geral - Após 01/05/2009"
         base = WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Após 01/05/2009')]"))
         )
@@ -202,20 +226,16 @@ def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
         gerar = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, "//input[@value='Gerar Relatório']")))
         driver.execute_script("arguments[0].click()", gerar)
         time.sleep(5)
-        print(f"  ✓ Relatório solicitado!")
+        print(f"  ✓ Relatório solicitado para {login.upper()}")
 
-        # Posição na fila
-        posicao = POSICAO_FILA
+        # Captura posição na fila
+        posicao = 1
         try:
-            driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
+            driver.get(URL_FILA)
             time.sleep(3)
-            linhas = driver.find_elements(By.XPATH, "//table//tr[contains(.,'pendente')]")
-            if linhas:
-                pos = linhas[0].find_element(By.XPATH, ".//td[last()]")
-                posicao = int(pos.text.strip()) if pos.text.strip().isdigit() else len(linhas)
-        except Exception:
-            pass
-
+            posicao = capturar_posicao_fila(driver)
+        except Exception as e:
+            print(f"  ⚠️ Não foi possível ler a fila ({e}); assumindo posição 1")
         print(f"  📊 Posição na fila: {posicao}")
         return posicao
 
@@ -223,153 +243,113 @@ def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
         driver.quit()
 
 
-# ─────────────────────────────────────────────────────────────────
-#  ETAPA 3 — Baixar relatório mais recente
-# ─────────────────────────────────────────────────────────────────
-
-def baixar_relatorio(login, sdtid_path):
+def capturar_posicao_fila(driver) -> int:
+    """Procura a linha pendente da própria conta e tenta extrair a posição.
+    Default = 1 se não conseguir parsear."""
     from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
+    try:
+        linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
+        for linha in linhas:
+            if not esta_pendente(linha.text):
+                continue
+            celulas = linha.find_elements(By.XPATH, ".//td")
+            for cel in reversed(celulas):
+                t = (cel.text or "").strip()
+                if t.isdigit():
+                    return int(t)
+            return 1
+        return 1
+    except Exception:
+        return 1
 
+
+# ─────────────────────────────────────────────────────────────────
+#  ETAPA 2 — Polling no report-queue + download
+# ─────────────────────────────────────────────────────────────────
+
+def buscar_linha_pronta(driver):
+    """Devolve (link, id) do relatório pronto mais recente, ou (None, -1)."""
+    from selenium.webdriver.common.by import By
+
+    melhor_link = None
+    melhor_id   = -1
+    linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
+    for linha in linhas:
+        try:
+            if not esta_pronto(linha.text):
+                continue
+            link_el = linha.find_element(By.XPATH, ".//a[contains(@href,'report-queue-download')]")
+            href    = link_el.get_attribute("href")
+            m       = re.search(r"idreport=(\d+)", href)
+            if m:
+                id_rel = int(m.group(1))
+                if id_rel > melhor_id:
+                    melhor_id   = id_rel
+                    melhor_link = href
+        except Exception:
+            continue
+    return melhor_link, melhor_id
+
+
+def baixar_via_cookies(driver, link):
+    cookies = driver.get_cookies()
+    sessao  = requests.Session()
+    for c in cookies:
+        sessao.cookies.set(c["name"], c["value"])
+    resp    = sessao.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
+    content = resp.content
+    try:
+        df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
+    except Exception:
+        df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
+    return df
+
+
+def monitorar_e_baixar(login, sdtid_path, posicao=1, timeout_min=TIMEOUT_POLL_MIN):
     driver = criar_driver()
     try:
         fazer_login(driver, login, sdtid_path)
 
-        # Vai direto para a fila de relatórios
-        driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp")
-        time.sleep(3)
-        print(f"  📋 Fila de relatórios aberta")
+        espera_inicial_min = max(0, (posicao - 1) * 7)
+        if espera_inicial_min > 0:
+            print(f"  ⏱  [{login.upper()}] Posição {posicao}, aguardando {espera_inicial_min} min antes do primeiro poll")
+            time.sleep(espera_inicial_min * 60)
+        else:
+            print(f"  ⏱  [{login.upper()}] Posição {posicao}, sem espera inicial")
 
-        # Aguarda aparecer linha "concluído" com "Após 01/05/2009"
-        WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.XPATH, "//tr[contains(.,'Após 01/05/2009') and contains(.,'concluído')]//a"))
-        )
-        time.sleep(2)
-
-        # Pega todas as linhas concluídas com "Após 01/05/2009"
-        linhas = driver.find_elements(By.XPATH, "//tr[contains(.,'Após 01/05/2009') and contains(.,'concluído')]")
-
-        if not linhas:
-            raise Exception("Nenhum relatório concluído encontrado na fila.")
-
-        # Pega o link da linha com maior ID (mais recente)
-        melhor_link = None
-        melhor_id   = -1
-        for linha in linhas:
+        inicio = time.time()
+        tentativa = 0
+        while time.time() - inicio < timeout_min * 60:
+            tentativa += 1
             try:
-                link_el = linha.find_element(By.XPATH, ".//a[contains(@href,'report-queue-download')]")
-                href    = link_el.get_attribute("href")
-                match   = re.search(r"idreport=(\d+)", href)
-                if match:
-                    id_rel = int(match.group(1))
-                    if id_rel > melhor_id:
-                        melhor_id   = id_rel
-                        melhor_link = href
-            except Exception:
-                continue
+                driver.get(URL_FILA)
+                time.sleep(3)
 
-        if not melhor_link:
-            raise Exception("Não foi possível extrair o link de download.")
+                if sessao_caiu(driver):
+                    print(f"  ⚠️ [{login.upper()}] sessão caiu — refazendo login RSA")
+                    fazer_login(driver, login, sdtid_path)
+                    continue
 
-        print(f"  🔗 Baixando relatório ID {melhor_id}...")
+                link, id_rel = buscar_linha_pronta(driver)
+                if link:
+                    decorrido = int((time.time() - inicio) / 60)
+                    print(f"  ✅ [{login.upper()}] relatório pronto (id {id_rel}, {decorrido} min, tent #{tentativa})")
+                    df = baixar_via_cookies(driver, link)
+                    print(f"  📦 [{login.upper()}] {len(df)} linhas baixadas")
+                    return df
 
-        # Extrai cookies da sessão do Selenium
-        cookies_selenium = driver.get_cookies()
-        sessao = requests.Session()
-        for c in cookies_selenium:
-            sessao.cookies.set(c["name"], c["value"])
+                decorrido = int((time.time() - inicio) / 60)
+                print(f"  ⏳ [{login.upper()}] aguardando... ({decorrido}/{timeout_min} min, tent #{tentativa})")
+                time.sleep(INTERVALO_POLL)
 
-        resp    = sessao.get(melhor_link, headers={"User-Agent": "Mozilla/5.0"}, timeout=60)
-        content = resp.content
+            except Exception as e:
+                print(f"  ⚠️ [{login.upper()}] erro no poll #{tentativa}: {e}")
+                time.sleep(INTERVALO_POLL)
 
-        # Lê o arquivo
-        try:
-            df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
-        except Exception:
-            df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
-
-        print(f"  ✅ {len(df)} linhas baixadas para {login.upper()}")
-        return df
+        raise TimeoutError(f"Timeout de {timeout_min} min atingido para {login.upper()}")
 
     finally:
         driver.quit()
-
-
-# ─────────────────────────────────────────────────────────────────
-#  IMAP — monitora email como gatilho
-# ─────────────────────────────────────────────────────────────────
-
-def verificar_email(email_conta, senha, desde):
-    try:
-        mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-        mail.login(email_conta, senha)
-
-        _, pastas_raw = mail.list()
-        caixas = ["INBOX"]
-        for p in pastas_raw:
-            if p:
-                nome = p.decode(errors="ignore").split('"/"')[-1].strip().strip('"')
-                if "gmail" in nome.lower() or "totodecasa" in nome.lower() or "@gmail" in nome.lower():
-                    caixas.append(nome)
-
-        desde_utc = desde.astimezone(timezone.utc)
-        data_imap = desde_utc.strftime("%d-%b-%Y")
-
-        for caixa in caixas:
-            try:
-                status_sel, _ = mail.select(f'"{caixa}"')
-                if status_sel != "OK":
-                    continue
-            except Exception:
-                continue
-
-            status, msgs = mail.search(None, f'SINCE "{data_imap}"')
-            if status != "OK" or not msgs[0]:
-                continue
-
-            for uid in reversed(msgs[0].split()):
-                _, dados = mail.fetch(uid, "(RFC822)")
-                msg = email.message_from_bytes(dados[0][1])
-
-                data_str = msg.get("Date")
-                if not data_str:
-                    continue
-                try:
-                    data_email = parsedate_to_datetime(data_str)
-                    if data_email.tzinfo is None:
-                        data_email = data_email.replace(tzinfo=timezone.utc)
-                    else:
-                        data_email = data_email.astimezone(timezone.utc)
-                except Exception:
-                    continue
-
-                if data_email <= desde_utc:
-                    continue
-
-                assunto_raw = msg.get("Subject", "")
-                try:
-                    partes = decode_header(assunto_raw)
-                    assunto = ""
-                    for parte, enc in partes:
-                        if isinstance(parte, bytes):
-                            assunto += parte.decode(enc or "utf-8", errors="ignore")
-                        else:
-                            assunto += parte
-                except Exception:
-                    assunto = assunto_raw
-
-                if "Radar" not in assunto and "radar" not in assunto:
-                    continue
-
-                mail.logout()
-                return True  # só gatilho, sem usar o link
-
-        mail.logout()
-        return False
-    except Exception as e:
-        print(f"  ⚠️ Erro IMAP {email_conta}: {e}")
-        return False
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -407,75 +387,39 @@ def main():
 
     # ── ETAPA 1: Solicitar relatórios ─────────────────────────
     contas_ok = []
-    posicoes  = []
+    posicoes  = {}
     for conta in CONTAS:
-        print(f"\n🌐 Processando {conta['login'].upper()}...")
+        print(f"\n🌐 Solicitando relatório — {conta['login'].upper()}")
         try:
-            posicao = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
-            posicoes.append(posicao)
+            pos = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
+            posicoes[conta["login"]] = pos
             contas_ok.append(conta)
         except Exception as e:
             print(f"  ❌ FALHA em {conta['login'].upper()}, pulando: {e}")
-            continue
 
     if not contas_ok:
-        print("❌ Nenhuma conta processada. Abortando.")
+        print("❌ Nenhum relatório solicitado. Abortando.")
         exit(1)
 
-    # Calcula espera baseada na maior posição na fila
-    maior        = max(posicoes)
-    primeira_min = ((maior * 7) + 2) // 2
-    print(f"\n✅ Contas OK: {', '.join(c['login'].upper() for c in contas_ok)}")
-    print(f"⏳ Aguardando {primeira_min} min antes de verificar emails...")
-    time.sleep(primeira_min * 60)
+    print(f"\n✅ Contas com solicitação OK: {', '.join(c['login'].upper() for c in contas_ok)}")
 
-    # ── ETAPA 2: Monitora emails como gatilho ─────────────────
-    desde     = datetime.now().astimezone() - timedelta(minutes=JANELA_MINUTOS)
-    gatilhos  = {c["login"]: False for c in contas_ok}
-    tentativa = 0
-
-    while tentativa < 12:
-        tentativa += 1
-        print(f"\n🔍 Verificação de email #{tentativa}...")
-
-        for conta in contas_ok:
-            if not gatilhos[conta["login"]]:
-                chegou = verificar_email(conta["email"], conta["senha"], desde)
-                gatilhos[conta["login"]] = chegou
-                status = "✅ recebido" if chegou else "⏸ aguardando"
-                print(f"  {conta['login'].upper()}: {status}")
-
-        if all(gatilhos.values()):
-            print("✅ Todos os emails recebidos!")
-            break
-
-        # Se pelo menos metade chegou e já são 6 tentativas, segue
-        recebidos = sum(gatilhos.values())
-        if recebidos > 0 and tentativa >= 6:
-            print(f"⚠️ {recebidos}/{len(contas_ok)} emails recebidos. Prosseguindo com os disponíveis...")
-            break
-
-        print(f"  ⏳ Aguardando {INTERVALO_IMAP // 60} min...")
-        time.sleep(INTERVALO_IMAP)
-
-    # ── ETAPA 3: Baixar relatórios via novo login ─────────────
-    print("\n⬇️ Baixando relatórios...")
+    # ── ETAPA 2: Polling + download por conta ─────────────────
+    print(f"\n⬇️  Polling em report-queue.asp (intervalo {INTERVALO_POLL}s, timeout {TIMEOUT_POLL_MIN} min/conta)")
     dfs = []
     for conta in contas_ok:
-        if not gatilhos[conta["login"]]:
-            print(f"  ⚠️ {conta['login'].upper()}: email não chegou, pulando download.")
-            continue
+        pos = posicoes.get(conta["login"], 1)
+        print(f"\n🔄 Monitorando {conta['login'].upper()} (posição {pos})...")
         try:
-            df = baixar_relatorio(conta["login"], conta["sdtid"])
+            df = monitorar_e_baixar(conta["login"], conta["sdtid"], posicao=pos)
             dfs.append(df)
         except Exception as e:
-            print(f"  ❌ Erro ao baixar {conta['login'].upper()}: {e}")
+            print(f"  ❌ {conta['login'].upper()}: {e}")
 
     if not dfs:
         print("❌ Nenhum arquivo baixado. Abortando.")
         exit(1)
 
-    # ── ETAPA 4: Concat + Upload ──────────────────────────────
+    # ── ETAPA 3: Concat + Upload ──────────────────────────────
     df_final = pd.concat(dfs, ignore_index=True)
     print(f"\n📋 Total consolidado: {len(df_final)} linhas")
     subir_para_sheets(df_final)
