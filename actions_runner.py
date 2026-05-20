@@ -16,7 +16,6 @@
 
 import os
 import io
-import re
 import time
 import unicodedata
 import requests
@@ -228,67 +227,83 @@ def solicitar_relatorio(login, sdtid_path, data_inicio, data_fim):
         time.sleep(5)
         print(f"  ✓ Relatório solicitado para {login.upper()}")
 
-        # Captura posição na fila
-        posicao = 1
-        try:
-            driver.get(URL_FILA)
-            time.sleep(3)
-            posicao = capturar_posicao_fila(driver)
-        except Exception as e:
-            print(f"  ⚠️ Não foi possível ler a fila ({e}); assumindo posição 1")
-        print(f"  📊 Posição na fila: {posicao}")
-        return posicao
+        # Captura ID e posição do relatório recém-solicitado
+        driver.get(URL_FILA)
+        time.sleep(3)
+        id_solicitado, posicao = capturar_id_e_posicao(driver, login)
+        print(f"  📊 ID solicitado: {id_solicitado}, posição: {posicao}")
+        return id_solicitado, posicao
 
     finally:
         driver.quit()
 
 
-def capturar_posicao_fila(driver) -> int:
-    """Procura a linha pendente da própria conta e tenta extrair a posição.
-    Default = 1 se não conseguir parsear."""
+def capturar_id_e_posicao(driver, login: str):
+    """Procura entre as linhas pendentes a mais recente (maior ID) para 'Após 01/05/2009'
+    e devolve (id, posicao). Levanta RuntimeError se nenhuma linha for parseável."""
     from selenium.webdriver.common.by import By
-    try:
-        linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
-        for linha in linhas:
+    linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
+    melhor_id = -1
+    posicao   = 1
+    for linha in linhas:
+        try:
             if not esta_pendente(linha.text):
                 continue
             celulas = linha.find_elements(By.XPATH, ".//td")
+            id_rel = None
+            for cel in celulas:
+                t = (cel.text or "").strip()
+                if t.isdigit():
+                    id_rel = int(t)
+                    break
+            if id_rel is None:
+                continue
+            pos_local = 1
             for cel in reversed(celulas):
                 t = (cel.text or "").strip()
                 if t.isdigit():
-                    return int(t)
-            return 1
-        return 1
-    except Exception:
-        return 1
+                    pos_local = int(t)
+                    break
+            if id_rel > melhor_id:
+                melhor_id = id_rel
+                posicao   = pos_local
+        except Exception:
+            continue
+    if melhor_id < 0:
+        raise RuntimeError(f"Não foi possível capturar o ID do relatório recém-solicitado para {login.upper()}")
+    return melhor_id, posicao
 
 
 # ─────────────────────────────────────────────────────────────────
 #  ETAPA 2 — Polling no report-queue + download
 # ─────────────────────────────────────────────────────────────────
 
-def buscar_linha_pronta(driver):
-    """Devolve (link, id) do relatório pronto mais recente, ou (None, -1)."""
+def encontrar_relatorio_alvo(driver, id_alvo: int):
+    """Localiza a linha cujo primeiro td numérico == id_alvo.
+    Devolve (texto_linha, href_download_ou_None). (None, None) se não achar."""
     from selenium.webdriver.common.by import By
-
-    melhor_link = None
-    melhor_id   = -1
     linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
     for linha in linhas:
         try:
-            if not esta_pronto(linha.text):
+            celulas = linha.find_elements(By.XPATH, ".//td")
+            id_rel = None
+            for cel in celulas:
+                t = (cel.text or "").strip()
+                if t.isdigit():
+                    id_rel = int(t)
+                    break
+            if id_rel != id_alvo:
                 continue
-            link_el = linha.find_element(By.XPATH, ".//a[contains(@href,'report-queue-download')]")
-            href    = link_el.get_attribute("href")
-            m       = re.search(r"idreport=(\d+)", href)
-            if m:
-                id_rel = int(m.group(1))
-                if id_rel > melhor_id:
-                    melhor_id   = id_rel
-                    melhor_link = href
+            link = None
+            try:
+                link_el = linha.find_element(By.XPATH, ".//a[contains(@href,'report-queue-download')]")
+                link = link_el.get_attribute("href")
+            except Exception:
+                pass
+            return linha.text, link
         except Exception:
             continue
-    return melhor_link, melhor_id
+    return None, None
 
 
 def baixar_via_cookies(driver, link):
@@ -305,7 +320,7 @@ def baixar_via_cookies(driver, link):
     return df
 
 
-def monitorar_e_baixar(login, sdtid_path, posicao=1, timeout_min=TIMEOUT_POLL_MIN):
+def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOUT_POLL_MIN):
     driver = criar_driver()
     try:
         fazer_login(driver, login, sdtid_path)
@@ -330,23 +345,33 @@ def monitorar_e_baixar(login, sdtid_path, posicao=1, timeout_min=TIMEOUT_POLL_MI
                     fazer_login(driver, login, sdtid_path)
                     continue
 
-                link, id_rel = buscar_linha_pronta(driver)
-                if link:
+                texto, link = encontrar_relatorio_alvo(driver, id_alvo)
+
+                if texto is not None and esta_pronto(texto) and link:
                     decorrido = int((time.time() - inicio) / 60)
-                    print(f"  ✅ [{login.upper()}] relatório pronto (id {id_rel}, {decorrido} min, tent #{tentativa})")
+                    print(f"  ✅ [{login.upper()}] ID {id_alvo} pronto ({decorrido} min, tent #{tentativa})")
                     df = baixar_via_cookies(driver, link)
                     print(f"  📦 [{login.upper()}] {len(df)} linhas baixadas")
                     return df
 
-                decorrido = int((time.time() - inicio) / 60)
-                print(f"  ⏳ [{login.upper()}] aguardando... ({decorrido}/{timeout_min} min, tent #{tentativa})")
+                if tentativa % 5 == 0:
+                    if texto is None:
+                        status = "sumiu"
+                    elif esta_pronto(texto):
+                        status = "pronto (sem link ainda)"
+                    elif esta_pendente(texto):
+                        status = "pendente/processando"
+                    else:
+                        status = "desconhecido"
+                    print(f"  [{login.upper()}] aguardando ID {id_alvo}... status atual: {status} (poll #{tentativa})")
+
                 time.sleep(INTERVALO_POLL)
 
             except Exception as e:
                 print(f"  ⚠️ [{login.upper()}] erro no poll #{tentativa}: {e}")
                 time.sleep(INTERVALO_POLL)
 
-        raise TimeoutError(f"Timeout de {timeout_min} min atingido para {login.upper()}")
+        raise TimeoutError(f"Timeout de {timeout_min} min atingido para {login.upper()} (ID {id_alvo})")
 
     finally:
         driver.quit()
@@ -387,11 +412,13 @@ def main():
 
     # ── ETAPA 1: Solicitar relatórios ─────────────────────────
     contas_ok = []
+    ids       = {}
     posicoes  = {}
     for conta in CONTAS:
         print(f"\n🌐 Solicitando relatório — {conta['login'].upper()}")
         try:
-            pos = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
+            id_solicitado, pos = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
+            ids[conta["login"]]      = id_solicitado
             posicoes[conta["login"]] = pos
             contas_ok.append(conta)
         except Exception as e:
@@ -407,10 +434,11 @@ def main():
     print(f"\n⬇️  Polling em report-queue.asp (intervalo {INTERVALO_POLL}s, timeout {TIMEOUT_POLL_MIN} min/conta)")
     dfs = []
     for conta in contas_ok:
-        pos = posicoes.get(conta["login"], 1)
-        print(f"\n🔄 Monitorando {conta['login'].upper()} (posição {pos})...")
+        pos      = posicoes[conta["login"]]
+        id_alvo  = ids[conta["login"]]
+        print(f"\n🔄 Monitorando {conta['login'].upper()} (ID {id_alvo}, posição {pos})...")
         try:
-            df = monitorar_e_baixar(conta["login"], conta["sdtid"], posicao=pos)
+            df = monitorar_e_baixar(conta["login"], conta["sdtid"], id_alvo=id_alvo, posicao=pos)
             dfs.append(df)
         except Exception as e:
             print(f"  ❌ {conta['login'].upper()}: {e}")
