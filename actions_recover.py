@@ -109,6 +109,12 @@ def fazer_login(driver, login, sdtid_path):
     token = gerar_token(sdtid_path)
     print(f"  🔐 Token gerado para {login.upper()}")
 
+    # Garante que um relogin parte de um estado limpo (cookies/sessão antiga zerados)
+    try:
+        driver.delete_all_cookies()
+    except Exception:
+        pass
+
     driver.get(URL_RADAR)
     time.sleep(5)
 

@@ -140,10 +140,16 @@ def fazer_login(driver, login, sdtid_path):
     token = gerar_token(sdtid_path)
     print(f"  🔐 Token gerado para {login.upper()}")
 
+    # Garante que um relogin parte de um estado limpo (cookies/sessão antiga zerados)
+    try:
+        driver.delete_all_cookies()
+    except Exception:
+        pass
+
     driver.get(URL_RADAR)
     time.sleep(5)
 
-    # Username
+    # Username — falha rápido se o campo não estiver interagível
     try:
         campo = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "identifierInput")))
         campo.clear()
@@ -152,7 +158,7 @@ def fazer_login(driver, login, sdtid_path):
         driver.execute_script("arguments[0].click()", btn)
         time.sleep(4)
     except Exception as e:
-        print(f"  ⚠️ Username: {e}")
+        raise RuntimeError(f"Login falhou para {login.upper()}: campo de username não interagível, sessão possivelmente corrompida ({e})")
 
     # SmartID
     try:
@@ -328,7 +334,18 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
         espera_inicial_min = max(0, (posicao - 1) * 7)
         if espera_inicial_min > 0:
             print(f"  ⏱  [{login.upper()}] Posição {posicao}, aguardando {espera_inicial_min} min antes do primeiro poll")
-            time.sleep(espera_inicial_min * 60)
+            restante = espera_inicial_min
+            while restante > 0:
+                chunk = min(4, restante)
+                time.sleep(chunk * 60)
+                restante -= chunk
+                decorrido = espera_inicial_min - restante
+                if restante > 0:
+                    try:
+                        driver.get(URL_FILA)
+                    except Exception:
+                        pass
+                    print(f"  ⏱  [{login.upper()}] keep-alive durante espera inicial ({decorrido}/{espera_inicial_min} min)")
         else:
             print(f"  ⏱  [{login.upper()}] Posição {posicao}, sem espera inicial")
 
