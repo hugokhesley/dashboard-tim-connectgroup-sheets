@@ -16,6 +16,7 @@
 
 import os
 import io
+import sys
 import time
 import unicodedata
 import requests
@@ -53,6 +54,10 @@ CONTAS = [
     {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
     {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
 ]
+
+# Cache de links de download já vistos prontos, por login. Sobrevive entre polls
+# para o caso de o ID sair da view padrão (paginação/separação pendente vs concluído).
+links_capturados: dict = {}
 
 # ─────────────────────────────────────────────────────────────────
 #  MONKEY-PATCH RSA
@@ -284,9 +289,9 @@ def capturar_id_e_posicao(driver, login: str):
 #  ETAPA 2 — Polling no report-queue + download
 # ─────────────────────────────────────────────────────────────────
 
-def encontrar_relatorio_alvo(driver, id_alvo: int):
-    """Localiza a linha cujo primeiro td numérico == id_alvo.
-    Devolve (texto_linha, href_download_ou_None). (None, None) se não achar."""
+def _buscar_na_pagina_atual(driver, id_alvo: int):
+    """Varre o DOM atual procurando linha cujo primeiro td numérico == id_alvo.
+    Devolve (texto_linha, href_download_ou_None) ou (None, None)."""
     from selenium.webdriver.common.by import By
     linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
     for linha in linhas:
@@ -310,6 +315,66 @@ def encontrar_relatorio_alvo(driver, id_alvo: int):
         except Exception:
             continue
     return None, None
+
+
+def encontrar_relatorio_alvo(driver, id_alvo: int, login: str):
+    """Localiza a linha do id_alvo em camadas, para tolerar paginação ou
+    separação visual entre pendente e concluído.
+
+    Devolve (texto, link, estrategia) — estrategia ∈
+    {'cache', 'padrao', '?pag=2', '?pagina=2', '?p=2', '?page=2', 'proxima'}.
+    (None, None, None) se nenhuma camada localizou."""
+    from selenium.webdriver.common.by import By
+
+    # (0) cache — link já capturado em poll anterior é prova suficiente
+    if login in links_capturados:
+        return "[cache]", links_capturados[login], "cache"
+
+    # (1) página padrão (URL_FILA já foi carregada pelo loop antes dessa chamada)
+    texto, link = _buscar_na_pagina_atual(driver, id_alvo)
+    if texto is not None:
+        if link:
+            links_capturados[login] = link
+        return texto, link, "padrao"
+
+    # (2) variações de paginação via query string
+    for param in ("pag", "pagina", "p", "page"):
+        try:
+            driver.get(f"{URL_FILA}?{param}=2")
+            time.sleep(2)
+            if sessao_caiu(driver):
+                return None, None, None
+            texto, link = _buscar_na_pagina_atual(driver, id_alvo)
+            if texto is not None:
+                estrategia = f"?{param}=2"
+                if link:
+                    links_capturados[login] = link
+                return texto, link, estrategia
+        except Exception:
+            continue
+
+    # (3) tenta clicar em link "Próxima/Próximo/Next/»"
+    try:
+        driver.get(URL_FILA)
+        time.sleep(2)
+        if sessao_caiu(driver):
+            return None, None, None
+        proximo_xpath = "//a[contains(text(),'Próxima') or contains(text(),'Próximo') or contains(text(),'Next') or contains(text(),'»')]"
+        proximos = driver.find_elements(By.XPATH, proximo_xpath)
+        if proximos:
+            driver.execute_script("arguments[0].click()", proximos[0])
+            time.sleep(2)
+            if sessao_caiu(driver):
+                return None, None, None
+            texto, link = _buscar_na_pagina_atual(driver, id_alvo)
+            if texto is not None:
+                if link:
+                    links_capturados[login] = link
+                return texto, link, "proxima"
+    except Exception:
+        pass
+
+    return None, None, None
 
 
 def baixar_via_cookies(driver, link):
@@ -362,9 +427,18 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
                     fazer_login(driver, login, sdtid_path)
                     continue
 
-                texto, link = encontrar_relatorio_alvo(driver, id_alvo)
+                texto, link, estrategia = encontrar_relatorio_alvo(driver, id_alvo, login)
 
-                if texto is not None and esta_pronto(texto) and link:
+                # Fallback (cache, ?pag=N, proxima): link é prova suficiente
+                if estrategia and estrategia != "padrao" and link:
+                    decorrido = int((time.time() - inicio) / 60)
+                    print(f"  ✅ [{login.upper()}] ID {id_alvo} encontrado via {estrategia} ({decorrido} min, tent #{tentativa})")
+                    df = baixar_via_cookies(driver, link)
+                    print(f"  📦 [{login.upper()}] {len(df)} linhas baixadas")
+                    return df
+
+                # Página padrão: precisa ter status pronto + link
+                if estrategia == "padrao" and texto is not None and esta_pronto(texto) and link:
                     decorrido = int((time.time() - inicio) / 60)
                     print(f"  ✅ [{login.upper()}] ID {id_alvo} pronto ({decorrido} min, tent #{tentativa})")
                     df = baixar_via_cookies(driver, link)
@@ -373,7 +447,7 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
 
                 if tentativa % 5 == 0:
                     if texto is None:
-                        status = "sumiu"
+                        status = "sumiu (não achou em padrão, ?pag=2 nem 'Próxima')"
                     elif esta_pronto(texto):
                         status = "pronto (sem link ainda)"
                     elif esta_pendente(texto):
@@ -450,6 +524,7 @@ def main():
     # ── ETAPA 2: Polling + download por conta ─────────────────
     print(f"\n⬇️  Polling em report-queue.asp (intervalo {INTERVALO_POLL}s, timeout {TIMEOUT_POLL_MIN} min/conta)")
     dfs = []
+    logins_ok = set()
     for conta in contas_ok:
         pos      = posicoes[conta["login"]]
         id_alvo  = ids[conta["login"]]
@@ -457,6 +532,7 @@ def main():
         try:
             df = monitorar_e_baixar(conta["login"], conta["sdtid"], id_alvo=id_alvo, posicao=pos)
             dfs.append(df)
+            logins_ok.add(conta["login"])
         except Exception as e:
             print(f"  ❌ {conta['login'].upper()}: {e}")
 
@@ -471,6 +547,12 @@ def main():
 
     print("\n🎉 DadosRadar atualizado com sucesso!")
     print("=" * 55)
+
+    # Marca o run como falha se alguma conta solicitada não rendeu df
+    if len(dfs) < len(contas_ok):
+        falhadas = [c["login"].upper() for c in contas_ok if c["login"] not in logins_ok]
+        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(contas_ok)} contas falharam: {', '.join(falhadas)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
