@@ -1,0 +1,55 @@
+name: Recuperar DadosRadar
+on:
+  workflow_dispatch:
+jobs:
+  recuperar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: |
+          pip install pandas openpyxl gspread google-auth requests securid selenium webdriver-manager
+      - name: Instalar Chrome
+        uses: browser-actions/setup-chrome@v1
+      - name: Criar arquivo de credenciais Google
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+      - name: Criar arquivos SDTID
+        env:
+          SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
+          SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
+          SDTID_T3748937_B64: ${{ secrets.SDTID_T3748937_B64 }}
+        run: |
+          python -c "
+          import base64, os
+          for var, fname in [
+              ('SDTID_T3729525_B64', 'T3729525_001938489117.sdtid'),
+              ('SDTID_T3761125_B64', 'T3761125_001938495598.sdtid'),
+              ('SDTID_T3748937_B64', 'T3748937_001938491397.sdtid'),
+          ]:
+              val = os.environ.get(var, '')
+              if val:
+                  with open(fname, 'wb') as f:
+                      f.write(base64.b64decode(val))
+                  print(f'OK: {fname}')
+              else:
+                  print(f'PULANDO: {var} não configurado')
+          "
+      - name: Buscar relatórios e subir para Sheets
+        env:
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python actions_recover.py
+      - name: Upload de artefatos de debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: debug_artifacts/
+          retention-days: 7
