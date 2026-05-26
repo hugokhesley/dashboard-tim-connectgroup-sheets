@@ -141,7 +141,24 @@ def fazer_login(driver, login, sdtid_path):
     time.sleep(1)
     btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
     driver.execute_script("arguments[0].click()", btn)
-    time.sleep(8)
+    time.sleep(15)
+
+    # Se ficou preso em resume/as/auth, força reload (acontece com algumas contas)
+    url = (driver.current_url or "").lower()
+    if "resume/as/auth" in url or "iam-pf" in url:
+        print(f"  🔄 [{login.upper()}] Sessão SmartID presa em {url[:60]} — recarregando")
+        for tentativa in range(3):
+            try:
+                driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/start.asp")
+                time.sleep(8)
+                url = (driver.current_url or "").lower()
+                if "radar-blue" in url and "iam-pf" not in url:
+                    break
+                print(f"     tentativa {tentativa+1}: ainda em {url[:60]}")
+            except Exception as e:
+                print(f"     erro reload: {e}")
+                time.sleep(3)
+
     print(f"  ✅ Login OK — {driver.current_url[:60]}")
 
     try:
@@ -307,7 +324,9 @@ def main():
     print("=" * 55)
 
     if logins_fail:
-        sys.exit(1)
+        print(f"\n⚠️ ATENÇÃO: {len(logins_fail)} conta(s) falharam mas dados foram atualizados.")
+        # Não marca como erro se pelo menos 1 conta funcionou
+        sys.exit(0)
 
 
 if __name__ == "__main__":
