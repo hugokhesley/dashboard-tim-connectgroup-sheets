@@ -501,8 +501,6 @@ def main():
         <img src="https://raw.githubusercontent.com/hugokhesley/dashboard-tim-connectgroup-sheets/main/logo.png" class="header-logo" onerror="this.style.display='none'">
         <span class="header-badge">📈 RESULTADOS</span>
       </div>
-    </div>
-      <div class="header-badge">📈 RESULTADOS</div>
     </div>""", unsafe_allow_html=True)
 
     with st.spinner("Carregando aba resultados..."):
@@ -696,12 +694,34 @@ def main():
 
     if not bko.empty and "pedido" in dff.columns:
         dff_bko = dff.merge(bko[["pedido","vendedor_real","lider"]], on="pedido", how="left")
-        df_atv_rank = dff_bko[dff_bko["mes_ativacao"] == mes_sel].copy()
-        # Aplica filtro de líderes selecionados
-        if lideres_sel and "lider" in df_atv_rank.columns:
-            df_atv_rank = df_atv_rank[df_atv_rank["lider"].isin(lideres_sel)]
+
+        # FIX 1 — Mês: respeita "Todos" em vez de zerar o ranking.
+        if mes_sel != "Todos":
+            df_atv_rank = dff_bko[dff_bko["mes_ativacao"] == mes_sel].copy()
+        else:
+            df_atv_rank = dff_bko.copy()
+
+        # FIX 2 — Normaliza lider: vazio/espaços viram ausente (vendas de parceiro).
+        if "lider" in df_atv_rank.columns:
+            df_atv_rank["lider"] = df_atv_rank["lider"].replace(r"^\s*$", pd.NA, regex=True)
+
+        # FIX 3 — Filtro de líderes: só restringe se o usuário REDUZIU a seleção,
+        # e nunca derruba vendas de parceiro (lider ausente).
+        if (lideres_sel
+                and set(lideres_sel) != set(lideres_disponiveis)
+                and "lider" in df_atv_rank.columns):
+            df_atv_rank = df_atv_rank[
+                df_atv_rank["lider"].isin(lideres_sel) | df_atv_rank["lider"].isna()
+            ]
+
+        # Rótulo para as vendas de parceiro aparecerem agrupadas no ranking.
+        if "lider" in df_atv_rank.columns:
+            df_atv_rank["lider"] = df_atv_rank["lider"].fillna("Parceiros")
+
         if not df_atv_rank.empty and "vendedor_real" in df_atv_rank.columns:
-            render_ranking_resultados(df_atv_rank, mes_sel, meta_dict, lideres_sel)
+            # Passa os líderes realmente presentes (inclui "Parceiros") para o ranking por equipe.
+            lideres_render = sorted(df_atv_rank["lider"].dropna().unique().tolist())
+            render_ranking_resultados(df_atv_rank, mes_sel, meta_dict, lideres_render)
         else:
             st.info("Nenhum registro ativado com BKO para este mês.")
     else:
@@ -776,8 +796,8 @@ def main():
 
     st.markdown("---")
 
-    # ── Exportar Relatório ────────────────────────────────────────────────
-    st.markdown('<p class="section-title">📥 Exportar Relatório de Vendas</p>', unsafe_allow_html=True)
+    # ── Exportar Relatório (PDF / Excel) ──────────────────────────────────
+    st.markdown('<p class="section-title">📥 Exportar Relatório (PDF / Excel)</p>', unsafe_allow_html=True)
 
     if not bko.empty and "pedido" in dff.columns and not df_atv_rank.empty:
         col_pdf, col_xlsx = st.columns(2)
