@@ -1614,6 +1614,12 @@ def main():
 
     df = apply_filters(raw.copy(), MES_ALVO, ["NOVO","ADITIVO"], parceiro_sel)
 
+    # Esta página é sempre do mês corrente: usa só a aba DadosRadar.
+    # (load_data concatena todas as abas; a aba resultados é p/ meses passados
+    #  e, somada, dobraria acessos/receita da mesma venda.)
+    if "_aba" in df.columns:
+        df = df[df["_aba"].apply(lambda x: _s(x).strip().lower()) == "dadosradar"].copy()
+
     if not bko.empty and "pedido" in df.columns:
         df["pedido"] = df["pedido"].apply(_norm_pedido)
         bk = bko.copy()
