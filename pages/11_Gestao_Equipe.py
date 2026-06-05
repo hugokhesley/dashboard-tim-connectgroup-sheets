@@ -2275,6 +2275,57 @@ def main():
         st.info("Nenhum dado para os filtros selecionados.")
         st.stop()
 
+    # ╔═══════════════════════════════════════════════════════════╗
+    # ║ 🔧 DIAGNÓSTICO TEMPORÁRIO — origem da duplicação de pedido ║
+    # ║    NÃO altera nenhum cálculo. Remover depois de localizar. ║
+    # ╚═══════════════════════════════════════════════════════════╝
+    with st.expander("🔧 DIAGNÓSTICO TEMPORÁRIO — duplicação de pedidos", expanded=True):
+        st.caption("Bloco temporário só para localizar o número dobrado. Não afeta os KPIs.")
+
+        if not bko.empty and "pedido" in bko.columns:
+            bko_dups = int(bko["pedido"].duplicated().sum())
+            st.write(
+                f"**BKO (lookup):** {len(bko)} linhas · "
+                f"{bko['pedido'].nunique()} pedidos únicos · "
+                f"**{bko_dups} pedidos repetidos** (deveria ser 0 após o fix)"
+            )
+
+        if "pedido" in df.columns:
+            base_dups = int(df["pedido"].duplicated().sum())
+            st.write(
+                f"**Base (df da tela, já filtrada/mesclada):** {len(df)} linhas · "
+                f"{df['pedido'].nunique()} pedidos únicos · "
+                f"{base_dups} linhas com pedido já visto antes"
+            )
+
+            if "_aba" in df.columns:
+                abas_por_pedido = df.groupby("pedido")["_aba"].nunique()
+                cross = abas_por_pedido[abas_por_pedido > 1]
+                st.write(
+                    f"**Pedidos presentes em MAIS DE UMA aba da planilha:** {len(cross)} "
+                    f"→ esses têm acessos/receita somados em dobro."
+                )
+                if len(cross) > 0:
+                    amostra = (
+                        df[df["pedido"].isin(cross.index)]
+                        [[c for c in ["pedido", "_aba", "vendedor_real", "acessos", "preco_oferta"] if c in df.columns]]
+                        .sort_values("pedido")
+                    )
+                    st.dataframe(amostra, use_container_width=True, height=300)
+            else:
+                st.write("_(coluna `_aba` ausente — não dá para checar duplicação entre abas)_")
+
+            top = (
+                df.groupby("pedido")
+                .agg(linhas=("pedido", "size"),
+                     acessos=("acessos", "sum"),
+                     receita=("preco_oferta", "sum"))
+                .sort_values("linhas", ascending=False)
+                .head(10)
+            )
+            st.write("**Top 10 pedidos com mais linhas na base:**")
+            st.dataframe(top, use_container_width=True)
+
     # ── df_atv gerado DEPOIS de todos os filtros e merge ──────────
     atv = df[df["mes_ativacao"] == mes_alvo]
 
