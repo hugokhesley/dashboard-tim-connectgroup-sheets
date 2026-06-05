@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import unicodedata
+import re
 from data_loader import get_gspread_client, _s, _to_num, _normalize, _norm_pedido, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
 from auth import require_login
 
@@ -96,6 +97,7 @@ def normalize_resultados(df):
         elif n == "parceiro":             rename[col] = "parceiro"
         elif n == "fila atual":           rename[col] = "fila_atual"
         elif n == "pedido":               rename[col] = "pedido"
+        elif n == "cnpj":                 rename[col] = "cnpj"
     df = df.rename(columns=rename)
     df = _dedup_columns(df)
     for col in ["razao_social", "tipo_contratacao", "parceiro"]:
@@ -616,6 +618,80 @@ def main():
           <div class="kpi-value">{total_clientes:,}</div>
           <div class="kpi-sub">razões sociais únicas</div>
         </div>""", unsafe_allow_html=True)
+
+    # ── Busca de Cliente ──────────────────────────────────────────────────
+    st.markdown('<p class="section-title">🔎 Buscar Cliente</p>', unsafe_allow_html=True)
+    termo = st.text_input(
+        "Buscar por razão social, CNPJ ou nº do pedido (radar)",
+        placeholder="Ex.: TELEFIBRA · 12.345.678/0001-90 · 6342770",
+        label_visibility="collapsed",
+        key="busca_cliente",
+    )
+
+    if termo and termo.strip():
+        termo_txt     = _normalize(termo).strip()          # minúsculo, sem acento
+        termo_digitos = re.sub(r"\D", "", termo)           # só dígitos (CNPJ / pedido)
+
+        # Busca na base COMPLETA (ignora os filtros da sidebar de propósito)
+        base = df.copy()
+
+        # Enriquece com vendedor/líder do BKO (cache — não gera chamada extra à API)
+        bko_busca = load_bko()
+        if not bko_busca.empty and "pedido" in base.columns:
+            base = base.merge(
+                bko_busca[["pedido", "vendedor_real", "lider"]],
+                on="pedido", how="left"
+            )
+
+        mask = pd.Series(False, index=base.index)
+        if "razao_social" in base.columns and termo_txt:
+            mask |= base["razao_social"].apply(lambda x: termo_txt in _normalize(x))
+        if termo_digitos:
+            if "cnpj" in base.columns:
+                mask |= base["cnpj"].apply(lambda x: termo_digitos in re.sub(r"\D", "", _s(x)))
+            if "pedido" in base.columns:
+                mask |= base["pedido"].apply(lambda x: termo_digitos in re.sub(r"\D", "", _s(x)))
+
+        res = base[mask].copy()
+
+        if res.empty:
+            st.warning(f"Nenhum cliente encontrado para «{termo}». A busca cobre toda a base, sem filtros.")
+        else:
+            ac_res  = int(res["acessos"].sum())      if "acessos"      in res.columns else 0
+            rec_res = res["preco_oferta"].sum()       if "preco_oferta" in res.columns else 0
+            cli_res = res["razao_social"].nunique()   if "razao_social" in res.columns else 0
+            st.caption(
+                f"🔎 {len(res)} registro(s) · {cli_res} cliente(s) · "
+                f"{ac_res} acessos · R$ {rec_res:,.2f} — busca na base completa (ignora filtros)"
+            )
+
+            for c in ["vendedor_real", "lider"]:
+                if c in res.columns:
+                    res[c] = res[c].apply(lambda x: _s(x) if _s(x) else "—")
+
+            cols_busca = [c for c in [
+                "pedido", "razao_social", "cnpj", "parceiro", "tipo_contratacao",
+                "vendedor_real", "lider", "mes_ativacao", "acessos", "preco_oferta", "fila_atual"
+            ] if c in res.columns]
+
+            ordena = "acessos" if "acessos" in res.columns else cols_busca[0]
+            st.dataframe(
+                res[cols_busca].sort_values(ordena, ascending=False),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "pedido":           "Pedido",
+                    "razao_social":     "Razão Social",
+                    "cnpj":             "CNPJ",
+                    "parceiro":         "Parceiro",
+                    "tipo_contratacao": "Tipo",
+                    "vendedor_real":    "Vendedor",
+                    "lider":            "Líder",
+                    "mes_ativacao":     "Mês",
+                    "acessos":          st.column_config.NumberColumn("Acessos", format="%d"),
+                    "preco_oferta":     st.column_config.NumberColumn("Receita", format="R$ %.2f"),
+                    "fila_atual":       "Fila Atual",
+                },
+            )
 
     # ── Gráfico evolução mensal ───────────────────────────────────────────
     if "mes_ativacao" in df.columns:
