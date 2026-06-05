@@ -868,15 +868,12 @@ def main():
         st.markdown("---")
         parceiro_sel = st.selectbox("Parceiro / Aba", get_parceiros(raw))
 
-        # Seletor de mês
+        # Página travada no mês corrente: é uma visão operacional de input/
+        # ativação diária, cuja única fonte é a aba DadosRadar. Meses passados
+        # vivem na aba resultados, que não tem data de input.
         hoje = date.today()
-        meses_disp = []
-        for ano in [2025, 2026]:
-            for mes in range(1, 13):
-                meses_disp.append(f"{mes:02d}/{ano}")
-        mes_atual = f"{hoje.month:02d}/{hoje.year}"
-        idx_mes = meses_disp.index(mes_atual) if mes_atual in meses_disp else 0
-        mes_sel = st.selectbox("Mês", meses_disp, index=idx_mes)
+        mes_sel = f"{hoje.month:02d}/{hoje.year}"
+        st.markdown(f"**Mês:** `{mes_sel}`")
 
         # Filtro de líder — populado após o join com BKO
         # placeholder, será substituído depois do join
