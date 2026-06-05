@@ -2278,24 +2278,6 @@ def main():
     # ── df_atv gerado DEPOIS de todos os filtros e merge ──────────
     atv = df[df["mes_ativacao"] == mes_alvo]
 
-    # Export: recarrega sem filtro de mês para incluir tramitando (mes_ativacao nulo)
-    df_export = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], "Todos")
-    if not bko.empty and "pedido" in df_export.columns:
-        df_export["pedido"] = df_export["pedido"].apply(_norm_pedido)
-        bk2 = bko.copy()
-        bk2["pedido"] = bk2["pedido"].apply(_norm_pedido)
-        df_export = df_export.merge(bk2[["pedido","vendedor_real","lider"]], on="pedido", how="left")
-        df_export["vendedor_real"] = df_export["vendedor_real"].apply(lambda x: _s(x) if _s(x) else "Sem Vendedor")
-        df_export["lider"]         = df_export["lider"].apply(lambda x: _s(x) if _s(x) else "Sem Equipe")
-    # Aplica mesmo filtro de líder do dashboard
-    if tipo == "lider" and lider_u:
-        df_export = df_export[df_export["lider"].apply(lambda x: _s(x).upper()) == lider_u.upper()]
-    elif tipo == "parceiro" and parceiro_u:
-        if "parceiro" in df_export.columns:
-            df_export = df_export[df_export["parceiro"].apply(lambda x: _s(x).upper()) == parceiro_u.upper()]
-    elif tipo == "admin" and lider_sel:
-        df_export = df_export[df_export["lider"].isin(lider_sel)]
-
     # ── KPIs ──────────────────────────────────────────────────────
     ac_g   = int(atv["acessos"].sum())
     rec_g  = atv["preco_oferta"].sum()
@@ -2337,7 +2319,7 @@ def main():
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
             render_detalhado(df, mes_alvo, meta_dict)
             st.markdown("---")
-            _render_exportar(df_export, meta_dict, mes_alvo)
+            _render_exportar(df, meta_dict, mes_alvo)
         with tabs[1]:
             _tela_qualidade(bko, info, tipo, lider_u)
         with tabs[2]:
@@ -2356,7 +2338,7 @@ def main():
             st.markdown('<p class="section-title">📋 Visão Detalhada por Vendedor</p>', unsafe_allow_html=True)
             render_detalhado(df, mes_alvo, meta_dict)
             st.markdown("---")
-            _render_exportar(df_export, meta_dict, mes_alvo)
+            _render_exportar(df, meta_dict, mes_alvo)
         with tab_atr:
             st.markdown('<p class="section-title">👤 Pedidos sem Vendedor Atribuído</p>', unsafe_allow_html=True)
             with st.spinner("Carregando pendentes..."):
