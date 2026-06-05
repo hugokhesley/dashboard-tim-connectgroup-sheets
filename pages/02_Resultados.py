@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import unicodedata
-from data_loader import get_gspread_client, _s, _to_num, _normalize, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
+from data_loader import get_gspread_client, _s, _to_num, _normalize, _norm_pedido, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
 from auth import require_login
 
 st.set_page_config(
@@ -95,6 +95,7 @@ def normalize_resultados(df):
         elif n == "preco oferta":         rename[col] = "preco_oferta"
         elif n == "parceiro":             rename[col] = "parceiro"
         elif n == "fila atual":           rename[col] = "fila_atual"
+        elif n == "pedido":               rename[col] = "pedido"
     df = df.rename(columns=rename)
     df = _dedup_columns(df)
     for col in ["razao_social", "tipo_contratacao", "parceiro"]:
@@ -104,6 +105,10 @@ def normalize_resultados(df):
         df["acessos"] = df["acessos"].apply(_to_num)
     if "preco_oferta" in df.columns:
         df["preco_oferta"] = df["preco_oferta"].apply(_to_num)
+    # FIX 4 — normaliza o pedido com a MESMA regra do BKO (_norm_pedido),
+    # senão o merge on="pedido" não casa quando vem "6342770.0" ou com espaço.
+    if "pedido" in df.columns:
+        df["pedido"] = df["pedido"].apply(_norm_pedido)
     if "data_ativacao" in df.columns:
         df["mes_ativacao"] = pd.to_datetime(
             df["data_ativacao"].apply(_s), dayfirst=True, errors="coerce"
