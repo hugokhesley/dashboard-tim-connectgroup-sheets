@@ -381,6 +381,14 @@ def load_bko() -> pd.DataFrame:
             )
         # Remove linhas sem pedido
         df = df[df['pedido'] != ''].reset_index(drop=True)
+        # Lookup: 1 vendedor por pedido. Remove pedidos repetidos mantendo
+        # de preferência a linha que tem vendedor_real preenchido.
+        df = df.sort_values(
+            by='vendedor_real',
+            key=lambda s: s.apply(lambda x: 0 if _s(x) else 1),
+            kind='stable',
+        )
+        df = df.drop_duplicates(subset='pedido', keep='first').reset_index(drop=True)
         return df[['pedido', 'vendedor_real', 'lider']]
     except Exception as e:
         st.warning(f'BKO não carregado: {e}')
