@@ -285,6 +285,38 @@ def subir_status(linhas):
     print(f"  ✅ {len(linhas)} status gravados em '{ABA_DESTINO}'")
 
 # ─────────────────────────────────────────────────────────────────
+#  DIAGNÓSTICO (temporário — entender por que a lista veio vazia)
+# ─────────────────────────────────────────────────────────────────
+def diagnostico(dados):
+    from collections import Counter
+    print("── DIAGNÓSTICO DadosRadar ──")
+    print(f"linhas (com header): {len(dados)}")
+    if not dados:
+        print("SEM DADOS"); print("────────────"); return
+    print(f"headers crus ({len(dados[0])}): {dados[0]}")
+    headers = [_norm(h) for h in dados[0]]
+    def col(pred):
+        return next((i for i, h in enumerate(headers) if pred(h)), None)
+    ip  = col(lambda h: h == "pedido")
+    ipa = col(lambda h: "parceiro" in h)
+    it  = col(lambda h: "tipo" in h and "contrat" in h)
+    ia  = col(lambda h: "ativa" in h)
+    print(f"idx detectados -> pedido={ip} parceiro={ipa} tipo={it} ativa={ia}")
+    if ipa is not None:
+        vals = Counter(r[ipa].strip() for r in dados[1:] if ipa < len(r) and r[ipa].strip())
+        print(f"valores distintos de parceiro (top10): {dict(list(vals.most_common(10)))}")
+    else:
+        print("!! coluna 'parceiro' NAO existe nesta aba")
+    if it is not None:
+        vals = Counter(r[it].strip().upper() for r in dados[1:] if it < len(r) and r[it].strip())
+        print(f"valores distintos de tipo: {dict(vals)}")
+    if ia is not None:
+        sem = sum(1 for r in dados[1:] if not (ia < len(r) and r[ia].strip()))
+        print(f"linhas SEM data de ativacao: {sem} de {len(dados)-1}")
+    print("────────────────────────────")
+
+
+# ─────────────────────────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────────────────────────
 def main():
@@ -292,6 +324,7 @@ def main():
     print("=" * 55); print("  QUICKTIM STATUS — consulta 3x/dia"); print("=" * 55)
 
     dados = carregar_dados()
+    diagnostico(dados)
     resolvido = {}   # pedido -> {"fila","em","dt","parceiro"}
 
     for p in PARCEIROS:
