@@ -59,12 +59,12 @@ TERMOS_LOGIN_URL = ("iam-pf", "signon", "login", "authn")
 
 TIPOS_OK = {"NOVO", "ADITIVO"}      # renegociação fica de fora (decisão Hugo)
 
-# Roteamento: palavra_chave casada por SUBSTRING (uppercased) contra a
-# coluna 'parceiro' da planilha. Define QUAL conta consulta o pedido.
+# Roteamento: a coluna 'parceiro' da DadosRadar guarda o CÓDIGO (custcode) do
+# parceiro, não o nome. Match EXATO do código define QUAL conta consulta o pedido.
 PARCEIROS = [
-    {"nome": "Serra",   "palavra_chave": "SERRA",   "login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
-    {"nome": "Campina", "palavra_chave": "CAMPINA", "login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
-    {"nome": "Alagoas", "palavra_chave": "ALAGOAS", "login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
+    {"nome": "Serra",   "codigo": "NE80_NEN15I_NEE363",  "login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
+    {"nome": "Campina", "codigo": "NE80_NEN15I_NEE021",  "login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
+    {"nome": "Alagoas", "codigo": "NE80_NEN13I_NEE0667", "login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
 ]
 
 # ─────────────────────────────────────────────────────────────────
@@ -212,7 +212,7 @@ def carregar_dados():
     ws = gc.open_by_key(SPREADSHEET_ID).worksheet(ABA_ORIGEM)
     return ws.get_all_values()
 
-def pedidos_por_parceiro(dados, palavra_chave):
+def pedidos_por_parceiro(dados, codigo):
     if not dados or len(dados) < 2:
         return []
     headers = [_norm(h) for h in dados[0]]
@@ -221,18 +221,18 @@ def pedidos_por_parceiro(dados, palavra_chave):
     idx_pedido   = col(lambda h: h == "pedido")
     idx_fila     = col(lambda h: "fila" in h and "atual" in h)
     idx_tipo     = col(lambda h: "tipo" in h and "contrat" in h)
-    idx_parceiro = col(lambda h: "parceiro" in h)          # pega 'parceiro (bd)' também
+    idx_parceiro = col(lambda h: h == "parceiro")          # coluna do código do parceiro
     idx_ativa    = col(lambda h: "ativa" in h)             # 'data de ativação'
     if idx_pedido is None or idx_parceiro is None:
         print("  [sheet] header pedido/parceiro não encontrado"); return []
 
-    pk = palavra_chave.upper()
+    cod = codigo.strip().upper()
     out, vistos = [], set()
     for row in dados[1:]:
         def cell(i):
             return row[i].strip() if (i is not None and i < len(row)) else ""
         parceiro = cell(idx_parceiro).upper()
-        if pk not in parceiro:
+        if parceiro != cod:                                # match EXATO do código
             continue
         tipo = cell(idx_tipo).upper()
         if idx_tipo is not None and tipo not in TIPOS_OK:
@@ -325,10 +325,19 @@ def main():
 
     dados = carregar_dados()
     diagnostico(dados)
-    resolvido = {}   # pedido -> {"fila","em","dt","parceiro"}
 
+    # pré-plano: conta pedidos por parceiro ANTES de consultar (pra dimensionar)
+    plano = {p["nome"]: pedidos_por_parceiro(dados, p["codigo"]) for p in PARCEIROS}
     for p in PARCEIROS:
-        pedidos = pedidos_por_parceiro(dados, p["palavra_chave"])
+        print(f"  [plano] {p['nome']} ({p['login']}): {len(plano[p['nome']])} pedido(s)")
+    print(f"  [plano] TOTAL a consultar: {sum(len(v) for v in plano.values())}")
+    if os.environ.get("QUICKTIM_DRYRUN") == "1":
+        print("DRYRUN=1 — só contagem, não vou consultar o chat. Saindo.")
+        return
+
+    resolvido = {}   # pedido -> {"fila","em","dt","parceiro"}
+    for p in PARCEIROS:
+        pedidos = plano[p["nome"]]
         print(f"\n🌐 {p['nome']} ({p['login']}) — {len(pedidos)} pedido(s)")
         if not pedidos:
             continue

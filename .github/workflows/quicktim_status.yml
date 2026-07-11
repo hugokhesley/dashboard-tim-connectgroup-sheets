@@ -4,6 +4,11 @@ name: QuickTIM Status
 # O agendamento 3x/dia (schedule) será ligado depois do 1º teste validado.
 on:
   workflow_dispatch:
+    inputs:
+      dryrun:
+        description: 'Só contar pedidos por parceiro, sem consultar o chat (1=sim, 0=não)'
+        default: '1'
+        required: false
 
 jobs:
   quicktim:
@@ -49,5 +54,6 @@ jobs:
       - name: Consultar QuickTIM e gravar StatusQuickTIM
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          QUICKTIM_DRYRUN: ${{ inputs.dryrun }}
         run: |
           python quicktim_status.py
