@@ -1,0 +1,53 @@
+name: QuickTIM Status
+
+# ATENÇÃO: por enquanto SÓ gatilho manual (workflow_dispatch).
+# O agendamento 3x/dia (schedule) será ligado depois do 1º teste validado.
+on:
+  workflow_dispatch:
+
+jobs:
+  quicktim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install gspread google-auth requests securid selenium webdriver-manager
+
+      - name: Instalar Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Criar arquivo de credenciais Google
+        run: |
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > credentials.json
+
+      - name: Criar arquivos SDTID
+        env:
+          SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
+          SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
+          SDTID_T3748937_B64: ${{ secrets.SDTID_T3748937_B64 }}
+        run: |
+          python -c "
+          import base64, os
+          with open('T3729525_001938489117.sdtid', 'wb') as f:
+              f.write(base64.b64decode(os.environ['SDTID_T3729525_B64']))
+          with open('T3761125_001938495598.sdtid', 'wb') as f:
+              f.write(base64.b64decode(os.environ['SDTID_T3761125_B64']))
+          with open('T3748937_001938491397.sdtid', 'wb') as f:
+              f.write(base64.b64decode(os.environ['SDTID_T3748937_B64']))
+          print('SDTID files created successfully')
+          "
+
+      - name: Consultar QuickTIM e gravar StatusQuickTIM
+        env:
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          python quicktim_status.py
