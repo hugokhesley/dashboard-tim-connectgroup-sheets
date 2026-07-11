@@ -212,6 +212,43 @@ def carregar_dados():
     ws = gc.open_by_key(SPREADSHEET_ID).worksheet(ABA_ORIGEM)
     return ws.get_all_values()
 
+# ── MESMO mapper de stage do n8n DadosRadar (regra da "Tramitação Atual") ──
+def _mapkey(s):
+    return unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode().upper().strip()
+
+_FILA_STAGE = {}
+def _add(stage, *filas):
+    for f in filas:
+        _FILA_STAGE[_mapkey(f)] = stage
+_add("CANCELADO", "CANCELADO")
+_add("PRÉ-CADASTRO", "CADASTRO", "AG. ACEITE DIGITAL")
+_add("EM TRAMITAÇÃO", "AG. ANALISE ANTI-FRAUDE", "ANÁLISE DE CADASTRO - CRÉDITO", "AG. NRO RADAR NO P2B",
+     "AG. ANALISE DE CREDITO PELA HOLDING", "AG. STATUS P2B", "REANÁLISE APROVADA", "APROVAÇÃO ÁREA DE ATUAÇÃO",
+     "AG. ATIVAÇÃO", "REANÁLISE DE CRÉDITO", "AG. CONF. CANCELAMENTO", "APROVAÇÃO CÓDIGO 02", "APROVAÇÃO P2B",
+     "AG. STATUS P2B BOC", "REANALISE ACOMP. NAC", "ATIVAÇÃO MANUAL", "REABRIR P2B")
+_add("ENTRANTE", "ENTREGA", "FIDELIZAÇÃO", "AG. IMPR. DOCs/EXPEDIÇÃO", "INCONSISTENCIA", "INSUCESSO VENDAS",
+     "PRÉ-ATIVAÇÃO-P2B", "BATE/VOLTA - LOG", "BATE/VOLTA CONTROL TOWER", "FATURAMENTO", "DOCUMENTAÇÃO")
+_add("DEVOLVIDOS", "DEVOLVIDOS", "FALTA APARELHO - TERMINAIS", "REANÁLISE REPROVADA", "REPRESAMENTO",
+     "REPROC. CORREÇÃO NFE", "REPROC. CRIAÇÃO ORDENS", "FALTA APARELHO BOC", "CANCELAMENTO BOC", "INSUCESSO BOC",
+     "INCONSISTÊNCIA LOG", "REPROC. VIS. FINANCEIRA", "TROCA CHIP INCONSISTENTE", "PRÉ-ATIVAÇÃO")
+_add("ATIVO", "CONCLUÍDO")
+
+TERMINAIS = {"ATIVO", "CANCELADO"}
+
+def map_fila_stage(fila):
+    return _FILA_STAGE.get(_mapkey(fila), "EM TRAMITAÇÃO")
+
+def determine_stage(fila, tem_ativacao):
+    if _mapkey(fila) == "CANCELADO":
+        return "CANCELADO"
+    if tem_ativacao:
+        return "ATIVO"
+    return map_fila_stage(fila)
+
+def em_tramitacao(fila, tem_ativacao):
+    return determine_stage(fila, tem_ativacao) not in TERMINAIS
+
+
 def pedidos_por_parceiro(dados, codigo):
     if not dados or len(dados) < 2:
         return []
@@ -237,7 +274,8 @@ def pedidos_por_parceiro(dados, codigo):
         tipo = cell(idx_tipo).upper()
         if idx_tipo is not None and tipo not in TIPOS_OK:
             continue
-        if cell(idx_ativa):                    # tem data de ativação => já ativou, não consulta
+        # MESMA regra da Tramitação Atual: stage não-terminal (fora ATIVO/CANCELADO)
+        if not em_tramitacao(cell(idx_fila), bool(cell(idx_ativa))):
             continue
         pedido = cell(idx_pedido)
         if pedido.endswith(".0"):
@@ -313,6 +351,30 @@ def diagnostico(dados):
     if ia is not None:
         sem = sum(1 for r in dados[1:] if not (ia < len(r) and r[ia].strip()))
         print(f"linhas SEM data de ativacao: {sem} de {len(dados)-1}")
+
+    # fila atual: quais existem
+    iff = col(lambda h: "fila" in h and "atual" in h)
+    if iff is not None:
+        filas = Counter(r[iff].strip().upper() for r in dados[1:] if iff < len(r) and r[iff].strip())
+        print(f"FILA ATUAL distintas (top20): {dict(filas.most_common(20))}")
+
+    # entre linhas SEM ativação: como se distribuem por tipo e por fila
+    if ia is not None:
+        semrows = [r for r in dados[1:] if not (ia < len(r) and r[ia].strip())]
+        if it is not None:
+            print(f"  sem-ativacao POR TIPO: {dict(Counter(r[it].strip().upper() for r in semrows if it < len(r) and r[it].strip()))}")
+        if iff is not None:
+            print(f"  sem-ativacao POR FILA (top12): {dict(Counter(r[iff].strip().upper() for r in semrows if iff < len(r) and r[iff].strip()).most_common(12))}")
+
+    # funil por parceiro: onde cada filtro derruba
+    for pp in PARCEIROS:
+        cc = pp['codigo'].strip().upper()
+        base = [r for r in dados[1:] if ipa is not None and ipa < len(r) and r[ipa].strip().upper() == cc]
+        a_tipo = [r for r in base if it is not None and it < len(r) and r[it].strip().upper() in TIPOS_OK]
+        def _fila(r): return r[iff].strip() if (iff is not None and iff < len(r)) else ""
+        def _tem_ativ(r): return bool(ia is not None and ia < len(r) and r[ia].strip())
+        a_tram = [r for r in a_tipo if em_tramitacao(_fila(r), _tem_ativ(r))]
+        print(f"  FUNIL {pp['nome']}: parceiro={len(base)} -> +NOVO/ADITIVO={len(a_tipo)} -> +em_tramitacao={len(a_tram)}")
     print("────────────────────────────")
 
 
