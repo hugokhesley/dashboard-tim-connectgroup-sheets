@@ -258,7 +258,7 @@ def pedidos_por_parceiro(dados, codigo):
     idx_pedido   = col(lambda h: h == "pedido")
     idx_fila     = col(lambda h: "fila" in h and "atual" in h)
     idx_tipo     = col(lambda h: "tipo" in h and "contrat" in h)
-    idx_parceiro = col(lambda h: h == "parceiro")          # coluna do código do parceiro
+    idx_parceiro = col(lambda h: h == "custcode parceiro") # coluna do CÓDIGO (NE80_...) do parceiro
     idx_ativa    = col(lambda h: "ativa" in h)             # 'data de ativação'
     if idx_pedido is None or idx_parceiro is None:
         print("  [sheet] header pedido/parceiro não encontrado"); return []
