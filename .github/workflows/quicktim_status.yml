@@ -9,6 +9,10 @@ on:
         description: 'Só contar pedidos por parceiro, sem consultar o chat (1=sim, 0=não)'
         default: '1'
         required: false
+  schedule:
+    - cron: '0 13 * * *'   # 10:00 BRT
+    - cron: '0 17 * * *'   # 14:00 BRT
+    - cron: '0 20 * * *'   # 17:00 BRT
 
 jobs:
   quicktim:
