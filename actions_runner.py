@@ -472,7 +472,15 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
 #  SHEETS
 # ─────────────────────────────────────────────────────────────────
 
-def subir_para_sheets(df):
+def subir_para_sheets(df, preservar_existentes=False):
+    """Grava o df na aba DadosRadar.
+
+    `preservar_existentes=True` (usado quando ALGUMA conta falhou): em vez de
+    limpar a aba, mantém as linhas que já estavam lá e cujo `pedido` NÃO veio
+    nesta rodada. Sem isso, uma falha parcial de login apaga a base inteira das
+    contas que não baixaram — foi o que aconteceu em 19/jul/2026 (1765 → 15
+    linhas), secando QuickTIM e o sync do CRM por 2 dias.
+    """
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
     gc = gspread.authorize(creds)
@@ -481,12 +489,64 @@ def subir_para_sheets(df):
         aba = planilha.worksheet(ABA_DESTINO)
     except gspread.WorksheetNotFound:
         aba = planilha.add_worksheet(title=ABA_DESTINO, rows=1, cols=1)
-    aba.clear()
+
     df = df.fillna("")
     dados = [df.columns.tolist()] + df.values.tolist()
     dados = [[str(v) for v in linha] for linha in dados]
+
+    if preservar_existentes:
+        col_pedido  = dados[0].index("pedido") if "pedido" in dados[0] else 0
+        pedidos_novos = {_num(linha[col_pedido]) for linha in dados[1:]}
+        preservadas = _linhas_a_preservar(aba, dados[0], pedidos_novos)
+        if preservadas is None:
+            print("  ⛔ Não consegui ler a aba atual para preservar as linhas das contas que falharam.")
+            print("     ABORTANDO a gravação — melhor base velha que base truncada.")
+            sys.exit(1)
+        print(f"  🛟 Preservando {len(preservadas)} linha(s) já existentes (contas que falharam nesta rodada)")
+        dados += preservadas
+
+    aba.clear()
     aba.update(dados, value_input_option="USER_ENTERED")
-    print(f"  ✅ {len(df)} linhas gravadas em '{ABA_DESTINO}'!")
+    print(f"  ✅ {len(dados) - 1} linhas gravadas em '{ABA_DESTINO}'!")
+
+
+def _num(valor: str) -> str:
+    """Normaliza pedido para comparação: o pandas manda float ('6418984.0')."""
+    s = str(valor).strip()
+    return s[:-2] if s.endswith(".0") else s
+
+
+def _linhas_a_preservar(aba, header_novo, pedidos_novos):
+    """Linhas já na aba cujo `pedido` não veio nesta rodada, realinhadas ao header novo.
+
+    Retorna None se a aba não puder ser lida/alinhada (aí o chamador aborta).
+    """
+    try:
+        atual = aba.get_all_values()
+    except Exception as e:
+        print(f"  ⚠️ Falha ao ler a aba atual: {e}")
+        return None
+    if len(atual) < 2:
+        return []
+
+    header_antigo = atual[0]
+    if "pedido" not in header_antigo:
+        print("  ⚠️ Aba atual sem coluna 'pedido' — não dá para casar com o download novo.")
+        return None
+
+    idx_pedido = header_antigo.index("pedido")
+    # Mapeia cada coluna do header NOVO para a posição dela no header ANTIGO.
+    pos = {col: header_antigo.index(col) if col in header_antigo else None for col in header_novo}
+
+    preservadas = []
+    for linha in atual[1:]:
+        if idx_pedido >= len(linha) or not linha[idx_pedido] or _num(linha[idx_pedido]) in pedidos_novos:
+            continue
+        preservadas.append([
+            linha[pos[col]] if pos[col] is not None and pos[col] < len(linha) else ""
+            for col in header_novo
+        ])
+    return preservadas
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -507,13 +567,21 @@ def main():
     posicoes  = {}
     for conta in CONTAS:
         print(f"\n🌐 Solicitando relatório — {conta['login'].upper()}")
-        try:
-            id_solicitado, pos = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
-            ids[conta["login"]]      = id_solicitado
-            posicoes[conta["login"]] = pos
-            contas_ok.append(conta)
-        except Exception as e:
-            print(f"  ❌ FALHA em {conta['login'].upper()}, pulando: {e}")
+        # 1 retry: a falha mais comum é read timeout do webdriver, que costuma passar na 2ª.
+        for tentativa in (1, 2):
+            try:
+                id_solicitado, pos = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
+                ids[conta["login"]]      = id_solicitado
+                posicoes[conta["login"]] = pos
+                contas_ok.append(conta)
+                break
+            except Exception as e:
+                if tentativa == 1:
+                    print(f"  ⚠️ Tentativa 1 falhou em {conta['login'].upper()}: {e}")
+                    print("     Repetindo em 30s...")
+                    time.sleep(30)
+                else:
+                    print(f"  ❌ FALHA em {conta['login'].upper()}, pulando: {e}")
 
     if not contas_ok:
         print("❌ Nenhum relatório solicitado. Abortando.")
@@ -541,17 +609,24 @@ def main():
         exit(1)
 
     # ── ETAPA 3: Concat + Upload ──────────────────────────────
-    df_final = pd.concat(dfs, ignore_index=True)
-    print(f"\n📋 Total consolidado: {len(df_final)} linhas")
-    subir_para_sheets(df_final)
+    # Falha parcial = qualquer conta de CONTAS que não rendeu df (inclusive as que
+    # nem chegaram a solicitar relatório na etapa 1 — era esse o buraco antigo:
+    # o check só olhava contas_ok, então perder uma conta no login passava batido).
+    falhadas = [c["login"].upper() for c in CONTAS if c["login"] not in logins_ok]
+    parcial  = bool(falhadas)
 
-    print("\n🎉 DadosRadar atualizado com sucesso!")
+    df_final = pd.concat(dfs, ignore_index=True)
+    print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(CONTAS)} contas)")
+    if parcial:
+        print(f"⚠️ RODADA PARCIAL — contas sem dados: {', '.join(falhadas)}")
+    subir_para_sheets(df_final, preservar_existentes=parcial)
+
+    print("\n🎉 DadosRadar atualizado!")
     print("=" * 55)
 
-    # Marca o run como falha se alguma conta solicitada não rendeu df
-    if len(dfs) < len(contas_ok):
-        falhadas = [c["login"].upper() for c in contas_ok if c["login"] not in logins_ok]
-        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(contas_ok)} contas falharam: {', '.join(falhadas)}")
+    # Marca o run como falha para a rodada parcial ficar visível no Actions
+    if parcial:
+        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(CONTAS)} contas falharam: {', '.join(falhadas)}")
         sys.exit(1)
 
 
