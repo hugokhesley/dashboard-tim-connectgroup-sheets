@@ -1,13 +1,12 @@
 name: QuickTIM Status
 
-# ATENÇÃO: por enquanto SÓ gatilho manual (workflow_dispatch).
-# O agendamento 3x/dia (schedule) será ligado depois do 1º teste validado.
+# Agendado 3x/dia + gatilho manual (botão "Atualizar status Radar" no CRM).
 on:
   workflow_dispatch:
     inputs:
       dryrun:
         description: 'Só contar pedidos por parceiro, sem consultar o chat (1=sim, 0=não)'
-        default: '1'
+        default: '0'
         required: false
   schedule:
     - cron: '0 13 * * *'   # 10:00 BRT
@@ -58,6 +57,8 @@ jobs:
       - name: Consultar QuickTIM e gravar StatusQuickTIM
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-          QUICKTIM_DRYRUN: ${{ inputs.dryrun }}
+          # `|| '0'`: em run por schedule o inputs.dryrun vem vazio, e um dispatch
+          # sem body (o botão do CRM) cairia no default. Rodada de verdade é o padrão.
+          QUICKTIM_DRYRUN: ${{ inputs.dryrun || '0' }}
         run: |
           python quicktim_status.py
