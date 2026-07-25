@@ -51,5 +51,6 @@ jobs:
       - name: Executar atualização
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          PYTHONUNBUFFERED: "1"
         run: |
           python actions_runner.py
