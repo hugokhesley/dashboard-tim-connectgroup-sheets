@@ -3,14 +3,15 @@
   ACTIONS RUNNER — Roda no GitHub Actions
 =====================================================================
   Fluxo 100% via Radar (sem IMAP/email):
-  1. Login RSA + solicitar relatório para cada conta (lista2.asp)
-  2. Para cada conta: abre 1 driver, faz login e fica em polling
-     em report-queue.asp a cada 60s até achar linha
-     "Após 01/05/2009" com status de pronto.
+  1. Login RSA + solicitar relatório para as 3 contas EM PARALELO (lista2.asp).
+  2. Poll das contas EM PARALELO (1 driver cada) em report-queue.asp a cada 60s
+     até achar a linha "Após 01/05/2009" pronta.
      - Relogin RSA automático se a sessão cair durante o poll.
-     - Timeout 90 min por conta.
+     - Timeout 90 min por conta + DEADLINE GLOBAL de 160 min: ao bater, para de
+       esperar e grava o que já baixou (nunca mais "cancelado = zero gravado").
   3. Download via cookies do Selenium.
-  4. Concat + upload para a aba DadosRadar.
+  4. Concat + upload para a aba DadosRadar (preserva contas que faltaram).
+  5. Heartbeat na aba RadarRunStatus p/ o n8n avisar no sino se a base secar.
 =====================================================================
 """
 
@@ -22,9 +23,19 @@ import unicodedata
 import requests
 import pandas as pd
 import gspread
-from datetime import datetime
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
+
+# Logs em tempo real: no Actions o stdout é block-buffered (não é TTY), então os
+# prints ficavam presos no buffer e eram PERDIDOS quando o job era cancelado no
+# timeout — 3h de silêncio. line_buffering força flush a cada linha.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 # ─────────────────────────────────────────────────────────────────
 #  ⚙️  CONFIGURAÇÕES
@@ -33,8 +44,16 @@ from securid.sdtid import SdtidFile
 SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 
 ABA_DESTINO       = "DadosRadar"
+ABA_STATUS        = "RadarRunStatus"   # heartbeat lido pelo n8n p/ avisar base velha/parcial no sino
 INTERVALO_POLL    = 60          # segundos entre cada checagem
-TIMEOUT_POLL_MIN  = 90          # timeout por conta
+TIMEOUT_POLL_MIN  = 90          # timeout por conta (as contas rodam em PARALELO)
+
+# Deadline global de wall-clock. O job do Actions morre em 180 min (timeout-minutes).
+# Antes: 3 contas em SÉRIE × 90 min = até 270 min → estourava os 180 e o job era
+# CANCELADO no meio do polling, sem gravar NADA (base congelava). Agora as contas
+# rodam em paralelo (pior caso ~90 min) e, se ainda assim algo arrastar, este
+# deadline faz o script PARAR e gravar o que já baixou antes de o Actions matar.
+GLOBAL_DEADLINE_MIN = 160
 
 URL_RADAR         = "https://radar.timbrasil.com.br/"
 URL_LISTA         = "https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp"
@@ -391,12 +410,17 @@ def baixar_via_cookies(driver, link):
     return df
 
 
-def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOUT_POLL_MIN):
+def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOUT_POLL_MIN, deadline_ts=None):
     driver = criar_driver()
     try:
         fazer_login(driver, login, sdtid_path)
 
         espera_inicial_min = max(0, (posicao - 1) * 7)
+        # Nunca gastar a espera inicial além do deadline global (deixa 5 min de folga
+        # p/ ao menos uma tentativa de poll e o download).
+        if deadline_ts is not None:
+            budget_min = int((deadline_ts - time.time()) / 60) - 5
+            espera_inicial_min = max(0, min(espera_inicial_min, budget_min))
         if espera_inicial_min > 0:
             print(f"  ⏱  [{login.upper()}] Posição {posicao}, aguardando {espera_inicial_min} min antes do primeiro poll")
             restante = espera_inicial_min
@@ -415,8 +439,9 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
             print(f"  ⏱  [{login.upper()}] Posição {posicao}, sem espera inicial")
 
         inicio = time.time()
+        fim_conta = inicio + timeout_min * 60
         tentativa = 0
-        while time.time() - inicio < timeout_min * 60:
+        while time.time() < fim_conta and (deadline_ts is None or time.time() < deadline_ts):
             tentativa += 1
             try:
                 driver.get(URL_FILA)
@@ -462,7 +487,8 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
                 print(f"  ⚠️ [{login.upper()}] erro no poll #{tentativa}: {e}")
                 time.sleep(INTERVALO_POLL)
 
-        raise TimeoutError(f"Timeout de {timeout_min} min atingido para {login.upper()} (ID {id_alvo})")
+        motivo = "deadline global" if (deadline_ts is not None and time.time() >= deadline_ts) else f"timeout de {timeout_min} min"
+        raise TimeoutError(f"{motivo} atingido para {login.upper()} (ID {id_alvo})")
 
     finally:
         driver.quit()
@@ -549,6 +575,52 @@ def _linhas_a_preservar(aba, header_novo, pedidos_novos):
     return preservadas
 
 
+def registrar_status(status, linhas, contas_ok, contas_falhas, detalhe=""):
+    """Grava 1 linha de heartbeat na aba RadarRunStatus (sempre, mesmo em falha).
+
+    O n8n (na LAN, alcança o CRM) lê essa aba: se `run_em_utc` ficar velho ou
+    `status != ok`, avisa o Hugo no sino. É assim que a base contorna o fato de o
+    Actions (nuvem) não conseguir falar direto com o CRM LAN-only. NUNCA derruba o
+    run — o marcador é observabilidade, não caminho crítico.
+    """
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+        gc = gspread.authorize(creds)
+        planilha = gc.open_by_key(SPREADSHEET_ID)
+        try:
+            aba = planilha.worksheet(ABA_STATUS)
+        except gspread.WorksheetNotFound:
+            aba = planilha.add_worksheet(title=ABA_STATUS, rows=2, cols=6)
+        agora = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        header = ["run_em_utc", "status", "linhas", "contas_ok", "contas_falhas", "detalhe"]
+        row    = [agora, status, str(linhas),
+                  ",".join(c.upper() for c in contas_ok),
+                  ",".join(c.upper() for c in contas_falhas), detalhe]
+        aba.update([header, row], value_input_option="USER_ENTERED")
+        print(f"  🩺 Status registrado: {status} | {linhas} linhas | ok={row[3]} | falhas={row[4]}")
+    except Exception as e:
+        print(f"  ⚠️ Falha ao registrar status (não crítico): {e}")
+
+
+def _solicitar_conta(conta, data_inicio, data_fim):
+    """Etapa 1 de UMA conta, com 1 retry. Retorna (login, id, posicao) ou levanta."""
+    login = conta["login"]
+    ultimo_erro = None
+    # 1 retry: a falha mais comum é read timeout do webdriver, que costuma passar na 2ª.
+    for tentativa in (1, 2):
+        try:
+            id_solicitado, pos = solicitar_relatorio(login, conta["sdtid"], data_inicio, data_fim)
+            print(f"  ✓ [{login.upper()}] solicitado: ID {id_solicitado}, posição {pos}")
+            return login, id_solicitado, pos
+        except Exception as e:
+            ultimo_erro = e
+            if tentativa == 1:
+                print(f"  ⚠️ [{login.upper()}] tentativa 1 falhou: {e} — repetindo em 30s")
+                time.sleep(30)
+    raise RuntimeError(f"{login.upper()} falhou na solicitação: {ultimo_erro}")
+
+
 # ─────────────────────────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────────────────────────
@@ -558,75 +630,79 @@ def main():
     print("  ACTIONS RUNNER — ATUALIZAÇÃO DADOSRADAR")
     print("=" * 55)
 
+    deadline_ts = time.time() + GLOBAL_DEADLINE_MIN * 60
+    print(f"⏳ Deadline global: {GLOBAL_DEADLINE_MIN} min — grava o que tiver antes de o Actions matar o job (180 min)")
+
     data_inicio, data_fim = calcular_datas()
     print(f"📅 Período: {data_inicio} → {data_fim}")
 
-    # ── ETAPA 1: Solicitar relatórios ─────────────────────────
-    contas_ok = []
-    ids       = {}
-    posicoes  = {}
-    for conta in CONTAS:
-        print(f"\n🌐 Solicitando relatório — {conta['login'].upper()}")
-        # 1 retry: a falha mais comum é read timeout do webdriver, que costuma passar na 2ª.
-        for tentativa in (1, 2):
+    # ── ETAPA 1: Solicitar relatórios (as 3 contas EM PARALELO) ─
+    print(f"\n🌐 Solicitando relatórios das {len(CONTAS)} contas em paralelo...")
+    solicitacoes = {}   # login -> (id_alvo, posicao)
+    with ThreadPoolExecutor(max_workers=len(CONTAS)) as ex:
+        futuros = {ex.submit(_solicitar_conta, c, data_inicio, data_fim): c for c in CONTAS}
+        for fut in as_completed(futuros):
+            conta = futuros[fut]
             try:
-                id_solicitado, pos = solicitar_relatorio(conta["login"], conta["sdtid"], data_inicio, data_fim)
-                ids[conta["login"]]      = id_solicitado
-                posicoes[conta["login"]] = pos
-                contas_ok.append(conta)
-                break
+                login, id_alvo, pos = fut.result()
+                solicitacoes[login] = (id_alvo, pos)
             except Exception as e:
-                if tentativa == 1:
-                    print(f"  ⚠️ Tentativa 1 falhou em {conta['login'].upper()}: {e}")
-                    print("     Repetindo em 30s...")
-                    time.sleep(30)
-                else:
-                    print(f"  ❌ FALHA em {conta['login'].upper()}, pulando: {e}")
+                print(f"  ❌ {conta['login'].upper()}: {e}")
 
-    if not contas_ok:
-        print("❌ Nenhum relatório solicitado. Abortando.")
-        exit(1)
+    if not solicitacoes:
+        print("❌ Nenhum relatório solicitado. Base preservada (nada gravado).")
+        registrar_status("falha", 0, [], [c["login"] for c in CONTAS], "nenhuma solicitação OK")
+        sys.exit(1)
 
-    print(f"\n✅ Contas com solicitação OK: {', '.join(c['login'].upper() for c in contas_ok)}")
+    print(f"\n✅ Solicitações OK: {', '.join(l.upper() for l in solicitacoes)}")
 
-    # ── ETAPA 2: Polling + download por conta ─────────────────
-    print(f"\n⬇️  Polling em report-queue.asp (intervalo {INTERVALO_POLL}s, timeout {TIMEOUT_POLL_MIN} min/conta)")
-    dfs = []
-    logins_ok = set()
-    for conta in contas_ok:
-        pos      = posicoes[conta["login"]]
-        id_alvo  = ids[conta["login"]]
-        print(f"\n🔄 Monitorando {conta['login'].upper()} (ID {id_alvo}, posição {pos})...")
-        try:
-            df = monitorar_e_baixar(conta["login"], conta["sdtid"], id_alvo=id_alvo, posicao=pos)
-            dfs.append(df)
-            logins_ok.add(conta["login"])
-        except Exception as e:
-            print(f"  ❌ {conta['login'].upper()}: {e}")
+    # ── ETAPA 2: Polling + download (EM PARALELO, com deadline) ─
+    print(f"\n⬇️  Polling paralelo (intervalo {INTERVALO_POLL}s, {TIMEOUT_POLL_MIN} min/conta, deadline global {GLOBAL_DEADLINE_MIN} min)")
+    dfs = {}   # login -> df
+    with ThreadPoolExecutor(max_workers=len(solicitacoes)) as ex:
+        futuros = {}
+        for login, (id_alvo, pos) in solicitacoes.items():
+            conta = next(c for c in CONTAS if c["login"] == login)
+            print(f"  🔄 Monitorando {login.upper()} (ID {id_alvo}, posição {pos})...")
+            futuros[ex.submit(monitorar_e_baixar, login, conta["sdtid"], id_alvo, pos, TIMEOUT_POLL_MIN, deadline_ts)] = login
+        for fut in as_completed(futuros):
+            login = futuros[fut]
+            try:
+                dfs[login] = fut.result()
+            except Exception as e:
+                print(f"  ❌ [{login.upper()}] {e}")
+
+    logins_ok = set(dfs)
+    falhadas  = [c["login"] for c in CONTAS if c["login"] not in logins_ok]
+    parcial   = bool(falhadas)
 
     if not dfs:
-        print("❌ Nenhum arquivo baixado. Abortando.")
-        exit(1)
+        print("❌ Nenhum arquivo baixado. Base preservada (nada gravado).")
+        registrar_status("falha", 0, [], [c["login"] for c in CONTAS], "nenhum download")
+        sys.exit(1)
 
     # ── ETAPA 3: Concat + Upload ──────────────────────────────
     # Falha parcial = qualquer conta de CONTAS que não rendeu df (inclusive as que
-    # nem chegaram a solicitar relatório na etapa 1 — era esse o buraco antigo:
-    # o check só olhava contas_ok, então perder uma conta no login passava batido).
-    falhadas = [c["login"].upper() for c in CONTAS if c["login"] not in logins_ok]
-    parcial  = bool(falhadas)
-
-    df_final = pd.concat(dfs, ignore_index=True)
+    # nem chegaram a solicitar relatório na etapa 1). O `preservar_existentes` mantém
+    # as linhas das contas que faltaram, em vez de truncar a base (incidente 19/jul).
+    df_final = pd.concat(list(dfs.values()), ignore_index=True)
     print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(CONTAS)} contas)")
     if parcial:
-        print(f"⚠️ RODADA PARCIAL — contas sem dados: {', '.join(falhadas)}")
+        print(f"⚠️ RODADA PARCIAL — contas sem dados: {', '.join(l.upper() for l in falhadas)}")
     subir_para_sheets(df_final, preservar_existentes=parcial)
+
+    registrar_status(
+        "parcial" if parcial else "ok",
+        len(df_final), sorted(logins_ok), falhadas,
+        "" if not parcial else f"faltaram {len(falhadas)} de {len(CONTAS)} contas",
+    )
 
     print("\n🎉 DadosRadar atualizado!")
     print("=" * 55)
 
-    # Marca o run como falha para a rodada parcial ficar visível no Actions
+    # Marca o run como falha para a rodada parcial ficar visível no Actions (+ e-mail nativo do GitHub)
     if parcial:
-        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(CONTAS)} contas falharam: {', '.join(falhadas)}")
+        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(CONTAS)} contas falharam: {', '.join(l.upper() for l in falhadas)}")
         sys.exit(1)
 
 
