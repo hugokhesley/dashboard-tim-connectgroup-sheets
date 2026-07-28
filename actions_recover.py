@@ -11,223 +11,103 @@
 
   Use quando você já sabe que os relatórios foram gerados
   (ex: solicitou manual e quer só consolidar).
+
+  ⚠️ Este script COMPARTILHA login, download e gravação com o
+  actions_runner.py de propósito. Antes ele tinha cópias próprias e
+  desatualizadas: em 25/jul/2026 o runner já preservava as linhas das
+  contas que falhavam, mas o recover ainda fazia clear()+update cego e
+  TRUNCOU a base de 2006 → 565 linhas quando a conta T3729525 emperrou
+  no login. Não recriar essas funções aqui — importar.
 =====================================================================
 """
 
 import os
-import io
 import sys
 import time
-import unicodedata
-import requests
-import pandas as pd
-import gspread
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from google.oauth2.service_account import Credentials
-from securid.sdtid import SdtidFile
 
-# ─────────────────────────────────────────────────────────────────
-#  ⚙️  CONFIGURAÇÕES
-# ─────────────────────────────────────────────────────────────────
+import pandas as pd
 
-SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
+from actions_runner import (
+    CONTAS,
+    PAGINAS_MAX,
+    URL_FILA,
+    _assinatura_pagina,
+    baixar_via_cookies,
+    criar_driver,
+    esta_pronto,
+    fazer_login,          # verifica a URL final e faz retry com token novo
+    registrar_status,     # heartbeat lido pelo n8n
+    subir_para_sheets,    # sabe preservar as linhas das contas que faltaram
+)
 
-ABA_DESTINO = "DadosRadar"
-
-URL_RADAR = "https://radar.timbrasil.com.br/"
-URL_FILA  = "https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp"
-
-PALAVRAS_PRONTO = ("concluido", "concluida", "pronto", "disponivel", "finalizado", "ok")
-
-CONTAS = [
-    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
-    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
-    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
-]
-
-
-# ─────────────────────────────────────────────────────────────────
-#  MONKEY-PATCH RSA (ignora MAC check)
-# ─────────────────────────────────────────────────────────────────
-
-def _verify_mac_ignorar(self, *args, **kwargs):
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
     pass
-SdtidFile.verify_mac = _verify_mac_ignorar
-
-
-def gerar_token(sdtid_path: str, pin: int = 1234) -> str:
-    token_obj = SdtidFile(sdtid_path).get_token()
-    token_obj.pin = pin
-    return token_obj.now()
-
-
-def _normalizar(texto: str) -> str:
-    nfd = unicodedata.normalize("NFD", texto or "")
-    return "".join(c for c in nfd if unicodedata.category(c) != "Mn").lower()
-
-
-def esta_pronto(texto_linha: str) -> bool:
-    n = _normalizar(texto_linha)
-    return any(p in n for p in PALAVRAS_PRONTO)
-
-
-# ─────────────────────────────────────────────────────────────────
-#  SELENIUM — driver
-# ─────────────────────────────────────────────────────────────────
-
-def criar_driver():
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
-
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-
-    import shutil
-    chromedriver = shutil.which("chromedriver")
-    chrome = shutil.which("google-chrome") or shutil.which("chromium-browser") or shutil.which("chromium")
-    if chrome:
-        options.binary_location = chrome
-
-    if chromedriver:
-        return webdriver.Chrome(service=Service(chromedriver), options=options)
-    else:
-        from webdriver_manager.chrome import ChromeDriverManager
-        return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-
-# ─────────────────────────────────────────────────────────────────
-#  SELENIUM — login RSA
-# ─────────────────────────────────────────────────────────────────
-
-def fazer_login(driver, login, sdtid_path):
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-
-    token = gerar_token(sdtid_path)
-    print(f"  🔐 Token gerado para {login.upper()}")
-
-    try:
-        driver.delete_all_cookies()
-    except Exception:
-        pass
-
-    driver.get(URL_RADAR)
-    time.sleep(5)
-
-    try:
-        campo = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "identifierInput")))
-        campo.clear()
-        campo.send_keys(login)
-        btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
-        driver.execute_script("arguments[0].click()", btn)
-        time.sleep(4)
-    except Exception as e:
-        raise RuntimeError(f"Login falhou para {login.upper()}: campo de username não interagível ({e})")
-
-    try:
-        WebDriverWait(driver, 20).until(lambda d: "iam-pf" in d.current_url)
-        time.sleep(3)
-    except Exception:
-        pass
-
-    campo_token = WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "password")))
-    campo_token.send_keys(token)
-    time.sleep(1)
-    btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
-    driver.execute_script("arguments[0].click()", btn)
-    time.sleep(15)
-
-    # Se ficou preso em resume/as/auth, força reload (acontece com algumas contas)
-    url = (driver.current_url or "").lower()
-    if "resume/as/auth" in url or "iam-pf" in url:
-        print(f"  🔄 [{login.upper()}] Sessão SmartID presa em {url[:60]} — recarregando")
-        for tentativa in range(3):
-            try:
-                driver.get("https://radar.timbrasil.com.br/radar-blue/sistema/start.asp")
-                time.sleep(8)
-                url = (driver.current_url or "").lower()
-                if "radar-blue" in url and "iam-pf" not in url:
-                    break
-                print(f"     tentativa {tentativa+1}: ainda em {url[:60]}")
-            except Exception as e:
-                print(f"     erro reload: {e}")
-                time.sleep(3)
-
-    print(f"  ✅ Login OK — {driver.current_url[:60]}")
-
-    try:
-        fechar = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.XPATH, "//*[contains(@class,'close') or contains(@aria-label,'lose')]"))
-        )
-        driver.execute_script("arguments[0].click()", fechar)
-        time.sleep(1)
-    except Exception:
-        pass
 
 
 # ─────────────────────────────────────────────────────────────────
 #  BAIXAR RELATÓRIO MAIS RECENTE DA FILA
 # ─────────────────────────────────────────────────────────────────
 
-def baixar_via_cookies(driver, link):
-    cookies = driver.get_cookies()
-    sessao  = requests.Session()
-    for c in cookies:
-        sessao.cookies.set(c["name"], c["value"])
-    resp    = sessao.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=120)
-    content = resp.content
-    try:
-        df = pd.read_excel(io.BytesIO(content), engine="openpyxl", header=0)
-    except Exception:
-        df = pd.read_excel(io.BytesIO(content), engine="xlrd", header=0)
-    return df
-
-
-def pegar_relatorio_mais_recente(driver, login: str):
+def _melhor_pronto_na_pagina(driver):
+    """(id, link) do maior ID PRONTO com link de download na página atual."""
     from selenium.webdriver.common.by import By
 
-    driver.get(URL_FILA)
-    time.sleep(5)
-
-    linhas = driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]")
-    print(f"  📊 Linhas 'Após 01/05/2009' encontradas: {len(linhas)}")
-
-    melhor_id = -1
-    melhor_link = None
-
-    for linha in linhas:
+    melhor_id, melhor_link = -1, None
+    for linha in driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]"):
         try:
-            texto = linha.text or ""
-            if not esta_pronto(texto):
+            if not esta_pronto(linha.text or ""):
                 continue
-
-            celulas = linha.find_elements(By.XPATH, ".//td")
             id_rel = None
-            for cel in celulas:
+            for cel in linha.find_elements(By.XPATH, ".//td"):
                 t = (cel.text or "").strip()
                 if t.isdigit():
                     id_rel = int(t)
                     break
-            if id_rel is None:
+            if id_rel is None or id_rel <= melhor_id:
                 continue
-
             try:
                 link_el = linha.find_element(By.XPATH, ".//a[contains(@href,'report-queue-download')]")
-                link = link_el.get_attribute("href")
             except Exception:
                 continue
-
-            if id_rel > melhor_id:
-                melhor_id = id_rel
-                melhor_link = link
+            melhor_id, melhor_link = id_rel, link_el.get_attribute("href")
         except Exception:
             continue
+    return melhor_id, melhor_link
+
+
+def pegar_relatorio_mais_recente(driver, login: str):
+    driver.get(URL_FILA)
+    time.sleep(5)
+
+    melhor_id, melhor_link = _melhor_pronto_na_pagina(driver)
+    print(f"  📊 [{login.upper()}] página 1 — melhor pronto: {melhor_id if melhor_id > 0 else 'nenhum'}")
+
+    # Fila cheia empurra o relatório pronto para as páginas seguintes (foi o que
+    # aconteceu no runner em 27/jul, com 16 relatórios na fila).
+    if melhor_id < 0:
+        vistas = {_assinatura_pagina(driver)}
+        for param in ("pag", "pagina", "p", "page"):
+            for n in range(2, PAGINAS_MAX + 1):
+                try:
+                    driver.get(f"{URL_FILA}?{param}={n}")
+                    time.sleep(2)
+                    assinatura = _assinatura_pagina(driver)
+                    if not assinatura or assinatura in vistas:
+                        break
+                    vistas.add(assinatura)
+                    id_pag, link_pag = _melhor_pronto_na_pagina(driver)
+                    if id_pag > melhor_id:
+                        melhor_id, melhor_link = id_pag, link_pag
+                        print(f"  📊 [{login.upper()}] achado na ?{param}={n}: ID {melhor_id}")
+                except Exception:
+                    break
+            if melhor_id > 0:
+                break
 
     if melhor_id < 0 or not melhor_link:
         print(f"  ⚠️ Nenhum relatório PRONTO encontrado para {login.upper()}")
@@ -239,34 +119,20 @@ def pegar_relatorio_mais_recente(driver, login: str):
     return df
 
 
-def processar_conta(login, sdtid_path):
+def processar_conta(conta):
+    """Baixa o relatório pronto de UMA conta. Devolve (login, df) ou levanta."""
+    login, sdtid = conta["login"], conta["sdtid"]
+    if not os.path.exists(sdtid):
+        raise RuntimeError(f"SDTID não encontrado: {sdtid}")
     driver = criar_driver()
     try:
-        fazer_login(driver, login, sdtid_path)
-        return pegar_relatorio_mais_recente(driver, login)
+        fazer_login(driver, login, sdtid)
+        df = pegar_relatorio_mais_recente(driver, login)
+        if df is None or df.empty:
+            raise RuntimeError("nenhum relatório pronto na fila")
+        return login, df
     finally:
         driver.quit()
-
-
-# ─────────────────────────────────────────────────────────────────
-#  SHEETS
-# ─────────────────────────────────────────────────────────────────
-
-def subir_para_sheets(df):
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
-    gc = gspread.authorize(creds)
-    planilha = gc.open_by_key(SPREADSHEET_ID)
-    try:
-        aba = planilha.worksheet(ABA_DESTINO)
-    except gspread.WorksheetNotFound:
-        aba = planilha.add_worksheet(title=ABA_DESTINO, rows=1, cols=1)
-    aba.clear()
-    df = df.fillna("")
-    dados = [df.columns.tolist()] + df.values.tolist()
-    dados = [[str(v) for v in linha] for linha in dados]
-    aba.update(dados, value_input_option="USER_ENTERED")
-    print(f"  ✅ {len(df)} linhas gravadas em '{ABA_DESTINO}'!")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -279,54 +145,54 @@ def main():
     print(f"  Início: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     print("=" * 55)
 
-    dfs = []
-    logins_ok = []
-    logins_fail = []
+    dfs = {}
+    with ThreadPoolExecutor(max_workers=len(CONTAS)) as ex:
+        futuros = {ex.submit(processar_conta, c): c["login"] for c in CONTAS}
+        for fut in as_completed(futuros):
+            login = futuros[fut]
+            try:
+                _, df = fut.result()
+                dfs[login] = df
+            except Exception as e:
+                print(f"  ❌ [{login.upper()}] {e}")
 
-    for conta in CONTAS:
-        login = conta["login"]
-        sdtid = conta["sdtid"]
-
-        print(f"\n🌐 Processando {login.upper()}...")
-
-        if not os.path.exists(sdtid):
-            print(f"  ⚠️ SDTID não encontrado: {sdtid} — pulando")
-            logins_fail.append(login)
-            continue
-
-        try:
-            df = processar_conta(login, sdtid)
-            if df is not None and not df.empty:
-                dfs.append(df)
-                logins_ok.append(login)
-            else:
-                logins_fail.append(login)
-        except Exception as e:
-            print(f"  ❌ Erro em {login.upper()}: {e}")
-            logins_fail.append(login)
+    logins_ok = sorted(dfs)
+    falhadas  = [c["login"] for c in CONTAS if c["login"] not in dfs]
+    parcial   = bool(falhadas)
 
     print(f"\n{'=' * 55}")
-    print(f"  Resumo:")
     print(f"  ✅ OK:    {len(logins_ok)}/{len(CONTAS)} — {', '.join(l.upper() for l in logins_ok)}")
-    if logins_fail:
-        print(f"  ❌ Falha: {len(logins_fail)}/{len(CONTAS)} — {', '.join(l.upper() for l in logins_fail)}")
+    if falhadas:
+        print(f"  ❌ Falha: {len(falhadas)}/{len(CONTAS)} — {', '.join(l.upper() for l in falhadas)}")
     print(f"{'=' * 55}")
 
     if not dfs:
-        print("\n❌ Nenhum relatório baixado. Abortando.")
+        print("\n❌ Nenhum relatório baixado. Base preservada (nada gravado).")
+        registrar_status("falha", 0, [], [c["login"] for c in CONTAS], "recover: nenhum download")
         sys.exit(1)
 
-    df_final = pd.concat(dfs, ignore_index=True)
-    print(f"\n📋 Total consolidado: {len(df_final)} linhas")
-    subir_para_sheets(df_final)
+    df_final = pd.concat(list(dfs.values()), ignore_index=True)
+    print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(CONTAS)} contas)")
+    if parcial:
+        print(f"⚠️ RODADA PARCIAL — contas sem dados: {', '.join(l.upper() for l in falhadas)}")
 
-    print(f"\n🎉 DadosRadar atualizado com sucesso!")
+    # preservar_existentes: mantém as linhas das contas que faltaram em vez de
+    # truncar a base (incidente 25/jul, 2006 → 565 linhas).
+    subir_para_sheets(df_final, preservar_existentes=parcial)
+
+    registrar_status(
+        "parcial" if parcial else "ok",
+        len(df_final), logins_ok, falhadas,
+        "recover" if not parcial else f"recover: faltaram {len(falhadas)} de {len(CONTAS)} contas",
+    )
+
+    print("\n🎉 DadosRadar atualizado!")
     print("=" * 55)
 
-    if logins_fail:
-        print(f"\n⚠️ ATENÇÃO: {len(logins_fail)} conta(s) falharam mas dados foram atualizados.")
-        # Não marca como erro se pelo menos 1 conta funcionou
-        sys.exit(0)
+    if parcial:
+        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(CONTAS)} conta(s) falharam: "
+              f"{', '.join(l.upper() for l in falhadas)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
