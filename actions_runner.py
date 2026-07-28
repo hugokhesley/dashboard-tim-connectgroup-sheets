@@ -3,11 +3,13 @@
   ACTIONS RUNNER — Roda no GitHub Actions
 =====================================================================
   Fluxo 100% via Radar (sem IMAP/email):
-  1. Login RSA + solicitar relatório para as 3 contas EM PARALELO (lista2.asp).
-  2. Poll das contas EM PARALELO (1 driver cada) em report-queue.asp a cada 60s
-     até achar a linha "Após 01/05/2009" pronta.
+  1. Login RSA (verificado pela URL final, com retry de token) + solicitar
+     relatório para as 3 contas EM PARALELO (lista2.asp).
+  2. Poll das contas EM PARALELO (1 driver cada) em report-queue.asp a cada 60s,
+     DESDE O INÍCIO (sem espera cega), varrendo as páginas da fila até achar a
+     linha "Após 01/05/2009" pronta.
      - Relogin RSA automático se a sessão cair durante o poll.
-     - Timeout 90 min por conta + DEADLINE GLOBAL de 160 min: ao bater, para de
+     - Timeout 145 min por conta + DEADLINE GLOBAL de 160 min: ao bater, para de
        esperar e grava o que já baixou (nunca mais "cancelado = zero gravado").
   3. Download via cookies do Selenium.
   4. Concat + upload para a aba DadosRadar (preserva contas que faltaram).
@@ -46,7 +48,11 @@ SPREADSHEET_ID = os.environ["SPREADSHEET_ID"]
 ABA_DESTINO       = "DadosRadar"
 ABA_STATUS        = "RadarRunStatus"   # heartbeat lido pelo n8n p/ avisar base velha/parcial no sino
 INTERVALO_POLL    = 60          # segundos entre cada checagem
-TIMEOUT_POLL_MIN  = 90          # timeout por conta (as contas rodam em PARALELO)
+# Timeout por conta (as contas rodam em PARALELO). Era 90 min quando ainda havia
+# espera cega antes do 1º poll; agora o poll começa na hora e o limite real é o
+# deadline global — 145 dá folga para o relatório lento da T3729525 (a maior
+# conta) sem nunca passar dos 160.
+TIMEOUT_POLL_MIN  = 145
 
 # Deadline global de wall-clock. O job do Actions morre em 180 min (timeout-minutes).
 # Antes: 3 contas em SÉRIE × 90 min = até 270 min → estourava os 180 e o job era
@@ -58,6 +64,16 @@ GLOBAL_DEADLINE_MIN = 160
 URL_RADAR         = "https://radar.timbrasil.com.br/"
 URL_LISTA         = "https://radar.timbrasil.com.br/radar-tim/relatorios/lista2.asp"
 URL_FILA          = "https://radar.timbrasil.com.br/radar-blue/sistema/report-queue.asp"
+URL_START         = "https://radar.timbrasil.com.br/radar-blue/sistema/start.asp"
+
+# Login só conta como OK se a URL final estiver DENTRO do Radar (ver _login_confirmado).
+URLS_RADAR_OK     = ("radar-blue", "radar-tim")
+ESPERA_POS_LOGIN_S = 60         # quanto esperar o resume do OAuth2 do SmartID concluir
+
+# Quantas páginas da fila varrer procurando o ID. Antes só a página 2 era olhada:
+# em 27/jul/2026 a fila da TIM estava com 16 relatórios, o alvo caiu na página 3+
+# e o poll reportou "sumiu" até o deadline, com 2 de 3 contas perdidas.
+PAGINAS_MAX       = 8
 
 # Palavras que indicam relatório pronto (comparadas sem acento e em minúsculo)
 PALAVRAS_PRONTO   = ("concluido", "concluida", "pronto", "disponivel", "finalizado", "ok")
@@ -77,6 +93,10 @@ CONTAS = [
 # Cache de links de download já vistos prontos, por login. Sobrevive entre polls
 # para o caso de o ID sair da view padrão (paginação/separação pendente vs concluído).
 links_capturados: dict = {}
+
+# Nome do parâmetro de paginação que a fila do Radar honra, por login (descoberto
+# no 1º poll que precisou paginar). Evita testar 4 nomes a cada checagem.
+paginacao_param: dict = {}
 
 # ─────────────────────────────────────────────────────────────────
 #  MONKEY-PATCH RSA
@@ -156,12 +176,84 @@ def criar_driver():
 #  SELENIUM — login RSA
 # ─────────────────────────────────────────────────────────────────
 
-def fazer_login(driver, login, sdtid_path):
+def _token_diferente(sdtid_path, token_anterior=None, espera_max_s=75):
+    """Gera um token RSA garantindo que NÃO é o mesmo da tentativa anterior.
+
+    O SecurID troca de código a cada 60s e o servidor rejeita reuso do mesmo
+    código — repetir o login imediatamente com o token velho falharia de novo
+    sem motivo. Espera a janela virar (no máx. ~75s)."""
+    token = gerar_token(sdtid_path)
+    if token_anterior and token == token_anterior:
+        fim = time.time() + espera_max_s
+        while token == token_anterior and time.time() < fim:
+            time.sleep(5)
+            token = gerar_token(sdtid_path)
+    return token
+
+
+def _login_confirmado(driver, timeout_s=ESPERA_POS_LOGIN_S) -> bool:
+    """Só considera logado quem chegou de fato no Radar.
+
+    O resume do OAuth2 do SmartID (iam-pf) às vezes emperra — a conta T3729525
+    é a mais propensa. Antes o script imprimia '✅ Login OK' INCONDICIONALMENTE
+    e seguia com uma sessão morta: a conta 'falhava' silenciosamente e, no
+    recover, a base era truncada. Agora a URL é a prova."""
+    fim = time.time() + timeout_s
+    ultima = ""
+    while time.time() < fim:
+        ultima = (driver.current_url or "").lower()
+        if any(t in ultima for t in URLS_RADAR_OK):
+            return True
+        # Empurra o resume: às vezes basta pedir a home do Radar de novo.
+        try:
+            driver.get(URL_START)
+        except Exception:
+            pass
+        time.sleep(4)
+    print(f"     ↳ login não saiu do provedor de identidade (URL: {ultima[:70]})")
+    return False
+
+
+def fazer_login(driver, login, sdtid_path, tentativas=2):
+    """Login RSA com verificação real + retry com token novo."""
+    ultimo_erro = None
+    token_usado = None
+    for tentativa in range(1, tentativas + 1):
+        try:
+            # Token gerado AQUI (e não lá dentro) para que uma tentativa que
+            # exploda no meio não faça a seguinte reusar o mesmo código RSA.
+            token_usado = _token_diferente(sdtid_path, token_usado)
+            _fazer_login_uma_vez(driver, login, token_usado)
+            if _login_confirmado(driver):
+                print(f"  ✅ Login OK — {driver.current_url[:60]}")
+                _fechar_popup(driver)
+                return
+            ultimo_erro = "sessão não chegou no radar-blue"
+        except Exception as e:
+            ultimo_erro = str(e)
+        print(f"  ⚠️ [{login.upper()}] login tentativa {tentativa}/{tentativas} falhou: {ultimo_erro}")
+    raise RuntimeError(f"Login falhou para {login.upper()}: {ultimo_erro}")
+
+
+def _fechar_popup(driver):
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    try:
+        fechar = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, "//*[contains(@class,'close') or contains(@aria-label,'lose')]"))
+        )
+        driver.execute_script("arguments[0].click()", fechar)
+        time.sleep(1)
+    except Exception:
+        pass
+
+
+def _fazer_login_uma_vez(driver, login, token):
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
-    token = gerar_token(sdtid_path)
     print(f"  🔐 Token gerado para {login.upper()}")
 
     # Garante que um relogin parte de um estado limpo (cookies/sessão antiga zerados)
@@ -198,17 +290,7 @@ def fazer_login(driver, login, sdtid_path):
     btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "signOnButton")))
     driver.execute_script("arguments[0].click()", btn)
     time.sleep(8)
-    print(f"  ✅ Login OK — {driver.current_url[:60]}")
-
-    # Fecha popup se aparecer
-    try:
-        fechar = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.XPATH, "//*[contains(@class,'close') or contains(@aria-label,'lose')]"))
-        )
-        driver.execute_script("arguments[0].click()", fechar)
-        time.sleep(1)
-    except Exception:
-        pass
+    # Quem declara sucesso é o `_login_confirmado` (URL do Radar), não este passo.
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -336,6 +418,28 @@ def _buscar_na_pagina_atual(driver, id_alvo: int):
     return None, None
 
 
+def _assinatura_pagina(driver):
+    """Conjunto de IDs de relatório visíveis na página atual.
+
+    Serve só para saber se a paginação avançou de verdade: se a assinatura
+    repetir, o ASP ignorou o parâmetro (ou a lista acabou)."""
+    from selenium.webdriver.common.by import By
+    ids = set()
+    try:
+        for linha in driver.find_elements(By.XPATH, "//tr[contains(., 'Após 01/05/2009')]"):
+            try:
+                for cel in linha.find_elements(By.XPATH, ".//td"):
+                    t = (cel.text or "").strip()
+                    if t.isdigit():
+                        ids.add(t)
+                        break
+            except Exception:
+                continue
+    except Exception:
+        return frozenset()
+    return frozenset(ids)
+
+
 def encontrar_relatorio_alvo(driver, id_alvo: int, login: str):
     """Localiza a linha do id_alvo em camadas, para tolerar paginação ou
     separação visual entre pendente e concluído.
@@ -356,35 +460,55 @@ def encontrar_relatorio_alvo(driver, id_alvo: int, login: str):
             links_capturados[login] = link
         return texto, link, "padrao"
 
-    # (2) variações de paginação via query string
-    for param in ("pag", "pagina", "p", "page"):
-        try:
-            driver.get(f"{URL_FILA}?{param}=2")
-            time.sleep(2)
-            if sessao_caiu(driver):
-                return None, None, None
-            texto, link = _buscar_na_pagina_atual(driver, id_alvo)
-            if texto is not None:
-                estrategia = f"?{param}=2"
-                if link:
-                    links_capturados[login] = link
-                return texto, link, estrategia
-        except Exception:
-            continue
+    # (2) paginação via query string — varre da página 2 até PAGINAS_MAX.
+    #     A assinatura (conjunto de IDs da página) diz se o parâmetro foi honrado:
+    #     se a página repetir, o parâmetro é ignorado por esse ASP e passamos ao
+    #     próximo nome. Isso evita o falso "sumiu" quando a fila tem 3+ páginas.
+    vistas = {_assinatura_pagina(driver)}
+    params = ("pag", "pagina", "p", "page")
+    preferido = paginacao_param.get(login)
+    if preferido:   # já descobrimos qual nome esse ASP honra — não redescobrir a cada poll
+        params = (preferido,) + tuple(p for p in params if p != preferido)
+    for param in params:
+        for n in range(2, PAGINAS_MAX + 1):
+            try:
+                driver.get(f"{URL_FILA}?{param}={n}")
+                time.sleep(2)
+                if sessao_caiu(driver):
+                    return None, None, None
+                assinatura = _assinatura_pagina(driver)
+                if not assinatura or assinatura in vistas:
+                    break   # página vazia, repetida ou parâmetro ignorado
+                vistas.add(assinatura)
+                paginacao_param[login] = param
+                texto, link = _buscar_na_pagina_atual(driver, id_alvo)
+                if texto is not None:
+                    if link:
+                        links_capturados[login] = link
+                    return texto, link, f"?{param}={n}"
+            except Exception:
+                break
 
-    # (3) tenta clicar em link "Próxima/Próximo/Next/»"
+    # (3) navegação por link "Próxima/Próximo/Next/»", clicando página a página
     try:
         driver.get(URL_FILA)
         time.sleep(2)
-        if sessao_caiu(driver):
-            return None, None, None
-        proximo_xpath = "//a[contains(text(),'Próxima') or contains(text(),'Próximo') or contains(text(),'Next') or contains(text(),'»')]"
-        proximos = driver.find_elements(By.XPATH, proximo_xpath)
-        if proximos:
+        proximo_xpath = ("//a[contains(text(),'Próxima') or contains(text(),'Próximo') "
+                         "or contains(text(),'Next') or contains(text(),'»')]")
+        for _ in range(PAGINAS_MAX):
+            if sessao_caiu(driver):
+                return None, None, None
+            proximos = driver.find_elements(By.XPATH, proximo_xpath)
+            if not proximos:
+                break
             driver.execute_script("arguments[0].click()", proximos[0])
             time.sleep(2)
             if sessao_caiu(driver):
                 return None, None, None
+            assinatura = _assinatura_pagina(driver)
+            if not assinatura or assinatura in vistas:
+                break
+            vistas.add(assinatura)
             texto, link = _buscar_na_pagina_atual(driver, id_alvo)
             if texto is not None:
                 if link:
@@ -415,28 +539,12 @@ def monitorar_e_baixar(login, sdtid_path, id_alvo, posicao=1, timeout_min=TIMEOU
     try:
         fazer_login(driver, login, sdtid_path)
 
-        espera_inicial_min = max(0, (posicao - 1) * 7)
-        # Nunca gastar a espera inicial além do deadline global (deixa 5 min de folga
-        # p/ ao menos uma tentativa de poll e o download).
-        if deadline_ts is not None:
-            budget_min = int((deadline_ts - time.time()) / 60) - 5
-            espera_inicial_min = max(0, min(espera_inicial_min, budget_min))
-        if espera_inicial_min > 0:
-            print(f"  ⏱  [{login.upper()}] Posição {posicao}, aguardando {espera_inicial_min} min antes do primeiro poll")
-            restante = espera_inicial_min
-            while restante > 0:
-                chunk = min(4, restante)
-                time.sleep(chunk * 60)
-                restante -= chunk
-                decorrido = espera_inicial_min - restante
-                if restante > 0:
-                    try:
-                        driver.get(URL_FILA)
-                    except Exception:
-                        pass
-                    print(f"  ⏱  [{login.upper()}] keep-alive durante espera inicial ({decorrido}/{espera_inicial_min} min)")
-        else:
-            print(f"  ⏱  [{login.upper()}] Posição {posicao}, sem espera inicial")
+        # Sem espera cega antes do 1º poll. O código antigo dormia 7 min × posição
+        # na fila (em 27/jul: 91, 98 e 105 min!) fazendo keep-alive na MESMA página
+        # que o poll consulta — ou seja, gastava a janela inteira ignorando a
+        # resposta que já tinha em mãos: a conta que esperou 105 min achou o
+        # relatório em "0 min, tent #1". Poll de 60s é barato; começa agora.
+        print(f"  ⏱  [{login.upper()}] Posição {posicao} na fila — polling desde já (sem espera cega)")
 
         inicio = time.time()
         fim_conta = inicio + timeout_min * 60
