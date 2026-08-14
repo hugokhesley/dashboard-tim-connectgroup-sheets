@@ -110,13 +110,22 @@ Implementadas em `apply_filters()` (`data_loader.py`):
 
 ## 🤖 Automações (GitHub Actions)
 
-| Workflow | Script | O que faz |
-|----------|--------|-----------|
-| `atualizar_dados_radar.yml` | `actions_runner.py` | baixa a base do Radar → aba `DadosRadar` |
-| `recover_dadosradar.yml` | `actions_recover.py` | reprocessa quando o run principal falha |
-| `connectvoice_sync.yml` | `connectvoice_sync.py` | puxa ligações do ConnectVoice → aba `Discador` |
-| `quicktim_status.yml` | `quicktim_status.py` | consulta status no QuickTIM → aba `StatusQuickTIM` |
-| `notify_pendentes.yml` | `notify_pendentes.py` | avisa pedidos sem vendedor atribuído |
+| Workflow | Script | Quando | O que faz |
+|----------|--------|--------|-----------|
+| `atualizar_dados_radar.yml` | `actions_runner.py` | 07h, 11h, 15h BRT | baixa a base do Radar → aba `DadosRadar` |
+| `recover_dadosradar.yml` | `actions_recover.py` | manual | reprocessa quando o run principal falha |
+| `connectvoice_sync.yml` | `connectvoice_sync.py` | de 2 em 2h | puxa ligações do ConnectVoice → aba `Discador` |
+| `quicktim_status.yml` | `quicktim_status.py` | 10h, 14h, 17h BRT | consulta status no QuickTIM → aba `StatusQuickTIM` |
+| `notify_pendentes.yml` | `notify_pendentes.py` | após a base + 10h30, 14h30, 18h30 (dias úteis) | avisa pedidos sem vendedor atribuído |
+
+**Parcial de vendas 3x/dia.** A rodada do Radar leva ~25 min na mediana, e o
+Actions atrasa job agendado em ~45 min — então a base fica pronta por volta de
+**07h45, 11h45 e 15h45 BRT**. O dashboard tem cache de 3 min, então reflete
+sozinho logo depois.
+
+> `atualizar_dados_radar` e `recover_dadosradar` dividem a trava
+> `concurrency: dados-radar`. Os dois dão `aba.clear()` antes de gravar, então
+> rodar em paralelo truncaria a base. Se um estiver no ar, o outro espera.
 
 Esses scripts usam Selenium + Chromium e instalam suas dependências no próprio
 workflow. Por isso **não** entram no `requirements.txt` do app: o Streamlit Cloud

@@ -2,7 +2,23 @@ name: Atualizar DadosRadar
 on:
   workflow_dispatch:
   schedule:
+    # 3 parciais por dia. A rodada tipica leva ~25 min (mediana de 25 execucoes;
+    # os ~150 min sao as falhas batendo no GLOBAL_DEADLINE_MIN, nao o caso normal).
+    # O Actions atrasa job agendado em ~45 min, entao na pratica a base fica
+    # pronta por volta de 07:45, 11:45 e 15:45 BRT.
     - cron: '0 10 * * *'   # 07:00 BRT
+    - cron: '0 14 * * *'   # 11:00 BRT
+    - cron: '0 18 * * *'   # 15:00 BRT
+
+# Duas rodadas ao mesmo tempo se atropelam: o runner da aba.clear() antes do
+# update, entao um overlap deixaria a base truncada ou misturada. Com 3 rodadas
+# por dia a janela de colisao triplica (uma rodada ruim chega a 160 min).
+# cancel-in-progress: false = a nova ESPERA a anterior terminar, em vez de matar
+# uma rodada de 2h que ainda ia gravar a parcial dela no deadline.
+# O mesmo grupo vale para o Recuperar DadosRadar, que grava na mesma aba.
+concurrency:
+  group: dados-radar
+  cancel-in-progress: false
 
 jobs:
   atualizar:

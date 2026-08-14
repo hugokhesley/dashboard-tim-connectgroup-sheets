@@ -13,6 +13,12 @@ jobs:
   notificar:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # O gatilho workflow_run e "completed", que inclui FALHA. Avisar o lider em
+    # cima de uma base que nao atualizou e pior que nao avisar. Roda so quando a
+    # rodada deu certo; schedule e disparo manual seguem normais.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4

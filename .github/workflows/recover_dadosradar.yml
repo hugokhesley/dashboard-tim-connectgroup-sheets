@@ -11,6 +11,12 @@ name: Recuperar DadosRadar
 on:
   workflow_dispatch:
 
+# Mesmo grupo do "Atualizar DadosRadar": os dois gravam na aba DadosRadar e nao
+# podem rodar juntos. Se a rodada normal estiver no ar, o recover espera.
+concurrency:
+  group: dados-radar
+  cancel-in-progress: false
+
 jobs:
   recuperar:
     runs-on: ubuntu-latest
