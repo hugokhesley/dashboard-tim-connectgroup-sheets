@@ -43,17 +43,28 @@ requirements-actions.txt  dependências das automações (não instaladas no app
 
 ## 🗂️ Abas da planilha
 
-`load_data()` concatena **todas as abas de safra** (uma por mês, ex: `MAR/2026`).
-As abas operacionais abaixo têm loader próprio e são puladas — a lista está em
-`ABAS_NAO_BASE`, em `data_loader.py`:
+`load_data()` concatena **todas as abas exceto `metas`** e deixa o `apply_filters`
+descartar o que não é venda (ele exige `tipo de contratação`). A base em si vem
+principalmente de:
 
 | Aba | Para que serve |
 |-----|----------------|
-| `metas` | metas de acessos/receita por mês |
+| `DadosRadar` | **a base de vendas** — dump do Radar gravado pela automação |
+| abas de safra | eventuais abas por mês (ex: `MAR/2026`) |
+
+> ⚠️ **Não saia excluindo aba de `ABAS_NAO_BASE`.** `DadosRadar` já foi tratado
+> como "aba operacional" uma vez e o dashboard inteiro apareceu vazio em
+> produção. Só exclua aba que comprovadamente não tem as colunas de venda.
+
+As abas abaixo entram na concatenação mas são descartadas pelo filtro, e têm
+loader próprio para o uso específico delas:
+
+| Aba | Para que serve |
+|-----|----------------|
+| `metas` | metas de acessos/receita por mês (única realmente pulada) |
 | `Colaboradores` | vendedores ativos, líder, TBP e meta individual |
 | `BKO-VENDEDOR-REAL` | de-para pedido → vendedor real |
 | `deParaDiscador` / `DePara` | normalização de nome de vendedor |
-| `DadosRadar` | base bruta gerada pela automação do Radar |
 | `RadarRunStatus` | heartbeat da automação (consumido pelo n8n) |
 | `StatusQuickTIM` | saída da automação QuickTIM |
 | `Discador` | saída do sync ConnectVoice |
@@ -63,13 +74,13 @@ As abas operacionais abaixo têm loader próprio e são puladas — a lista est�
 | `resultados` | consolidado da página Resultados |
 | `Logs` | registro de acesso por página |
 
-**Criou uma aba operacional nova?** Acrescente no secrets para ela não entrar na
-base de vendas:
+Se alguma dessas ficar grande a ponto de pesar na carga, dá para pular pelos
+secrets, sem mexer no código:
 
 ```toml
 [sheets]
 url = "https://docs.google.com/spreadsheets/d/SEU_ID/edit"
-ignorar_abas = ["MinhaAbaNova"]
+ignorar_abas = ["Logs", "CarteiraContatos"]
 ```
 
 ### Colunas esperadas nas abas de safra

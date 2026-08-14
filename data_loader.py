@@ -122,22 +122,20 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-# Abas operacionais/auxiliares da planilha principal. Nao fazem parte da base de
-# vendas — cada uma tem seu proprio loader. load_data() concatena todas as OUTRAS
-# abas (uma por safra/mes), entao precisa pular estas explicitamente.
-ABAS_NAO_BASE = {
-    'metas', 'colaboradores', 'bko-vendedor-real', 'deparadiscador', 'depara',
-    'logs', 'resultados', 'parceiros', 'comissoes', 'dadosradar',
-    'radarrunstatus', 'statusquicktim', 'discador', 'carteiraatendimento',
-    'carteiracontatos', 'base_safras_qualidade',
-}
+# Abas que NAO entram na base de vendas.
+#
+# Cuidado ao mexer aqui: a base vem de 'DadosRadar' (dump do Radar gerado pela
+# automacao) e de eventuais abas de safra. O que nao presta como base ja cai fora
+# em apply_filters, que exige 'tipo de contratacao' — entao so vale excluir aba
+# que comprovadamente nao tem essas colunas. Excluir demais esvazia o dashboard.
+ABAS_NAO_BASE = {'metas'}
 
 
 def _abas_ignoradas() -> set:
-    """Abas nao-base, com possibilidade de acrescentar via secrets:
+    """Abas fora da base, acrescentaveis via secrets sem mexer no codigo:
 
         [sheets]
-        ignorar_abas = ["MinhaAbaNova"]
+        ignorar_abas = ["Logs", "CarteiraContatos"]
     """
     extras = set()
     try:

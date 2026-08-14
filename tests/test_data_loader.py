@@ -155,19 +155,46 @@ def _rodar_load_data(monkey_planilha):
         D.st.secrets = {}
 
 
-def test_load_data_pula_abas_operacionais():
+def test_load_data_inclui_dadosradar():
+    """DadosRadar E a base de vendas — nunca pode ficar de fora.
+
+    Ja quebrou uma vez: DadosRadar entrou numa lista de 'abas operacionais' e o
+    dashboard inteiro apareceu vazio em producao.
+    """
     planilha = _PlanilhaFalsa({
-        "MAR/2026":   [["parceiro", "acessos"], ["Alfa", "10"]],
-        "ABR/2026":   [["parceiro", "acessos"], ["Beta", "20"]],
-        "Logs":       [["timestamp", "pagina"], ["x", "y"]],
-        "DadosRadar": [["pedido"], ["123"]],
+        "DadosRadar": [["parceiro", "acessos"], ["Alfa", "10"]],
         "metas":      [["mes"], ["03/2026"]],
-        "Colaboradores": [["vendedor"], ["Fulano"]],
     })
     df = _rodar_load_data(planilha)
-    assert sorted(df["_aba"].unique().tolist()) == ["ABR/2026", "MAR/2026"]
-    assert len(df) == 2
+    assert "DadosRadar" in df["_aba"].tolist()
+    assert len(df) == 1
+
+
+def test_load_data_pula_apenas_metas():
+    planilha = _PlanilhaFalsa({
+        "DadosRadar": [["parceiro", "acessos"], ["Alfa", "10"]],
+        "MAR/2026":   [["parceiro", "acessos"], ["Beta", "20"]],
+        "metas":      [["mes"], ["03/2026"]],
+    })
+    df = _rodar_load_data(planilha)
+    assert sorted(df["_aba"].unique().tolist()) == ["DadosRadar", "MAR/2026"]
     assert planilha.chamadas_batch == 1, "deve ler tudo numa unica chamada"
+
+
+def test_load_data_respeita_ignorar_abas_dos_secrets():
+    planilha = _PlanilhaFalsa({
+        "DadosRadar": [["parceiro", "acessos"], ["Alfa", "10"]],
+        "Logs":       [["timestamp", "pagina"], ["x", "y"]],
+    })
+    D.st.secrets = {"sheets": {"url": "http://fake", "ignorar_abas": ["Logs"]}}
+    original = D.get_gspread_client
+    D.get_gspread_client = lambda: types.SimpleNamespace(open_by_url=lambda _u: planilha)
+    try:
+        df = D.load_data()
+    finally:
+        D.get_gspread_client = original
+        D.st.secrets = {}
+    assert df["_aba"].unique().tolist() == ["DadosRadar"]
 
 
 def test_load_data_repoe_celulas_cortadas_no_fim():
@@ -220,11 +247,11 @@ def test_load_data_cai_no_sequencial_se_batch_falhar():
 
     D.time.sleep = lambda _s: None      # nao esperar de verdade no teste
     planilha = _PlanilhaSemBatch({
-        "MAR/2026": [["parceiro", "acessos"], ["Alfa", "10"]],
-        "Logs":     [["timestamp"], ["x"]],
+        "DadosRadar": [["parceiro", "acessos"], ["Alfa", "10"]],
+        "metas":      [["mes"], ["03/2026"]],
     })
     df = _rodar_load_data(planilha)
-    assert df["_aba"].unique().tolist() == ["MAR/2026"]
+    assert df["_aba"].unique().tolist() == ["DadosRadar"]
 
 
 if __name__ == "__main__":
