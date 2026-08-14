@@ -25,7 +25,7 @@ import unicodedata
 import requests
 import pandas as pd
 import gspread
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
@@ -84,11 +84,28 @@ PALAVRAS_PENDENTE = ("pendente", "processando", "fila", "aguardando", "executand
 # Termos na URL que indicam que a sessão caiu e a página voltou pro login
 TERMOS_LOGIN_URL  = ("iam-pf", "signon", "login", "authn")
 
+# "dias": em que dias da semana a conta roda (0=segunda ... 6=domingo).
+# None/ausente = todo dia. Conta fora de escala NAO e falha: as linhas dela ficam
+# preservadas na aba (ver `preservar` no main), entao o dado do ultimo dia em que
+# ela rodou continua valendo ate a proxima vez.
 CONTAS = [
-    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
-    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
-    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
+    {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid", "dias": None},
+    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid", "dias": None},
+    {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid", "dias": None},
 ]
+
+
+def contas_do_dia(agora_utc=None):
+    """Contas em escala para hoje, pelo dia da semana em Brasilia (UTC-3).
+
+    O Actions roda em UTC: as 22h de domingo em Brasilia ja e segunda em UTC, e
+    uma conta "so na segunda" rodaria no dia errado se olhassemos o relogio do
+    runner. Recebe o instante em UTC para o teste conseguir fixar a data.
+    """
+    if agora_utc is None:
+        agora_utc = datetime.now(timezone.utc)
+    dia = (agora_utc - timedelta(hours=3)).weekday()
+    return [c for c in CONTAS if not c.get("dias") or dia in c["dias"]]
 
 # Cache de links de download já vistos prontos, por login. Sobrevive entre polls
 # para o caso de o ID sair da view padrão (paginação/separação pendente vs concluído).
@@ -744,11 +761,17 @@ def main():
     data_inicio, data_fim = calcular_datas()
     print(f"📅 Período: {data_inicio} → {data_fim}")
 
-    # ── ETAPA 1: Solicitar relatórios (as 3 contas EM PARALELO) ─
-    print(f"\n🌐 Solicitando relatórios das {len(CONTAS)} contas em paralelo...")
+    contas = contas_do_dia()
+    fora_de_escala = [c["login"] for c in CONTAS if c not in contas]
+    if fora_de_escala:
+        print(f"📆 Fora de escala hoje: {', '.join(l.upper() for l in fora_de_escala)} "
+              f"— as linhas delas ficam preservadas na aba")
+
+    # ── ETAPA 1: Solicitar relatórios (contas do dia EM PARALELO) ─
+    print(f"\n🌐 Solicitando relatórios das {len(contas)} contas em paralelo...")
     solicitacoes = {}   # login -> (id_alvo, posicao)
-    with ThreadPoolExecutor(max_workers=len(CONTAS)) as ex:
-        futuros = {ex.submit(_solicitar_conta, c, data_inicio, data_fim): c for c in CONTAS}
+    with ThreadPoolExecutor(max_workers=len(contas)) as ex:
+        futuros = {ex.submit(_solicitar_conta, c, data_inicio, data_fim): c for c in contas}
         for fut in as_completed(futuros):
             conta = futuros[fut]
             try:
@@ -759,7 +782,7 @@ def main():
 
     if not solicitacoes:
         print("❌ Nenhum relatório solicitado. Base preservada (nada gravado).")
-        registrar_status("falha", 0, [], [c["login"] for c in CONTAS], "nenhuma solicitação OK")
+        registrar_status("falha", 0, [], [c["login"] for c in contas], "nenhuma solicitação OK")
         sys.exit(1)
 
     print(f"\n✅ Solicitações OK: {', '.join(l.upper() for l in solicitacoes)}")
@@ -770,7 +793,7 @@ def main():
     with ThreadPoolExecutor(max_workers=len(solicitacoes)) as ex:
         futuros = {}
         for login, (id_alvo, pos) in solicitacoes.items():
-            conta = next(c for c in CONTAS if c["login"] == login)
+            conta = next(c for c in contas if c["login"] == login)
             print(f"  🔄 Monitorando {login.upper()} (ID {id_alvo}, posição {pos})...")
             futuros[ex.submit(monitorar_e_baixar, login, conta["sdtid"], id_alvo, pos, TIMEOUT_POLL_MIN, deadline_ts)] = login
         for fut in as_completed(futuros):
@@ -781,28 +804,39 @@ def main():
                 print(f"  ❌ [{login.upper()}] {e}")
 
     logins_ok = set(dfs)
-    falhadas  = [c["login"] for c in CONTAS if c["login"] not in logins_ok]
+    # Falha = conta que ESTAVA em escala hoje e mesmo assim não rendeu df.
+    # Conta fora de escala não é falha — não pode pintar o run de vermelho todo
+    # dia nem bloquear o notify_pendentes.
+    falhadas  = [c["login"] for c in contas if c["login"] not in logins_ok]
     parcial   = bool(falhadas)
 
     if not dfs:
         print("❌ Nenhum arquivo baixado. Base preservada (nada gravado).")
-        registrar_status("falha", 0, [], [c["login"] for c in CONTAS], "nenhum download")
+        registrar_status("falha", 0, [], [c["login"] for c in contas], "nenhum download")
         sys.exit(1)
 
     # ── ETAPA 3: Concat + Upload ──────────────────────────────
-    # Falha parcial = qualquer conta de CONTAS que não rendeu df (inclusive as que
-    # nem chegaram a solicitar relatório na etapa 1). O `preservar_existentes` mantém
-    # as linhas das contas que faltaram, em vez de truncar a base (incidente 19/jul).
+    # Preservar é mais amplo que "deu falha": vale para QUALQUER conta cujas linhas
+    # não vieram nesta rodada — falhou OU está fora de escala. Sem isso, a rodada
+    # de terça daria aba.clear() e apagaria o que a conta de segunda trouxe.
+    preservar = bool(falhadas) or bool(fora_de_escala)
     df_final = pd.concat(list(dfs.values()), ignore_index=True)
-    print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(CONTAS)} contas)")
+    print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(contas)} contas do dia)")
     if parcial:
         print(f"⚠️ RODADA PARCIAL — contas sem dados: {', '.join(l.upper() for l in falhadas)}")
-    subir_para_sheets(df_final, preservar_existentes=parcial)
+    if preservar:
+        print("🛟 Gravando em modo preservar — linhas das contas ausentes ficam na aba")
+    subir_para_sheets(df_final, preservar_existentes=preservar)
 
+    if parcial:
+        detalhe = f"faltaram {len(falhadas)} de {len(contas)} contas do dia"
+    elif fora_de_escala:
+        detalhe = f"fora de escala: {', '.join(fora_de_escala)}"
+    else:
+        detalhe = ""
     registrar_status(
         "parcial" if parcial else "ok",
-        len(df_final), sorted(logins_ok), falhadas,
-        "" if not parcial else f"faltaram {len(falhadas)} de {len(CONTAS)} contas",
+        len(df_final), sorted(logins_ok), falhadas, detalhe,
     )
 
     print("\n🎉 DadosRadar atualizado!")
@@ -810,7 +844,7 @@ def main():
 
     # Marca o run como falha para a rodada parcial ficar visível no Actions (+ e-mail nativo do GitHub)
     if parcial:
-        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(CONTAS)} contas falharam: {', '.join(l.upper() for l in falhadas)}")
+        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(contas)} contas falharam: {', '.join(l.upper() for l in falhadas)}")
         sys.exit(1)
 
 

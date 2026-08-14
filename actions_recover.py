@@ -31,6 +31,7 @@ import pandas as pd
 
 from actions_runner import (
     CONTAS,
+    contas_do_dia,        # respeita conta que só roda em certos dias
     PAGINAS_MAX,
     URL_FILA,
     _assinatura_pagina,
@@ -145,9 +146,15 @@ def main():
     print(f"  Início: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     print("=" * 55)
 
+    contas = contas_do_dia()
+    fora_de_escala = [c["login"] for c in CONTAS if c not in contas]
+    if fora_de_escala:
+        print(f"📆 Fora de escala hoje: {', '.join(l.upper() for l in fora_de_escala)} "
+              f"— as linhas delas ficam preservadas na aba")
+
     dfs = {}
-    with ThreadPoolExecutor(max_workers=len(CONTAS)) as ex:
-        futuros = {ex.submit(processar_conta, c): c["login"] for c in CONTAS}
+    with ThreadPoolExecutor(max_workers=len(contas)) as ex:
+        futuros = {ex.submit(processar_conta, c): c["login"] for c in contas}
         for fut in as_completed(futuros):
             login = futuros[fut]
             try:
@@ -157,40 +164,49 @@ def main():
                 print(f"  ❌ [{login.upper()}] {e}")
 
     logins_ok = sorted(dfs)
-    falhadas  = [c["login"] for c in CONTAS if c["login"] not in dfs]
+    falhadas  = [c["login"] for c in contas if c["login"] not in dfs]
     parcial   = bool(falhadas)
 
     print(f"\n{'=' * 55}")
-    print(f"  ✅ OK:    {len(logins_ok)}/{len(CONTAS)} — {', '.join(l.upper() for l in logins_ok)}")
+    print(f"  ✅ OK:    {len(logins_ok)}/{len(contas)} — {', '.join(l.upper() for l in logins_ok)}")
     if falhadas:
-        print(f"  ❌ Falha: {len(falhadas)}/{len(CONTAS)} — {', '.join(l.upper() for l in falhadas)}")
+        print(f"  ❌ Falha: {len(falhadas)}/{len(contas)} — {', '.join(l.upper() for l in falhadas)}")
     print(f"{'=' * 55}")
 
     if not dfs:
         print("\n❌ Nenhum relatório baixado. Base preservada (nada gravado).")
-        registrar_status("falha", 0, [], [c["login"] for c in CONTAS], "recover: nenhum download")
+        registrar_status("falha", 0, [], [c["login"] for c in contas], "recover: nenhum download")
         sys.exit(1)
 
     df_final = pd.concat(list(dfs.values()), ignore_index=True)
-    print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(CONTAS)} contas)")
+    print(f"\n📋 Total consolidado: {len(df_final)} linhas ({len(logins_ok)}/{len(contas)} contas do dia)")
     if parcial:
         print(f"⚠️ RODADA PARCIAL — contas sem dados: {', '.join(l.upper() for l in falhadas)}")
 
     # preservar_existentes: mantém as linhas das contas que faltaram em vez de
-    # truncar a base (incidente 25/jul, 2006 → 565 linhas).
-    subir_para_sheets(df_final, preservar_existentes=parcial)
+    # truncar a base (incidente 25/jul, 2006 → 565 linhas). Vale também para
+    # conta fora de escala, que não é falha mas também não trouxe linha nenhuma.
+    preservar = bool(falhadas) or bool(fora_de_escala)
+    if preservar:
+        print("🛟 Gravando em modo preservar — linhas das contas ausentes ficam na aba")
+    subir_para_sheets(df_final, preservar_existentes=preservar)
 
+    if parcial:
+        detalhe = f"recover: faltaram {len(falhadas)} de {len(contas)} contas do dia"
+    elif fora_de_escala:
+        detalhe = f"recover — fora de escala: {', '.join(fora_de_escala)}"
+    else:
+        detalhe = "recover"
     registrar_status(
         "parcial" if parcial else "ok",
-        len(df_final), logins_ok, falhadas,
-        "recover" if not parcial else f"recover: faltaram {len(falhadas)} de {len(CONTAS)} contas",
+        len(df_final), logins_ok, falhadas, detalhe,
     )
 
     print("\n🎉 DadosRadar atualizado!")
     print("=" * 55)
 
     if parcial:
-        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(CONTAS)} conta(s) falharam: "
+        print(f"\n⚠️ ATENÇÃO: {len(falhadas)} de {len(contas)} conta(s) falharam: "
               f"{', '.join(l.upper() for l in falhadas)}")
         sys.exit(1)
 
