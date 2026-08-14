@@ -17,6 +17,7 @@
 """
 
 import streamlit as st
+from ui import aplicar_estilo_base
 import pandas as pd
 import io
 from datetime import datetime
@@ -37,6 +38,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+aplicar_estilo_base()
+
 MESES_PT = {
     "01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril",
     "05":"Maio","06":"Junho","07":"Julho","08":"Agosto",
@@ -55,9 +58,6 @@ st.markdown("<style>[data-testid='stSidebarNav'] { display: none; }</style>", un
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-gestao {
     background: linear-gradient(135deg, #0d2b1a 0%, #14532d 40%, #15803d 70%, #22c55e 100%);
     border-radius: 16px; padding: 24px 32px; margin-bottom: 24px;
@@ -116,9 +116,15 @@ def _carregar_auth():
                 "name":     info.get("name", user),
                 "password": info.get("password", ""),
             }
+        # A chave assina o cookie de sessao — tem que vir dos secrets. Fixa no
+        # codigo (repo publico) qualquer um consegue forjar um cookie valido.
         return {
             "credentials": {"usernames": usernames},
-            "cookie":      {"name": "gestao_cookie", "key": "gestao_secret_key", "expiry_days": 1},
+            "cookie": {
+                "name":        "gestao_cookie",
+                "key":         st.secrets["auth"]["cookie_key"],
+                "expiry_days": 1,
+            },
         }
     except Exception as e:
         st.error(f"Erro ao carregar credenciais: {e}")

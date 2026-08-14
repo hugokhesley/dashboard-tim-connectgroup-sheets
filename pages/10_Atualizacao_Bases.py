@@ -13,6 +13,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from auth import require_login
+from ui import aplicar_estilo_base
 from data_loader import registrar_acesso, get_gspread_client
 
 # ─────────────────────────────────────────────
@@ -24,13 +25,11 @@ st.set_page_config(
 )
 
 username = require_login("atualizacao_bases")
+aplicar_estilo_base()
 registrar_acesso("Atualização de Bases", username=username)
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-res {
     background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

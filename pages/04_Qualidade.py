@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 from datetime import date as _date
 from data_loader import _s, _to_num, _soma_valor, _normalize, _dedup_columns, get_gspread_client, registrar_acesso
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Qualidade",
@@ -16,13 +17,11 @@ st.set_page_config(
 )
 
 username = require_login("qualidade")
+aplicar_estilo_base()
 registrar_acesso("qualidade", username=username)
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-qual {
     background: linear-gradient(135deg, #1a0533 0%, #4a1272 50%, #7c3aed 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

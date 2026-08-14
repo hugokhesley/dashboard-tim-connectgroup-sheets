@@ -13,6 +13,7 @@ from data_loader import (
     registrar_acesso
 )
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Tramitação Consolidada",
@@ -22,15 +23,13 @@ st.set_page_config(
 )
 
 username = require_login("consolidada")
+aplicar_estilo_base()
 registrar_acesso("consolidada", username=username)
 
 MES_ALVO = datetime.now().strftime("%m/%Y")
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-cons {
     background: linear-gradient(135deg, #064e3b 0%, #047857 50%, #10b981 100%);
     border-radius: 16px; padding: 24px 32px; margin-bottom: 24px;

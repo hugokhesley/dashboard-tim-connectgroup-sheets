@@ -7,4 +7,5 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Entrypoint do Streamlit Cloud: so encaminha para a pagina inicial.
 st.switch_page("pages/01_Tramitacao_Atual.py")

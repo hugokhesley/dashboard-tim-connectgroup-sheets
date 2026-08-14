@@ -1,0 +1,14 @@
+# Dependencias dos scripts de automacao rodados pelo GitHub Actions
+# (actions_runner.py, actions_recover.py, connectvoice_sync.py,
+#  quicktim_status.py, notify_pendentes.py).
+#
+# Ficam separadas do requirements.txt de proposito: selenium + chromium pesam
+# uns 150 MB e so fariam o app do Streamlit Cloud demorar mais para subir.
+pandas>=2.0.0
+openpyxl>=3.1.0
+gspread>=6.0.0
+google-auth>=2.28.0
+requests>=2.31.0
+securid
+selenium==4.11.2
+webdriver-manager>=4.0.0

@@ -5,6 +5,7 @@ import unicodedata
 import re
 from data_loader import get_gspread_client, _s, _to_num, _normalize, _norm_pedido, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Resultados",
@@ -14,13 +15,11 @@ st.set_page_config(
 )
 
 username = require_login("resultados")
+aplicar_estilo_base()
 registrar_acesso("resultados", username=username)
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-res {
     background: linear-gradient(135deg, #1e1b4b 0%, #3730a3 50%, #6366f1 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

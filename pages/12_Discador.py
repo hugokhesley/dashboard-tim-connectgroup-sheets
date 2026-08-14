@@ -11,6 +11,7 @@ from datetime import datetime, date, timedelta
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from auth import require_login
+from ui import aplicar_estilo_base
 from data_loader import registrar_acesso, get_gspread_client, load_colaboradores
 
 st.set_page_config(
@@ -21,6 +22,7 @@ st.set_page_config(
 )
 
 username = require_login("discador")
+aplicar_estilo_base()
 registrar_acesso("Discador", username=username)
 
 # ─────────────────────────────────────────────────────────────────
@@ -166,9 +168,6 @@ def load_discador():
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-disc {
     background: linear-gradient(135deg, #0c1a2e 0%, #1e3a5f 50%, #2563eb 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

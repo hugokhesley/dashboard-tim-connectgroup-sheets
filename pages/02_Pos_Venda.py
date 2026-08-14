@@ -13,6 +13,7 @@ from data_loader import (
     registrar_acesso
 )
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Pós Venda",
@@ -22,6 +23,7 @@ st.set_page_config(
 )
 
 username = require_login("pos_venda")
+aplicar_estilo_base()
 registrar_acesso("pos_venda", username=username)
 
 MES_ATUAL = datetime.now().strftime("%m/%Y")
@@ -29,9 +31,6 @@ META_RENEG = 751
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-reneg {
     background: linear-gradient(135deg, #064e3b 0%, #065f46 40%, #059669 70%, #10b981 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

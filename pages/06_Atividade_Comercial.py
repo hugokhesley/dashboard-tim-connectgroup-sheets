@@ -13,6 +13,7 @@ from data_loader import (
     registrar_acesso
 )
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Atividade Comercial",
@@ -22,6 +23,7 @@ st.set_page_config(
 )
 
 username = require_login("atividade")
+aplicar_estilo_base()
 registrar_acesso("atividade", username=username)
 
 # ── Temas ────────────────────────────────────────────────────────────────────
@@ -67,8 +69,6 @@ TEMAS = {
 def _aplicar_tema(t: dict):
     st.markdown(f"""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
   .stApp {{ background-color: {t['app_bg']}; color: {t['app_color']}; }}
   .header-atv {{
     background: linear-gradient(135deg, #1e1b4b 0%, #3730a3 50%, #6366f1 100%);

@@ -13,6 +13,7 @@ from data_loader import (
     registrar_acesso, get_gspread_client
 )
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Performance",
@@ -22,6 +23,7 @@ st.set_page_config(
 )
 
 username = require_login("performance")
+aplicar_estilo_base()
 registrar_acesso("performance", username=username)
 
 MES_ALVO          = datetime.now().strftime("%m/%Y")
@@ -138,10 +140,10 @@ def resumo_discador_por_lider(df_disc, colab):
     return resultado
 
 # ── Telegram ──────────────────────────────────────────────────────
-# Token do bot e chat_ids dos líderes
-# Configurar nos secrets do Streamlit:
+# Token do bot e chat_ids dos lideres ficam SEMPRE nos secrets do Streamlit
+# (este repositorio e publico — token no codigo vaza para qualquer um):
 # [telegram]
-# token = "7776803920:AAE4ZYll8iakct7pIRGfszVgeF659kPywy0"
+# token = "..."
 # [telegram.lideres]
 # "Nome Lider" = "chat_id"
 
@@ -149,7 +151,7 @@ def _telegram_token():
     try:
         return st.secrets["telegram"]["token"]
     except Exception:
-        return "7776803920:AAE4ZYll8iakct7pIRGfszVgeF659kPywy0"
+        return ""
 
 def _telegram_lideres():
     """Retorna dict {nome_lider: chat_id} dos secrets."""
@@ -163,6 +165,8 @@ def enviar_telegram(chat_id: str, mensagem: str) -> bool:
     import requests as _req
     try:
         token = _telegram_token()
+        if not token:
+            return False   # sem token nos secrets, nao ha o que enviar
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         resp = _req.post(url, json={
             "chat_id": chat_id,
@@ -176,9 +180,6 @@ def enviar_telegram(chat_id: str, mensagem: str) -> bool:
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-perf {
     background: linear-gradient(135deg, #0d2b1a 0%, #14532d 40%, #15803d 70%, #22c55e 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

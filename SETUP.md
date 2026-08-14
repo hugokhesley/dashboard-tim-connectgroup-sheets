@@ -3,15 +3,20 @@
 ## Estrutura de arquivos
 ```
 /
-├── app.py
-├── data_loader.py
-├── pages/
-│   └── 01_Renegociação.py
-├── requirements.txt
+├── app.py                  ← entrypoint (só redireciona p/ a página inicial)
+├── auth.py                 ← login e permissão por página
+├── data_loader.py          ← leitura da planilha e regras de negócio
+├── ui.py                   ← estilo base compartilhado
+├── pages/                  ← 14 páginas do dashboard
+├── requirements.txt        ← dependências do app
+├── requirements-actions.txt← dependências das automações (GitHub Actions)
 ├── .streamlit/
 │   └── secrets.toml       ← NÃO suba este arquivo para o GitHub!
 └── README.md
 ```
+
+> Este guia cobre o **PASSO A PASSO de setup inicial**. Para entender como o
+> projeto está organizado hoje, veja o `README.md`.
 
 ---
 

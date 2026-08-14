@@ -17,6 +17,7 @@
 """
 
 import streamlit as st
+from ui import aplicar_estilo_base
 import pandas as pd
 import requests
 import re
@@ -37,6 +38,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+aplicar_estilo_base()
+
 SPREADSHEET_ID  = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 ABA_CARTEIRA    = "CarteiraAtendimento"
 DIAS_EXPIRACAO  = 60
@@ -53,9 +56,6 @@ st.markdown("<style>[data-testid='stSidebarNav'] { display: none; }</style>", un
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
 
   /* inputs */
   input[type="text"], input[type="password"], textarea,
@@ -183,9 +183,15 @@ def _carregar_auth():
                 "name":     info.get("name", user),
                 "password": info.get("password", ""),
             }
+        # A chave assina o cookie de sessao — tem que vir dos secrets. Fixa no
+        # codigo (repo publico) qualquer um consegue forjar um cookie valido.
         return {
             "credentials": {"usernames": usernames},
-            "cookie": {"name": "carteira_cookie", "key": "gestao_secret_key", "expiry_days": 1},
+            "cookie": {
+                "name":        "carteira_cookie",
+                "key":         st.secrets["auth"]["cookie_key"],
+                "expiry_days": 1,
+            },
         }
     except Exception as e:
         st.error(f"Erro ao carregar credenciais: {e}")
@@ -401,10 +407,10 @@ def buscar_cnpj(cnpj: str) -> dict:
 # ─────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _load_colab_carteira(_gc):
+def _load_colab_carteira():
     """Carrega aba Colaboradores e retorna listas únicas de vendedor, lider e TBP."""
     try:
-        df = load_colaboradores(_gc)
+        df = load_colaboradores()
         if df.empty:
             return [], [], []
         # Detecta colunas por nome normalizado
@@ -1000,7 +1006,7 @@ def main():
         df_raw     = _load_carteira(gc)
         df_carteira = _atualizar_expirados(gc, df_raw.copy())
         try:
-            result_colab = _load_colab_carteira(gc)
+            result_colab = _load_colab_carteira()
             if len(result_colab) == 5:
                 vendedores, lideres, tbps, mapa_lider, mapa_tbp = result_colab
             else:

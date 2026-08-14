@@ -13,6 +13,7 @@ from data_loader import (load_metas,
     registrar_acesso
 )
 from auth import require_login
+from ui import aplicar_estilo_base
 
 st.set_page_config(
     page_title="Connect Group | Tramitação Atual",
@@ -22,15 +23,13 @@ st.set_page_config(
 )
 
 username = require_login("tramitacao")
+aplicar_estilo_base()
 registrar_acesso("tramitacao", username=username)
 
 MES_ATUAL = datetime.now().strftime("%m/%Y")
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header-vendas {
     background: linear-gradient(135deg, #0a2463 0%, #1e3a8a 40%, #1d4ed8 70%, #3b82f6 100%);
     border-radius: 16px; padding: 28px 36px; margin-bottom: 28px;

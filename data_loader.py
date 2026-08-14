@@ -122,33 +122,94 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
+# Abas operacionais/auxiliares da planilha principal. Nao fazem parte da base de
+# vendas — cada uma tem seu proprio loader. load_data() concatena todas as OUTRAS
+# abas (uma por safra/mes), entao precisa pular estas explicitamente.
+ABAS_NAO_BASE = {
+    'metas', 'colaboradores', 'bko-vendedor-real', 'deparadiscador', 'depara',
+    'logs', 'resultados', 'parceiros', 'comissoes', 'dadosradar',
+    'radarrunstatus', 'statusquicktim', 'discador', 'carteiraatendimento',
+    'carteiracontatos', 'base_safras_qualidade',
+}
+
+
+def _abas_ignoradas() -> set:
+    """Abas nao-base, com possibilidade de acrescentar via secrets:
+
+        [sheets]
+        ignorar_abas = ["MinhaAbaNova"]
+    """
+    extras = set()
+    try:
+        for nome in st.secrets['sheets'].get('ignorar_abas', []):
+            extras.add(_s(nome).lower())
+    except Exception:
+        pass
+    return ABAS_NAO_BASE | extras
+
+
+def _quote_range(titulo: str) -> str:
+    """Titulo de aba como range A1 valido: aspas simples, escapando as internas."""
+    return "'" + _s(titulo).replace("'", "''") + "'"
+
+
+def _valores_das_abas(spreadsheet, titulos: list) -> dict:
+    """Le varias abas de uma vez (1 chamada HTTP) e retorna {titulo: linhas}.
+
+    Cai no modo sequencial se o batch falhar, para nunca deixar o dashboard sem dado.
+    """
+    if not titulos:
+        return {}
+    try:
+        resp = spreadsheet.values_batch_get([_quote_range(t) for t in titulos])
+        faixas = resp.get('valueRanges', [])
+        if len(faixas) == len(titulos):
+            # A API devolve as faixas na mesma ordem em que foram pedidas.
+            return {t: faixas[i].get('values', []) for i, t in enumerate(titulos)}
+        st.warning('Leitura em lote devolveu faixas a menos — usando modo sequencial.')
+    except Exception as e:
+        st.warning(f'Leitura em lote indisponivel ({e}) — usando modo sequencial.')
+
+    valores = {}
+    for ws in spreadsheet.worksheets():
+        if ws.title in titulos:
+            try:
+                time.sleep(0.5)  # anti-throttling Sheets API
+                valores[ws.title] = ws.get_all_values()
+            except Exception as e:
+                st.warning(f'Aba ignorada: {e}')
+    return valores
+
+
 @st.cache_data(ttl=180)
 def load_data() -> pd.DataFrame:
     try:
         client = get_gspread_client()
         sheet_url = st.secrets['sheets']['url']
         spreadsheet = client.open_by_url(sheet_url)
-        IGNORE_TABS = {'metas'}
+        ignorar = _abas_ignoradas()
+        titulos = [ws.title for ws in spreadsheet.worksheets()
+                   if _s(ws.title).lower() not in ignorar]
+        dados = _valores_das_abas(spreadsheet, titulos)
+
         dfs = []
-        for worksheet in spreadsheet.worksheets():
-            if worksheet.title.strip().lower() in IGNORE_TABS:
+        for titulo in titulos:
+            all_values = dados.get(titulo) or []
+            if len(all_values) < 2:
                 continue
-            try:
-                time.sleep(0.5)  # anti-throttling Sheets API
-                all_values = worksheet.get_all_values()
-                if not all_values or len(all_values) < 2:
-                    continue
-                headers = all_values[0]
-                rows = all_values[1:]
-                df = pd.DataFrame(rows, columns=headers)
-                df = _dedup_columns(df)
-                df.columns = [_s(c).lower() for c in df.columns]
-                df = _dedup_columns(df)
-                df['_aba'] = worksheet.title
-                dfs.append(df)
-            except Exception as e:
-                st.warning(f'Aba ignorada: {e}')
-                continue
+            headers = all_values[0]
+            # values_batch_get corta celulas vazias no fim da linha; reindex
+            # depende de todas as linhas terem o mesmo comprimento do header.
+            largura = len(headers)
+            rows = [r + [''] * (largura - len(r)) if len(r) < largura else r[:largura]
+                    for r in all_values[1:]]
+            df = pd.DataFrame(rows, columns=headers)
+            df = _dedup_columns(df)
+            df.columns = [_s(c).lower() for c in df.columns]
+            df = _dedup_columns(df)
+            df['_aba'] = titulo
+            dfs.append(df)
+
         if not dfs:
             return pd.DataFrame()
         all_cols = list(dict.fromkeys(col for df in dfs for col in df.columns))
@@ -258,8 +319,25 @@ def _limpar_data(v):
     return s.split(" ")[0] if " " in s else s
 
 
+def _to_num_series(serie: pd.Series) -> pd.Series:
+    """Versão vetorizada de _to_num. Mesma semântica, sem percorrer linha a linha."""
+    t = serie.astype(str).str.strip()
+    t = t.str.replace(r'[Rr]\$', '', regex=True)
+    t = t.str.replace(' ', '', regex=False).str.replace(' ', '', regex=False)
+    # Separador de milhar BR ('1.234,56'): só descarta o ponto quando há vírgula junto.
+    tem_ambos = t.str.contains(',', regex=False) & t.str.contains('.', regex=False)
+    t = t.mask(tem_ambos, t.str.replace('.', '', regex=False))
+    t = t.str.replace(',', '.', regex=False)
+    return pd.to_numeric(t, errors='coerce').fillna(0.0)
+
+
+def _upper_series(serie: pd.Series) -> pd.Series:
+    return serie.astype(str).str.strip().str.upper()
+
+
 def parse_month(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series.apply(_limpar_data), dayfirst=True, errors='coerce')
+    sem_hora = series.astype(str).str.strip().str.split(' ').str[0]
+    parsed = pd.to_datetime(sem_hora, dayfirst=True, errors='coerce')
     return parsed.dt.strftime('%m/%Y')
 
 
@@ -269,24 +347,28 @@ def apply_filters(df: pd.DataFrame, mes_alvo: str, tipo_list: list, parceiro: st
     for col in ['tipo_contratacao', 'fila_atual', 'acessos', 'preco_oferta']:
         if col not in df.columns:
             df[col] = ''
-    df['acessos']      = df['acessos'].apply(_to_num)
-    df['preco_oferta'] = df['preco_oferta'].apply(_to_num)
+
+    # Filtra ANTES de converter: a base concatenada traz muita linha que não é do
+    # tipo alvo, e converter número/data nelas é trabalho jogado fora.
     tipos_alvo = [t.upper() for t in tipo_list]
-    df = df[df['tipo_contratacao'].apply(lambda x: _sup(x) in tipos_alvo)].copy()
+    df = df[_upper_series(df['tipo_contratacao']).isin(tipos_alvo)].copy()
     df = _dedup_columns(df)
-    df['fila_atual_upper'] = df['fila_atual'].apply(_sup)
+    df['fila_atual_upper'] = _upper_series(df['fila_atual'])
     df = df[df['fila_atual_upper'] != 'CANCELADO'].copy()
     df = _dedup_columns(df)
     if parceiro and parceiro != 'Todos':
-        df = df[df['parceiro'].apply(lambda x: _sup(x) == parceiro.upper())].copy()
+        df = df[_upper_series(df['parceiro']) == parceiro.upper()].copy()
         df = _dedup_columns(df)
+
+    df['acessos']      = _to_num_series(df['acessos'])
+    df['preco_oferta'] = _to_num_series(df['preco_oferta'])
     df['mes_ativacao'] = parse_month(df['data_ativacao']) if 'data_ativacao' in df.columns else pd.NA
     df['mes_input']    = parse_month(df['data_input'])    if 'data_input'    in df.columns else pd.NA
     mask_ativado  = df['mes_ativacao'] == mes_alvo
     mask_pipeline = df['mes_ativacao'].isna()
     df = df[mask_ativado | mask_pipeline].copy()
     df = _dedup_columns(df)
-    df['status_dash'] = df['fila_atual_upper'].apply(_lookup_status)
+    df['status_dash'] = df['fila_atual_upper'].map(_lookup_status)
     return df
 
 
@@ -477,7 +559,7 @@ def inserir_pendentes_bko(df_pendentes: pd.DataFrame, safra: str) -> tuple:
 def load_colaboradores() -> pd.DataFrame:
     """
     Carrega aba Colaboradores e retorna vendedores ATIVOS (com META preenchida).
-    Colunas retornadas: vendedor, lider, meta
+    Colunas retornadas: vendedor, lider, tbp, meta
     """
     try:
         client = get_gspread_client()
@@ -487,7 +569,7 @@ def load_colaboradores() -> pd.DataFrame:
         time.sleep(0.5)  # anti-throttling
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 3:
-            return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
+            return pd.DataFrame(columns=['vendedor', 'lider', 'tbp', 'meta'])
 
         # Header na linha 2 (índice 1)
         headers = all_values[1]
@@ -505,12 +587,22 @@ def load_colaboradores() -> pd.DataFrame:
             elif n == 'cargo':                       rename[col] = 'cargo'
         df = df.rename(columns=rename)
 
-        for c in ['vendedor', 'lider', 'meta', 'cargo']:
+        # TBP (escritório) pode vir com nomes diferentes na planilha. Usa o primeiro
+        # candidato que existir, em ordem de preferência, para não colidir quando
+        # há mais de um. Compara por nome normalizado (ignora caixa e acento).
+        for alt in ('tbp', 'escritorio', 'parceiro'):
+            origem = next((c for c in df.columns if _normalize(c) == alt), None)
+            if origem:
+                df['tbp'] = df[origem]
+                break
+
+        for c in ['vendedor', 'lider', 'tbp', 'meta', 'cargo']:
             if c not in df.columns:
                 df[c] = ''
 
         df['vendedor'] = df['vendedor'].apply(_s)
         df['lider']    = df['lider'].apply(_s)
+        df['tbp']      = df['tbp'].apply(_s)
         df['meta']     = df['meta'].apply(_to_num)
 
         # Apenas vendedores ativos (META > 0) e cargo VENDEDOR
@@ -520,11 +612,11 @@ def load_colaboradores() -> pd.DataFrame:
             (df['cargo'].apply(lambda x: _normalize(x) == 'vendedor'))
         ].reset_index(drop=True)
 
-        return df[['vendedor', 'lider', 'meta']]
+        return df[['vendedor', 'lider', 'tbp', 'meta']]
 
     except Exception as e:
         st.warning(f'Colaboradores não carregado: {e}')
-        return pd.DataFrame(columns=['vendedor', 'lider', 'meta'])
+        return pd.DataFrame(columns=['vendedor', 'lider', 'tbp', 'meta'])
 
 
 def registrar_acesso(pagina: str, username: str = "") -> None:

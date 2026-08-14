@@ -8,6 +8,7 @@
 """
 
 import streamlit as st
+from ui import aplicar_estilo_base
 import pandas as pd
 from datetime import datetime, timedelta
 from data_loader import load_colaboradores, get_gspread_client, _s, _norm_pedido
@@ -18,6 +19,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+aplicar_estilo_base()
+
 username = "lider"  # página pública — sem login
 
 SPREADSHEET_ID = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
@@ -25,9 +28,6 @@ ABA_BKO        = "BKO-VENDEDOR-REAL"
 
 st.markdown("""
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-  html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-  .stApp { background-color: #0f1117; color: #e2e8f0; }
   .header {
     background: linear-gradient(135deg, #064e3b, #059669);
     border-radius: 14px; padding: 22px 28px; margin-bottom: 24px;
