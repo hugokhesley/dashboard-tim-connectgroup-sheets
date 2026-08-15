@@ -11,13 +11,28 @@ Para o setup inicial (conta de serviço Google, secrets, primeiro deploy), veja
 ```
 app.py                    entrypoint do Streamlit Cloud — redireciona p/ Tramitação Atual
 auth.py                   login (streamlit-authenticator) + PAGE_ACCESS por página
-data_loader.py            leitura da planilha, normalização e regras de negócio
+data_loader.py            leitura da planilha e normalização
+regras.py                 comissão, metas e formatação — puro, sem I/O
+erros.py                  registro de falha visível (em vez de except silencioso)
 ui.py                     estilo base (fonte Inter + tema escuro) usado por todas as páginas
 pages/                    as 14 páginas do dashboard, na ordem do menu
 tests/                    testes que rodam sem credencial, com stubs
 requirements.txt          dependências do app
 requirements-actions.txt  dependências das automações (não instaladas no app)
 ```
+
+### Atingimento: percentual exibido ≠ largura da barra
+
+`regras.py` separa duas coisas que antes eram a mesma:
+
+- **`atingimento(realizado, meta)`** — sem teto. É o número que aparece no card,
+  na coluna de tabela e no ranking. Quem fez 145% da meta precisa aparecer como
+  145%, senão fica idêntico a quem bateu na trave.
+- **`largura_barra(realizado, meta)`** — preso entre 0 e 100, só para o
+  `width:` da barra de progresso, que não tem para onde crescer.
+
+Usar o capado no número exibido foi um bug real: até 14/08/2026 o dashboard
+mostrava 100% para todo mundo que superava a meta.
 
 ### Páginas
 
@@ -154,10 +169,23 @@ Precisa de um `.streamlit/secrets.toml` válido (gitignored).
 Rodam sem credencial nenhuma — as dependências pesadas são stubadas:
 
 ```bash
+python tests/test_regras.py         # comissão, metas e formatação (dinheiro)
 python tests/test_data_loader.py    # data_loader: conversões e montagem da base
+python tests/test_contas_escala.py  # Radar: conta que só roda em certos dias
 python tests/test_paginacao.py      # automação do Radar: varredura paginada
 python tests/test_recover.py        # automação do Radar: recover parcial
 ```
+
+## 🔎 Falha nunca é silenciosa
+
+Use `erros.registrar_falha(contexto, erro)` no lugar de `except Exception: pass`
+ou `return []`. Devolver vazio calado esconde o erro e a tela mostra um resultado
+que parece certo — foi assim que o dropdown de vendedor da Carteira ficou em
+branco por tempo indeterminado.
+
+O registro vai sempre para o log do servidor (**Manage app → Logs** no Streamlit
+Cloud) e, por padrão, também avisa na tela. Passe `avisar=False` no que não deve
+incomodar quem está usando (ex: gravação do log de acesso).
 
 ## 🔄 Atualizar os dados no dashboard
 

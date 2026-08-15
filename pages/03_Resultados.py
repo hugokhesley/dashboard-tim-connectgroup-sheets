@@ -6,6 +6,7 @@ import re
 from data_loader import get_gspread_client, _s, _to_num, _normalize, _norm_pedido, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import atingimento, largura_barra
 
 st.set_page_config(
     page_title="Connect Group | Resultados",
@@ -118,13 +119,14 @@ def normalize_resultados(df):
 
 
 def _prog(v, t, color):
-    pct = min(int(v / t * 100), 100) if t > 0 else 0
+    # O rótulo mostra o atingimento real (pode passar de 100%); a barra para em
+    # 100% porque não tem para onde crescer.
     return (
         '<div style="margin-top:10px">'
         '<div style="display:flex;justify-content:space-between;font-size:0.71rem;color:#64748b;margin-bottom:4px">'
-        f'<span>Atingimento</span><span>{pct}%</span></div>'
+        f'<span>Atingimento</span><span>{atingimento(v, t)}%</span></div>'
         '<div style="background:#2d3748;border-radius:99px;height:7px">'
-        f'<div style="width:{pct}%;background:{color};height:7px;border-radius:99px"></div>'
+        f'<div style="width:{largura_barra(v, t)}%;background:{color};height:7px;border-radius:99px"></div>'
         '</div></div>'
     )
 
@@ -142,7 +144,7 @@ def _cor(pct):
     return "#ef4444"
 
 def _bar(valor, maximo, cor="#22c55e", h=8):
-    pct = min(int(valor / maximo * 100), 100) if maximo > 0 else 0
+    pct = largura_barra(valor, maximo)   # largura de barra: sempre presa em 100
     return f'''<div class="rank-bar-bg"><div class="rank-bar-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'''
 
 def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
@@ -162,7 +164,7 @@ def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
     cols_rank = st.columns(2)
     for i, (_, r) in enumerate(rank_v.iterrows()):
         meta  = _meta_vend(r["vendedor_real"], meta_dict)
-        pct   = min(int(r["Receita"] / meta * 100), 100) if meta > 0 else 0
+        pct   = atingimento(r["Receita"], meta)
         cor   = _cor(pct)
         medal = ["🥇","🥈","🥉"][i] if i < 3 else f"{i+1}º"
 
@@ -203,7 +205,7 @@ def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
             rec    = dl["preco_oferta"].sum()
             ac     = int(dl["acessos"].sum())
             meta_e = sum(_meta_vend(v, meta_dict) for v in dl["vendedor_real"].unique())
-            pct_e  = min(int(rec / meta_e * 100), 100) if meta_e > 0 else 0
+            pct_e  = atingimento(rec, meta_e)
             rows.append({"lider": lider, "rec": rec, "ac": ac, "meta": meta_e, "pct": pct_e})
 
         rows = sorted(rows, key=lambda x: x["rec"], reverse=True)
@@ -223,7 +225,7 @@ def render_ranking_resultados(df_atv, mes_alvo, meta_dict, lideres):
             html_eq = ''
             for j, rv in rank_eq.iterrows():
                 meta_v = _meta_vend(rv["vendedor_real"], meta_dict)
-                pct_v  = min(int(rv["Receita"] / meta_v * 100), 100) if meta_v > 0 else 0
+                pct_v  = atingimento(rv["Receita"], meta_v)
                 cor_v  = _cor(pct_v)
                 html_eq += f'''<div class="rank-bar-wrap" style="margin-left:16px">
                   <div class="rank-name">
@@ -306,7 +308,7 @@ def gerar_pdf_resultados(df_atv, meta_dict, mes):
             ac_v   = int(df_v["acessos"].sum())
             rec_v  = df_v["preco_oferta"].sum()
             meta_v = _meta_vend(vend, meta_dict)
-            pct_v  = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            pct_v  = atingimento(rec_v, meta_v)
             cor_v  = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
 
             vr = Table([[Paragraph(f"    {vend}", sVend),
@@ -434,7 +436,7 @@ def gerar_excel_resultados(df_atv, meta_dict, mes):
             ac_v   = int(df_v["acessos"].sum())
             rec_v  = df_v["preco_oferta"].sum()
             meta_v = _meta_vend(vend, meta_dict)
-            pct_v  = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            pct_v  = atingimento(rec_v, meta_v)
             cor_v  = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
 
             ws.merge_cells(f"A{row}:C{row}")

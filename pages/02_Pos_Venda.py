@@ -14,6 +14,7 @@ from data_loader import (
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import atingimento, largura_barra
 
 st.set_page_config(
     page_title="Connect Group | Pós Venda",
@@ -84,10 +85,11 @@ def get_vendedores(df: pd.DataFrame) -> list:
     return ["Todos"]
 
 def progress_html(value, total, color="#10b981"):
-    pct = min(int(value / total * 100), 100) if total > 0 else 0
+    # O rótulo mostra o atingimento real (pode passar de 100%); a barra para em
+    # 100% porque não tem para onde crescer.
     return f"""<div class="progress-wrap">
-      <div class="progress-label"><span>Atingimento</span><span>{pct}%</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%;background:{color}"></div></div>
+      <div class="progress-label"><span>Atingimento</span><span>{atingimento(value, total)}%</span></div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{largura_barra(value, total)}%;background:{color}"></div></div>
     </div>"""
 
 
@@ -191,7 +193,7 @@ def main():
     receita     = ativados["preco_oferta"].sum()
     pipeline    = int(df[df["mes_ativacao"].isna()]["acessos"].sum())
     faltam      = max(META_RENEG - vol_ativado, 0)
-    pct         = min(int(vol_ativado / META_RENEG * 100), 100) if META_RENEG else 0
+    pct         = atingimento(vol_ativado, META_RENEG) if META_RENEG else 0
 
     st.markdown('<p class="section-title">📈 KPIs do Mês</p>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)

@@ -14,6 +14,7 @@ from data_loader import (load_metas,
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import atingimento, largura_barra
 
 st.set_page_config(
     page_title="Connect Group | Tramitação Atual",
@@ -94,10 +95,11 @@ def get_vendedores(df: pd.DataFrame) -> list:
     return ["Todos"]
 
 def progress_html(value, total, color="#3b82f6"):
-    pct = min(int(value / total * 100), 100) if total > 0 else 0
+    # O rótulo mostra o atingimento real (pode passar de 100%); a barra para em
+    # 100% porque não tem para onde crescer.
     return f"""<div class="progress-wrap">
-      <div class="progress-label"><span>Atingimento</span><span>{pct}%</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{pct}%;background:{color}"></div></div>
+      <div class="progress-label"><span>Atingimento</span><span>{atingimento(value, total)}%</span></div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:{largura_barra(value, total)}%;background:{color}"></div></div>
     </div>"""
 
 
@@ -331,8 +333,8 @@ def main():
     receita     = ativados["preco_oferta"].sum()
     pipeline    = int(df[df["mes_ativacao"].isna()]["acessos"].sum())
 
-    pct_acessos = min(int(vol_ativado / META_VENDAS * 100), 100) if META_VENDAS else 0
-    pct_receita = min(int(receita / META_RECEITA * 100), 100) if META_RECEITA else 0
+    pct_acessos = atingimento(vol_ativado, META_VENDAS) if META_VENDAS else 0
+    pct_receita = atingimento(receita, META_RECEITA) if META_RECEITA else 0
     faltam_acessos = max(META_VENDAS - vol_ativado, 0)
     faltam_receita = max(META_RECEITA - receita, 0)
 

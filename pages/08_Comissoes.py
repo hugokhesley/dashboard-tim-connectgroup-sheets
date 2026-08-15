@@ -20,6 +20,7 @@ from data_loader import (
     registrar_acesso,
     _s, _to_num, _norm_pedido,
 )
+from regras import calcular_comissao, fmt_brl, fmt_comp
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -63,12 +64,6 @@ TIPOS_PRODUTO = [
 ]
 
 ALIQUOTAS_SIMPLES = [6.00, 6.84, 7.54, 8.04, 10.26, 11.31, 13.50]
-
-MESES_PT = {
-    "01": "Jan", "02": "Fev", "03": "Mar", "04": "Abr",
-    "05": "Mai", "06": "Jun", "07": "Jul", "08": "Ago",
-    "09": "Set", "10": "Out", "11": "Nov", "12": "Dez",
-}
 
 # ─────────────────────────────────────────────
 # HELPERS SHEETS
@@ -437,15 +432,8 @@ def enviar_email_parceiro(destinatario: str, assunto: str, corpo_texto: str, pdf
 # ─────────────────────────────────────────────
 # FORMATAÇÃO
 # ─────────────────────────────────────────────
-def fmt_brl(v: float) -> str:
-    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def fmt_comp(ym: str) -> str:
-    """'2025-05' → 'Mai/2025'"""
-    if not ym or len(ym) < 7:
-        return ym
-    y, m = ym[:4], ym[5:7]
-    return f"{MESES_PT.get(m, m)}/{y}"
+# fmt_brl e fmt_comp vêm de regras.py — a conta e a formatação do dinheiro
+# ficam num módulo puro, coberto por tests/test_regras.py.
 
 
 # ─────────────────────────────────────────────
@@ -485,13 +473,12 @@ def reset_fluxo():
 
 
 def calcular():
-    vendas = st.session_state.com_vendas
-    base = sum(v["valor"] for v in vendas)
-    fator = st.session_state.com_fator or 0.0
-    imp = st.session_state.com_imposto or 0.0
-    bruto = base * fator
-    desconto = bruto * (imp / 100)
-    liquido = bruto - desconto
+    """Recalcula a comissão e guarda o resultado no session_state."""
+    base, bruto, desconto, liquido = calcular_comissao(
+        [v["valor"] for v in st.session_state.com_vendas],
+        st.session_state.com_fator,
+        st.session_state.com_imposto,
+    )
     st.session_state.com_bruto = bruto
     st.session_state.com_desconto_imp = desconto
     st.session_state.com_liquido = liquido

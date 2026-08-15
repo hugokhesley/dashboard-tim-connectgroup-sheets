@@ -18,6 +18,7 @@
 
 import streamlit as st
 from ui import aplicar_estilo_base
+from erros import registrar_falha
 import pandas as pd
 import requests
 import re
@@ -451,6 +452,9 @@ def _load_colab_carteira():
 
         return vendedores, lideres, tbps, mapa_lider, mapa_tbp
     except Exception as e:
+        # Foi exatamente aqui que um TypeError virou lista vazia e o dropdown
+        # de vendedor ficou em branco sem ninguém perceber.
+        registrar_falha('carregar os vendedores da aba Colaboradores', e)
         return [], [], [], {}, {}
 
 

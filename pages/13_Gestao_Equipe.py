@@ -18,6 +18,8 @@
 
 import streamlit as st
 from ui import aplicar_estilo_base
+from erros import registrar_falha
+from regras import atingimento
 import pandas as pd
 import io
 from datetime import datetime
@@ -262,7 +264,7 @@ def gerar_pdf(df_atv, meta_dict, mes):
             rec_v     = df_v_atv["preco_oferta"].sum()
             ac_pip_v  = int(df_v_pip["acessos"].sum())
             meta_v    = _meta_vend(vend, meta_dict)
-            pct_v     = min(int(rec_v / meta_v * 100), 100) if meta_v > 0 else 0
+            pct_v     = atingimento(rec_v, meta_v)
             cor_v     = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
             pip_str   = f" | ⏳ {ac_pip_v} pip" if ac_pip_v > 0 else ""
 
@@ -400,7 +402,7 @@ def gerar_excel(df_atv, meta_dict, mes):
             df_v_atv = df_v[df_v["mes_ativacao"] == mes]
             rec_v_atv = df_v_atv["preco_oferta"].sum()
             meta_v = _meta_vend(vend, meta_dict)
-            pct_v  = min(int(rec_v_atv / meta_v * 100), 100) if meta_v > 0 else 0
+            pct_v  = atingimento(rec_v_atv, meta_v)
             cor_v  = "22C55E" if pct_v >= 100 else "F59E0B" if pct_v >= 70 else "EF4444"
 
             ws.merge_cells(f"A{row}:B{row}")
@@ -505,7 +507,7 @@ def render_detalhado(df, mes_alvo, meta_dict):
             ac_pip_v  = int(df_pip_v["acessos"].sum())
             rec_pip_v = df_pip_v["preco_oferta"].sum()
             meta_v    = _meta_vend(vend, meta_dict)
-            pct_v     = min(int(rec_atv_v / meta_v * 100), 100) if meta_v > 0 else 0
+            pct_v     = atingimento(rec_atv_v, meta_v)
             cor_v     = _cor(pct_v)
 
             cols_grp = [c for c in ["razao_social", "fila_atual", "status_dash"] if c in df_v.columns]
@@ -758,7 +760,10 @@ def _load_colab_carteira():
                     mapa_tbp[v] = t
         vendedores = sorted(mapa_lider.keys())
         return vendedores, mapa_lider, mapa_tbp
-    except Exception:
+    except Exception as e:
+        # Devolver lista vazia calado deixa o dropdown de vendedor em branco
+        # com cara de "não tem ninguém cadastrado".
+        registrar_falha('carregar os vendedores da aba Colaboradores', e)
         return [], {}, {}
 
 

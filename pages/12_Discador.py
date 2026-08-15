@@ -12,6 +12,7 @@ from datetime import datetime, date, timedelta
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import largura_barra
 from data_loader import registrar_acesso, get_gspread_client, load_colaboradores
 
 st.set_page_config(
@@ -207,7 +208,7 @@ st.markdown("""
 
 
 def _bar(valor, maximo, cor="#3b82f6", h=8):
-    pct = min(int(valor / maximo * 100), 100) if maximo > 0 else 0
+    pct = largura_barra(valor, maximo)   # largura de barra: sempre presa em 100
     return f'<div class="rank-bg"><div class="rank-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'
 
 

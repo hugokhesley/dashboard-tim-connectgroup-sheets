@@ -5,6 +5,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 import unicodedata
 
+from erros import registrar_falha
+
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive',
@@ -234,7 +236,10 @@ def load_metas() -> dict:
         # pega a ultima entrada como meta corrente
         ultima = list(todas.values())[-1]
         return ultima
-    except Exception:
+    except Exception as e:
+        # Cair no default silenciosamente faz o dashboard exibir meta de 626
+        # como se fosse a meta real do mes. Melhor a pessoa saber.
+        registrar_falha('ler as metas — usando os valores padrão', e)
         return defaults
 
 
@@ -417,7 +422,10 @@ def load_depara_discador() -> dict:
                 if chave and valor:
                     depara[chave] = valor
         return depara
-    except Exception:
+    except Exception as e:
+        # Sem o de-para, nome de vendedor divergente do discador deixa de casar
+        # e a pessoa aparece zerada no ranking, sem nenhum sinal de erro.
+        registrar_falha('ler o de-para do discador', e)
         return {}
 
 
@@ -646,5 +654,7 @@ def registrar_acesso(pagina: str, username: str = "") -> None:
         # Append na próxima linha disponível
         ws.append_row([ts, pagina, user], value_input_option='USER_ENTERED')
 
-    except Exception:
-        pass  # Falha silenciosa — log não deve quebrar a página
+    except Exception as e:
+        # Registro de acesso não pode atrapalhar quem está usando o dashboard,
+        # então não avisa na tela — mas vai para o log do servidor.
+        registrar_falha(f'registrar acesso à página {pagina}', e, avisar=False)

@@ -14,6 +14,7 @@ from data_loader import (
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import atingimento, largura_barra
 
 st.set_page_config(
     page_title="Connect Group | Tramitação Consolidada",
@@ -76,7 +77,7 @@ def _cor_pct(pct):
     return "#ef4444"
 
 def _bar(val, maximo, cor, h=12):
-    pct = min(int(val / maximo * 100), 100) if maximo > 0 else 0
+    pct = largura_barra(val, maximo)   # largura de barra: sempre presa em 100
     return f'<div class="prog-bg"><div class="prog-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'
 
 
@@ -334,7 +335,7 @@ def main():
             resumo.columns = ["Vendedor","Acessos","R$","Pedidos"]
             resumo["Meta"]    = resumo["Vendedor"].apply(lambda v: meta_dict.get(v, 0))
             resumo["% Meta"]  = resumo.apply(
-                lambda r: f"{min(int(r['Acessos']/r['Meta']*100),100)}%" if r["Meta"] > 0 else "—", axis=1
+                lambda r: f"{atingimento(r['Acessos'], r['Meta'])}%" if r["Meta"] > 0 else "—", axis=1
             )
 
             st.dataframe(resumo, use_container_width=True, hide_index=True,

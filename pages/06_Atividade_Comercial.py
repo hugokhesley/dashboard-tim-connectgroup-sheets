@@ -14,6 +14,7 @@ from data_loader import (
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import largura_barra
 
 st.set_page_config(
     page_title="Connect Group | Atividade Comercial",
@@ -124,7 +125,7 @@ def _parse_dates(df: pd.DataFrame, col: str) -> pd.Series:
 
 
 def _bar(valor, maximo, cor="#6366f1", h=12):
-    pct = min(int(valor / maximo * 100), 100) if maximo > 0 else 0
+    pct = largura_barra(valor, maximo)   # largura de barra: sempre presa em 100
     return f'<div class="day-bg"><div class="day-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'
 
 
@@ -377,7 +378,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     def _minibar(val, meta, cor):
         if meta <= 0: return ""
-        pct = min(int(val / meta * 100), 100)
+        pct = largura_barra(val, meta)   # largura de barra: sempre presa em 100
         return f"<div class='bar-mini'><div class='bar-mini-fill' style='width:{pct}%;background:{cor}'></div></div>"
 
     # ── Monta HTML ──────────────────────────────────────────────────────────
@@ -1211,7 +1212,8 @@ def main():
                 eh_hj   = (eh_mes_atual and dia == hoje.day)
                 badge   = '<span class="hoje-badge">HOJE</span>' if eh_hj else ""
                 cor     = cor_hoje if eh_hj else cor_bar
-                pct_med = min(int(media_ac / max_ac * 100), 100) if max_ac > 0 else 0
+                # posição do marcador da média dentro da barra — também é largura
+                pct_med = largura_barra(media_ac, max_ac)
                 acima   = "▲" if row["acessos"] >= media_ac else "▼"
                 cor_cmp = "#10b981" if row["acessos"] >= media_ac else "#ef4444"
                 html_dias += f"""

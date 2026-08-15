@@ -14,6 +14,7 @@ from data_loader import (
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from regras import atingimento, largura_barra
 
 st.set_page_config(
     page_title="Connect Group | Performance",
@@ -294,7 +295,7 @@ st.markdown("""
 
 
 def _bar(valor, maximo, cor="#22c55e", h=10):
-    pct = min(int(valor / maximo * 100), 100) if maximo > 0 else 0
+    pct = largura_barra(valor, maximo)   # largura de barra: sempre presa em 100
     return f'<div class="rank-bg"><div class="rank-fill" style="width:{pct}%;background:{cor};height:{h}px"></div></div>'
 
 def _cor(pct):
@@ -379,7 +380,7 @@ def render_visual(df, lideres, lider_sel, meta_dict):
         mx   = max((r["rec"] for r in rows), default=1)
         html = ""
         for i, r in enumerate(rows):
-            p = min(int(r["rec"]/r["meta"]*100),100) if r["meta"] > 0 else 0
+            p = atingimento(r["rec"], r["meta"])
             c = _cor(p)
             m = medals[i] if i < 3 else f"{i+1}º"
             pip_info = f" <span style='color:#f59e0b;font-size:0.7rem'>+R$ {r['rpip']:,.2f} pip.</span>" if incluir_pipeline else ""
@@ -409,7 +410,7 @@ def render_visual(df, lideres, lider_sel, meta_dict):
         html_v = ""
         for i, (vend, val) in enumerate(ser_tot.items()):
             mv = _meta_vend(vend, meta_dict)
-            p  = min(int(val / mv * 100), 100) if mv > 0 else 0
+            p  = atingimento(val, mv)
             c  = _cor(p)
             m  = medals[i] if i < 3 else f"{i+1}º"
             if incluir_pipeline:
@@ -546,7 +547,7 @@ def calcular_comissionamento(df, lideres, meta_dict, colab=None):
                 "meta":         meta,
                 "receita":      receita,
                 "bateu":        bateu,
-                "pct":          min(int(receita / meta * 100), 100) if meta > 0 else 0,
+                "pct":          atingimento(receita, meta),
                 "comiss_vend":  comiss_vend,
                 "comiss_lider": comiss_lider,
             })
@@ -639,7 +640,7 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
 
     with tab_equipes:
         for lider, d in dados.items():
-            pct_lider = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
+            pct_lider = atingimento(d["rec_lider"], d["meta_lider"])
             cor_lider = _cor(pct_lider)
             icon_lider = "✅" if pct_lider >= 100 else "⚠️" if pct_lider >= 70 else "🔴"
 
@@ -899,7 +900,7 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
 
                 # Status da equipe
                 falta_equipe = max(d["meta_lider"] - d["rec_lider"], 0)
-                pct_eq = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
+                pct_eq = atingimento(d["rec_lider"], d["meta_lider"])
                 status_equipe = "✅ Meta atingida!" if falta_equipe == 0 else f"🎯 Falta R$ {falta_equipe:,.2f} para meta da equipe"
 
                 # ── Resumo de ligações do discador ─────────────────
@@ -952,7 +953,7 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
             linhas_admin = ""
             total_comiss_geral = 0
             for lider, d in dados.items():
-                pct_eq = min(int(d["rec_lider"] / d["meta_lider"] * 100), 100) if d["meta_lider"] > 0 else 0
+                pct_eq = atingimento(d["rec_lider"], d["meta_lider"])
                 icon   = "✅" if pct_eq >= 100 else "⚠️" if pct_eq >= 70 else "🔴"
                 total_comiss_geral += d["total_comiss_lider"]
                 linhas_admin += f"\n{icon} <b>{lider}</b>: {d['n_bateram']}/{d['n_vendedores']} · R$ {d['rec_lider']:,.2f} ({pct_eq}%) · comiss. R$ {d['total_comiss_lider']:,.2f}"
@@ -975,7 +976,7 @@ def render_equipe(df_eq, lider, meta_dict):
     pipeline = int(df_eq[df_eq["mes_ativacao"].isna()]["acessos"].sum())
     n_vend   = df_eq["vendedor_real"].nunique()
     meta_eq  = sum(_meta_vend(v, meta_dict) for v in df_eq["vendedor_real"].unique()) if meta_dict else n_vend * META_VENDEDOR_PAD
-    pct      = min(int(rec_ativ / meta_eq * 100), 100) if meta_eq > 0 else 0
+    pct      = atingimento(rec_ativ, meta_eq)
     cor      = _cor(pct)
     icon     = "✅" if pct >= 100 else "⚠️" if pct >= 70 else "🔴"
 
@@ -1016,7 +1017,7 @@ def render_equipe(df_eq, lider, meta_dict):
                     Receita=("preco_oferta","sum"),
                 ).sort_values("Receita", ascending=False))
         rank["% Meta"] = rank.apply(
-            lambda row: f"{min(int(row['Receita'] / _meta_vend(row['vendedor_real'], meta_dict) * 100), 100)}%"
+            lambda row: f"{atingimento(row['Receita'], _meta_vend(row['vendedor_real'], meta_dict))}%"
             if _meta_vend(row['vendedor_real'], meta_dict) > 0 else "—", axis=1
         )
         st.dataframe(rank, use_container_width=True, hide_index=True,
@@ -1182,7 +1183,7 @@ def gerar_pdf_detalhado(df: "pd.DataFrame", meta_dict: dict, mes: str) -> bytes:
                 ac_pip = int(df_v[df_v["mes_ativacao"].isna()]["acessos"].sum())
                 rpip_v = df_v[df_v["mes_ativacao"].isna()]["preco_oferta"].sum()
                 meta_v = _meta_vend(vend, meta_dict)
-                pct_v  = min(int(rec_atv / meta_v * 100), 100) if meta_v > 0 else 0
+                pct_v  = atingimento(rec_atv, meta_v)
 
                 cor_pct = VERDE if pct_v >= 100 else AMBER if pct_v >= 70 else colors.HexColor("#ef4444")
 
@@ -1467,7 +1468,7 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
                 ac_pip_v  = int(df_pip_v["acessos"].sum())
                 rec_pip_v = df_pip_v["preco_oferta"].sum()
                 meta_v    = _meta_vend(vend, meta_dict)
-                pct_v     = min(int(rec_atv_v / meta_v * 100), 100) if meta_v > 0 else 0
+                pct_v     = atingimento(rec_atv_v, meta_v)
                 cor_v     = _cor(pct_v)
 
                 # ── Cabeçalho do vendedor ─────────────────────────
@@ -1737,7 +1738,7 @@ def main():
                     return
                 rows_html = ""
                 for _, row in dff.iterrows():
-                    pct = min(int(row["receita"] / row["meta"] * 100), 100) if row["meta"] > 0 else 0
+                    pct = atingimento(row["receita"], row["meta"])
                     cor = _cor(pct)
                     bar = _bar(row["receita"], row["meta"], cor, 8)
                     rows_html += f"""
