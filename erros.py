@@ -13,6 +13,21 @@ import sys
 import streamlit as st
 
 
+def registrar_aviso(contexto: str, detalhe: str, *, avisar: bool = False) -> None:
+    """Registra uma falha que nao veio como excecao.
+
+    Ex: uma API que responde 400 com o motivo no corpo — nao levanta erro em
+    Python, mas o motivo e exatamente o que se precisa saber depois.
+    """
+    print(f"[FALHA] {contexto}: {detalhe}", file=sys.stderr, flush=True)
+    if not avisar:
+        return
+    try:
+        st.warning(f"⚠️ {contexto} — {detalhe}")
+    except Exception:
+        pass
+
+
 def registrar_falha(contexto: str, erro: BaseException, *, avisar: bool = True) -> None:
     """Registra a falha no log do servidor e, por padrao, avisa na tela.
 

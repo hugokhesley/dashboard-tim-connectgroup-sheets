@@ -16,6 +16,7 @@ import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from auth import require_login
+from erros import registrar_falha
 from data_loader import registrar_acesso, get_gspread_client, load_data, apply_filters, _s, _to_num
 
 # ─────────────────────────────────────────────
@@ -260,7 +261,9 @@ def get_dash_mes(mes_alvo: str) -> dict:
                 df = _dedup_columns(df)
                 df["_aba"] = ws.title
                 dfs.append(df)
-            except Exception:
+            except Exception as e:
+                # Pular a aba calado tira um mês inteiro da análise sem avisar.
+                registrar_falha(f"ler a aba '{ws.title}'", e)
                 continue
 
         if not dfs:

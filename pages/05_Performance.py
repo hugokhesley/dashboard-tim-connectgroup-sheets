@@ -14,6 +14,7 @@ from data_loader import (
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from erros import registrar_aviso, registrar_falha
 from regras import atingimento, largura_barra
 
 st.set_page_config(
@@ -97,7 +98,9 @@ def load_discador_resumo():
         df["data"]      = df["data_hora"].dt.date
         df["funil"]     = df["resultado"].apply(_classificar_funil)
         return df
-    except Exception:
+    except Exception as e:
+        # DataFrame vazio aqui vira "ninguém ligou hoje" no painel do discador.
+        registrar_falha('carregar o resumo do discador', e)
         return pd.DataFrame()
 
 def resumo_discador_por_lider(df_disc, colab):
@@ -158,7 +161,9 @@ def _telegram_lideres():
     """Retorna dict {nome_lider: chat_id} dos secrets."""
     try:
         return dict(st.secrets["telegram"]["lideres"])
-    except Exception:
+    except Exception as e:
+        # Dict vazio = nenhum líder recebe aviso, e o envio "termina" sem erro.
+        registrar_falha('ler os chat_ids dos líderes nos secrets', e)
         return {}
 
 def enviar_telegram(chat_id: str, mensagem: str) -> bool:
@@ -174,8 +179,14 @@ def enviar_telegram(chat_id: str, mensagem: str) -> bool:
             "text": mensagem,
             "parse_mode": "HTML"
         }, timeout=10)
+        if resp.status_code != 200:
+            # O corpo da resposta diz o motivo (chat_id errado, bot bloqueado,
+            # token revogado) e não vem como exceção. Sem isso fica só "não enviou".
+            registrar_aviso(f'Telegram recusou a mensagem para {chat_id}',
+                            f'HTTP {resp.status_code}: {resp.text[:200]}')
         return resp.status_code == 200
-    except Exception:
+    except Exception as e:
+        registrar_falha(f'enviar mensagem no Telegram para {chat_id}', e, avisar=False)
         return False
 
 

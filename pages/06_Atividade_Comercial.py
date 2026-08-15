@@ -14,6 +14,7 @@ from data_loader import (
 )
 from auth import require_login
 from ui import aplicar_estilo_base
+from erros import registrar_falha
 from regras import largura_barra
 
 st.set_page_config(
@@ -185,8 +186,10 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
             if metas_por_vendedor:
                 from collections import Counter
                 meta_individual = Counter(metas_por_vendedor.values()).most_common(1)[0][0]
-    except Exception:
-        pass
+    except Exception as e:
+        # Se falhar aqui, segue com a meta padrão — mas o número na tela deixa
+        # de ser o da planilha, então isso precisa aparecer.
+        registrar_falha('ler as metas por vendedor — usando a meta padrão', e)
 
     # ── Usa apply_filters — mesma fonte de verdade da Performance ──────────────
     # Garante NOVO/ADITIVO, sem CANCELADO, filtra parceiro, gera mes_ativacao

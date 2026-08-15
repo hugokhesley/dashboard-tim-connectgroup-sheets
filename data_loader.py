@@ -255,7 +255,9 @@ def load_metas_historico() -> dict:
         spreadsheet = client.open_by_url(sheet_url)
         try:
             ws = spreadsheet.worksheet('metas')
-        except Exception:
+        except Exception as e:
+            # Sem a aba metas todo atingimento vira 0% e ninguém entende o motivo.
+            registrar_falha("abrir a aba 'metas' da planilha", e)
             return {}
         all_values = ws.get_all_values()
         if not all_values or len(all_values) < 2:

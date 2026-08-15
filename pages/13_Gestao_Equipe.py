@@ -18,7 +18,7 @@
 
 import streamlit as st
 from ui import aplicar_estilo_base
-from erros import registrar_falha
+from erros import registrar_aviso, registrar_falha
 from regras import atingimento
 import pandas as pd
 import io
@@ -747,6 +747,11 @@ def _load_colab_carteira():
         col_l = col_map.get("lider")
         col_t = col_map.get("tbp")
         if not col_v:
+            # Não é exceção, mas o efeito é o mesmo: dropdown vazio com cara de
+            # "não tem vendedor cadastrado".
+            registrar_aviso('carregar vendedores',
+                            "a aba Colaboradores não tem a coluna 'vendedor'",
+                            avisar=True)
             return [], {}, {}
         vendedores, mapa_lider, mapa_tbp = [], {}, {}
         for _, row in df.iterrows():
@@ -838,8 +843,10 @@ def _atualizar_expirados_gc(gc, df: pd.DataFrame) -> pd.DataFrame:
                     if re.sub(r"\D","",str(r2[col_cn-1]).strip()) in [re.sub(r"\D","",c) for c in atualizados]:
                         aba.update_cell(i, col_st, "Expirado")
                         aba.update_cell(i, col_da, hoje.strftime("%d/%m/%Y %H:%M"))
-        except Exception:
-            pass
+        except Exception as e:
+            # Falhar aqui é gravação: o CNPJ continua marcado como ocupado na
+            # planilha e ninguém consegue pegar o cliente.
+            registrar_falha('marcar CNPJs expirados na carteira', e)
     return df
 
 
@@ -1049,7 +1056,9 @@ def _load_contatos_cnpj(_gc, cnpj_norm: str) -> pd.DataFrame:
         df["cnpj"] = df["cnpj"].astype(str).str.replace(r"\D","",regex=True).str.strip()
         return df[df["cnpj"] == cnpj_norm].sort_values(
             "registrado_em", ascending=False).reset_index(drop=True)
-    except Exception:
+    except Exception as e:
+        # Vazio aqui vira "nenhum contato registrado com esse cliente".
+        registrar_falha('carregar o histórico de contatos do CNPJ', e)
         return pd.DataFrame(columns=HEADER_CONTATOS)
 
 
@@ -1090,7 +1099,9 @@ def _pedidos_por_cnpj(_gc, cnpj_norm: str) -> pd.DataFrame:
             return pd.DataFrame()
         df["_cnpj_norm"] = df.iloc[:,ci].astype(str).str.replace(r"\D","",regex=True)
         return df[df["_cnpj_norm"] == cnpj_norm].reset_index(drop=True)
-    except Exception:
+    except Exception as e:
+        # Vazio aqui vira "esse cliente não tem pedido nenhum".
+        registrar_falha('buscar os pedidos do CNPJ no DadosRadar', e)
         return pd.DataFrame()
 
 
@@ -1135,7 +1146,9 @@ def _qualidade_por_cnpj(cnpj_norm: str) -> pd.DataFrame:
             return pd.DataFrame()
         df["_cn"] = df[col_cn].astype(str).str.replace(r"\D","",regex=True)
         return df[df["_cn"] == cnpj_norm].reset_index(drop=True)
-    except Exception:
+    except Exception as e:
+        # Vazio aqui vira "esse cliente não tem apontamento de qualidade".
+        registrar_falha('buscar a qualidade do CNPJ', e)
         return pd.DataFrame()
 
 
@@ -1303,8 +1316,9 @@ def _tela_dossie(gc, cnpj_norm: str, row_carteira: dict, username: str, is_admin
             total_ac  = 0
             try:
                 total_ac = int(pd.to_numeric(df_ped[col_ac], errors="coerce").sum()) if col_ac else 0
-            except Exception:
-                pass
+            except Exception as e:
+                # Deixar em 0 calado mostra "0 acessos" como se fosse o número real.
+                registrar_falha('somar os acessos do cliente', e)
 
             k1, k2 = st.columns(2)
             with k1:

@@ -15,6 +15,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from auth import require_login
+from erros import registrar_falha
 from data_loader import (
     get_gspread_client,
     registrar_acesso,
@@ -184,7 +185,10 @@ def load_historico_emissoes() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = df[col].apply(_to_num)
         return df
-    except Exception:
+    except Exception as e:
+        # Histórico vazio parece "nenhuma emissão ainda" — perigoso numa tela
+        # que serve de comprovante do que já foi pago.
+        registrar_falha('carregar o histórico de emissões', e)
         return pd.DataFrame()
 
 

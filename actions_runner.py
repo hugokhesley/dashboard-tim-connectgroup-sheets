@@ -531,8 +531,10 @@ def encontrar_relatorio_alvo(driver, id_alvo: int, login: str):
                 if link:
                     links_capturados[login] = link
                 return texto, link, "proxima"
-    except Exception:
-        pass
+    except Exception as e:
+        # Sem este print, falha de Selenium/sessao aqui vira "relatorio sumiu"
+        # la em cima — foi o sintoma que confundiu o diagnostico em 27/jul.
+        print(f"     ↳ erro na varredura da fila: {type(e).__name__}: {e}")
 
     return None, None, None
 

@@ -289,8 +289,10 @@ def _atualizar_expirados(gc, df: pd.DataFrame) -> pd.DataFrame:
                             aba.update_cell(i, col_st, "Expirado")
                             aba.update_cell(i, col_da, hoje.strftime("%d/%m/%Y %H:%M"))
                             break
-        except Exception:
-            pass
+        except Exception as e:
+            # Falhar aqui é gravação: o CNPJ continua marcado como ocupado na
+            # planilha e ninguém consegue pegar o cliente.
+            registrar_falha('marcar CNPJs expirados na carteira', e)
     return df
 
 
