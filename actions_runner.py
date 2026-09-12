@@ -19,6 +19,7 @@
 
 import os
 import io
+import re
 import sys
 import time
 import unicodedata
@@ -669,6 +670,11 @@ def _num(valor: str) -> str:
     return s[:-2] if s.endswith(".0") else s
 
 
+# O rodape que todo relatorio do RADAR traz na ultima linha, na coluna
+# `pedido`. Ver `_linhas_a_preservar`.
+_RODAPE_RELATORIO = re.compile(r"total\s+de\s+registros", re.I)
+
+
 def _linhas_a_preservar(aba, header_novo, pedidos_novos):
     """Linhas já na aba cujo `pedido` não veio nesta rodada, realinhadas ao header novo.
 
@@ -694,6 +700,27 @@ def _linhas_a_preservar(aba, header_novo, pedidos_novos):
     preservadas = []
     for linha in atual[1:]:
         if idx_pedido >= len(linha) or not linha[idx_pedido] or _num(linha[idx_pedido]) in pedidos_novos:
+            continue
+        # O RODAPE DO RELATORIO NAO SE PRESERVA.
+        #
+        # Cada relatorio do RADAR termina com uma linha cuja coluna `pedido`
+        # diz "Total de registros: N". Isso nunca e um pedido, entao nunca
+        # esta em `pedidos_novos` — e sem este filtro ele era preservado em
+        # TODA rodada parcial, enquanto o rodapé do relatorio novo entrava
+        # por cima. Os rodapes empilhavam para sempre.
+        #
+        # Quem le a planilha somando "Total de registros" para conferir se
+        # ela veio inteira via o total crescer sozinho com as linhas reais
+        # paradas. Medido no importador do CRM entre 10 e 12/set/2026:
+        #
+        #     10/09  declara 2044 · leu 1707
+        #     11/09  declara 3049 · leu 1725
+        #     12/09  declara 4383 · leu 1732
+        #     12/09  declara 4433 · leu 1734   (+50 = rodape do T3748937)
+        #
+        # Ele recusou a importacao por 23h achando que faltavam 2.699 linhas
+        # que nunca existiram. A esteira do CRM ficou parada o dia inteiro.
+        if _RODAPE_RELATORIO.search(linha[idx_pedido]):
             continue
         preservadas.append([
             linha[pos[col]] if pos[col] is not None and pos[col] < len(linha) else ""
