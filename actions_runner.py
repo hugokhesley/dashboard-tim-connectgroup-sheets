@@ -20,6 +20,7 @@
 import os
 import io
 import re
+from urllib.parse import urlparse
 import sys
 import time
 import unicodedata
@@ -68,7 +69,20 @@ URL_FILA          = "https://radar.timbrasil.com.br/radar-blue/sistema/report-qu
 URL_START         = "https://radar.timbrasil.com.br/radar-blue/sistema/start.asp"
 
 # Login só conta como OK se a URL final estiver DENTRO do Radar (ver _login_confirmado).
-URLS_RADAR_OK     = ("radar-blue", "radar-tim")
+#
+# Compara HOST e CAMINHO, nunca a URL inteira. A pagina do provedor de
+# identidade carrega o destino no `redirect_uri` da query:
+#
+#     https://iam-pf.timbrasil.com.br/as/authorization.oauth2
+#         ?response_type=code&redirect_uri=...radar-blue...
+#
+# Um `"radar-blue" in url` casa com ESSE pedaco e da o login por bom com o
+# navegador parado no IdP. Foi o que aconteceu com o T3761125 em
+# 12/set/2026: tres rodadas seguidas imprimiram "Login OK — https://iam-pf
+# ..." e morreram logo depois, com `Message:` vazio do Selenium - que e
+# elemento nao encontrado, porque a pagina era a do IdP.
+HOST_RADAR        = "radar.timbrasil.com.br"
+CAMINHOS_RADAR_OK = ("/radar-blue", "/radar-tim")
 ESPERA_POS_LOGIN_S = 60         # quanto esperar o resume do OAuth2 do SmartID concluir
 
 # Quantas páginas da fila varrer procurando o ID. Antes só a página 2 era olhada:
@@ -209,6 +223,20 @@ def _token_diferente(sdtid_path, token_anterior=None, espera_max_s=75):
     return token
 
 
+def _esta_no_radar(url: str) -> bool:
+    """A URL final esta DENTRO do Radar - host e caminho, nao substring.
+
+    Ver o comentario de HOST_RADAR: a query do IdP carrega o endereco do
+    Radar no `redirect_uri`, e substring na URL inteira casa com ele.
+    """
+    p = urlparse(url or "")
+    host = (p.hostname or "").lower()
+    caminho = (p.path or "").lower()
+    if not (host == HOST_RADAR or host.endswith("." + HOST_RADAR)):
+        return False
+    return any(caminho.startswith(c) for c in CAMINHOS_RADAR_OK)
+
+
 def _login_confirmado(driver, timeout_s=ESPERA_POS_LOGIN_S) -> bool:
     """Só considera logado quem chegou de fato no Radar.
 
@@ -220,7 +248,7 @@ def _login_confirmado(driver, timeout_s=ESPERA_POS_LOGIN_S) -> bool:
     ultima = ""
     while time.time() < fim:
         ultima = (driver.current_url or "").lower()
-        if any(t in ultima for t in URLS_RADAR_OK):
+        if _esta_no_radar(ultima):
             return True
         # Empurra o resume: às vezes basta pedir a home do Radar de novo.
         try:
