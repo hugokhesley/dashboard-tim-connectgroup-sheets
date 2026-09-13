@@ -15,6 +15,7 @@ import sys, os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from tempo import agora as _agora
 from auth import require_login
 from erros import registrar_falha
 from data_loader import registrar_acesso, get_gspread_client, load_data, apply_filters, _s, _to_num
@@ -558,7 +559,7 @@ res    = resumo_espelho(df_esp)
 
 # Deriva mês/ano do dashboard direto do espelho (colunas Ano e Mês)
 mes_num = mes_espelho_para_num(str(res.get("mes_label", "")))
-ano_num = int(res.get("ano", datetime.now().year))
+ano_num = int(res.get("ano", _agora().year))
 mes_dash = f"{mes_num:02d}/{ano_num}" if mes_num else None
 
 with st.sidebar:

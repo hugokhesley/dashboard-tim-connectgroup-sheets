@@ -28,6 +28,7 @@ import requests
 import pandas as pd
 import gspread
 from datetime import datetime, timedelta, timezone
+from tempo import agora as _agora
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
@@ -146,7 +147,7 @@ def gerar_token(sdtid_path: str, pin: int = 1234) -> str:
 
 
 def calcular_datas():
-    hoje = datetime.today()
+    hoje = _agora()
     mes  = hoje.month - 2
     ano  = hoje.year
     if mes <= 0:

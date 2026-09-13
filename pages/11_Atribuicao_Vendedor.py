@@ -8,6 +8,7 @@
 """
 
 import streamlit as st
+from tempo import agora as _agora
 from ui import aplicar_estilo_base
 import pandas as pd
 from datetime import datetime, timedelta
@@ -104,7 +105,7 @@ def carregar_pendentes():
 
     # Filtra últimos 30 dias pela safra (MM/YYYY)
     if col_safra:
-        limite = datetime.today() - timedelta(days=60)
+        limite = _agora() - timedelta(days=60)
         def _parse_safra(v):
             try:
                 return datetime.strptime(_s(v).strip(), "%m/%Y")
@@ -170,7 +171,7 @@ def salvar_atribuicoes(ws, atribuicoes: list):
 # ─────────────────────────────────────────────────────────────────
 
 def main():
-    hoje = datetime.now().strftime("%d/%m/%Y %H:%M")
+    hoje = _agora().strftime("%d/%m/%Y %H:%M")
     st.markdown(f"""
     <div class="header">
       <p class="header-title">👤 Atribuição de Vendedores</p>

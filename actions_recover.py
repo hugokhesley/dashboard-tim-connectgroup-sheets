@@ -26,6 +26,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from tempo import agora as _agora
 
 import pandas as pd
 
@@ -143,7 +144,7 @@ def processar_conta(conta):
 def main():
     print("=" * 55)
     print("  ACTIONS RECOVER — RELATÓRIOS JÁ PRONTOS")
-    print(f"  Início: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+    print(f"  Início: {_agora().strftime('%d/%m/%Y %H:%M:%S')}")
     print("=" * 55)
 
     contas = contas_do_dia()

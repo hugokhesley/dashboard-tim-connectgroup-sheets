@@ -17,6 +17,7 @@
 """
 
 import streamlit as st
+from tempo import agora as _agora
 from ui import aplicar_estilo_base
 from erros import registrar_aviso, registrar_falha
 from regras import atingimento
@@ -48,7 +49,7 @@ MESES_PT = {
     "09":"Setembro","10":"Outubro","11":"Novembro","12":"Dezembro"
 }
 
-MES_ALVO          = datetime.now().strftime("%m/%Y")
+MES_ALVO          = _agora().strftime("%m/%Y")
 META_VENDEDOR_PAD = 850
 SPREADSHEET_ID    = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 
@@ -168,7 +169,7 @@ def _fila_badge(fila):
             f'{icon} {fila_up}</span>')
 
 def gerar_meses_opcoes():
-    hoje = datetime.now()
+    hoje = _agora()
     meses = []
     for i in range(6):
         m = hoje.month - i
@@ -221,7 +222,7 @@ def gerar_pdf(df_atv, meta_dict, mes):
     sCli   = s("C", fontSize=7,  textColor=TDIM)
 
     story = []
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    agora = _agora().strftime("%d/%m/%Y %H:%M")
 
     h = Table([[Paragraph(f"<b>CONNECT GROUP — Connect Valore {mes}</b>", sTitle),
                 Paragraph(f"Gerado em {agora}", sRight)]], colWidths=["70%","30%"])
@@ -341,7 +342,7 @@ def gerar_excel(df_atv, meta_dict, mes):
     al_right = Alignment(horizontal="right", vertical="center")
     al_center= Alignment(horizontal="center",vertical="center")
 
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    agora = _agora().strftime("%d/%m/%Y %H:%M")
 
     # A=Nome, B=Fila, C=Acessos (total), D=Receita (total)
     ws.column_dimensions["A"].width = 50
@@ -703,7 +704,7 @@ def _formatar_cnpj(cnpj: str) -> str:
 def _dias_restantes_cart(data_registro: str) -> int:
     try:
         dt = datetime.strptime(str(data_registro).strip(), "%d/%m/%Y %H:%M")
-        return max(DIAS_EXPIRACAO - (datetime.now() - dt).days, 0)
+        return max(DIAS_EXPIRACAO - (_agora() - dt).days, 0)
     except Exception:
         return DIAS_EXPIRACAO
 
@@ -816,7 +817,7 @@ def _cnpj_disponivel(df: pd.DataFrame, cnpj: str):
 
 
 def _atualizar_expirados_gc(gc, df: pd.DataFrame) -> pd.DataFrame:
-    hoje = datetime.now()
+    hoje = _agora()
     atualizados = []
     for idx, row in df.iterrows():
         if str(row.get("status","")) != "Em Atendimento":
@@ -854,7 +855,7 @@ def _registrar_cnpj_carteira(gc, dados: dict, usuario: str) -> bool:
     try:
         sh    = gc.open_by_key(SPREADSHEET_ID)
         aba   = sh.worksheet(ABA_CARTEIRA)
-        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        agora = _agora().strftime("%d/%m/%Y %H:%M")
         linha = []
         for c in HEADER_CARTEIRA:
             if c == "status":                          linha.append("Em Atendimento")
@@ -881,7 +882,7 @@ def _atualizar_campo_carteira(gc, cnpj: str, campos: dict) -> bool:
         col_cn     = header.index("cnpj") if "cnpj" in header else None
         if col_cn is None:
             return False
-        campos["data_atualizacao"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+        campos["data_atualizacao"] = _agora().strftime("%d/%m/%Y %H:%M")
         for i, r2 in enumerate(todos[1:], start=2):
             if not r2:
                 continue
@@ -1065,7 +1066,7 @@ def _load_contatos_cnpj(_gc, cnpj_norm: str) -> pd.DataFrame:
 def _salvar_contato(gc, cnpj_norm: str, tipo: str, obs: str, usuario: str) -> bool:
     try:
         aba   = _get_aba_contatos(gc)
-        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        agora = _agora().strftime("%d/%m/%Y %H:%M")
         aba.append_row([
             cnpj_norm,
             agora[:10],
@@ -2130,7 +2131,7 @@ def _carregar_pendentes_bko(lider_filtro="", parceiro_filtro="", tipo="admin"):
         df_pend = df_pend[~df_pend[col_fila].apply(lambda x: "CANCELAD" in _s(x).upper())]
 
     from datetime import timedelta
-    limite = datetime.today() - timedelta(days=60)
+    limite = _agora() - timedelta(days=60)
     if col_safra:
         def _parse(v):
             try:
@@ -2200,7 +2201,7 @@ def main():
     parceiro_u = info["parceiro"]
 
     # ── Header ────────────────────────────────────────────────────
-    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
+    mes_str = MESES_PT.get(_agora().strftime("%m"), "") + "/" + _agora().strftime("%Y")
     badge   = "🔑 ADMIN" if tipo == "admin" else ("👤 LÍDER" if tipo == "lider" else "🏢 PARCEIRO")
     st.markdown(f"""<div class="header-gestao">
       <div>
@@ -2268,7 +2269,7 @@ def main():
         st.markdown(f"**Mês:** `{mes_alvo}`")
         st.caption("Dados via Google Sheets · cache 3 min")
 
-    is_mes_atual = (mes_alvo == datetime.now().strftime("%m/%Y"))
+    is_mes_atual = (mes_alvo == _agora().strftime("%m/%Y"))
 
     # ── Aplica filtros e merge com BKO ────────────────────────────
     df = apply_filters(raw.copy(), mes_alvo, ["NOVO", "ADITIVO"], "Todos")  # parceiro ignorado na hierarquia por lider

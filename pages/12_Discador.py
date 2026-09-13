@@ -10,6 +10,7 @@ import os, sys
 from datetime import datetime, date, timedelta
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from tempo import hoje as _hoje
 from auth import require_login
 from ui import aplicar_estilo_base
 from regras import largura_barra
@@ -266,7 +267,7 @@ def main():
             "Hoje", "Ontem", "Últimos 7 dias", "Últimos 30 dias",
             "Mês atual", "Personalizado"
         ])
-        hoje = date.today()
+        hoje = _hoje()
         if periodo == "Hoje":
             dt_ini, dt_fim = hoje, hoje
         elif periodo == "Ontem":

@@ -5,6 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import unicodedata
 
+from tempo import agora as _agora
 from erros import registrar_falha
 
 SCOPES = [
@@ -647,9 +648,7 @@ def registrar_acesso(pagina: str, username: str = "") -> None:
             ws = spreadsheet.add_worksheet(title='Logs', rows=5000, cols=4)
             ws.update('A1:C1', [['timestamp', 'pagina', 'username']])
 
-        # Timestamp no fuso de Brasília (UTC-3)
-        agora = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
-        ts = agora.strftime('%d/%m/%Y %H:%M:%S')
+        ts = _agora().strftime('%d/%m/%Y %H:%M:%S')
 
         user = username if username else "desconhecido"
 

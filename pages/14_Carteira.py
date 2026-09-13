@@ -17,6 +17,7 @@
 """
 
 import streamlit as st
+from tempo import agora as _agora
 from ui import aplicar_estilo_base
 from erros import registrar_falha
 import pandas as pd
@@ -258,7 +259,7 @@ def _atualizar_expirados(gc, df: pd.DataFrame) -> pd.DataFrame:
     """Marca como Expirado CNPJs com mais de 60 dias sem ativar."""
     if df.empty:
         return df
-    hoje = datetime.now()
+    hoje = _agora()
     atualizados = []
     for idx, row in df.iterrows():
         if str(row.get("status","")) != "Em Atendimento":
@@ -317,7 +318,7 @@ def _cnpj_disponivel(df: pd.DataFrame, cnpj: str):
 def _registrar_cnpj(gc, dados: dict, usuario: str) -> bool:
     try:
         aba  = _get_aba_carteira(gc)
-        agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        agora = _agora().strftime("%d/%m/%Y %H:%M")
         linha = [dados.get(c, "") for c in HEADER_CARTEIRA]
         # Garante campos de controle
         idx_status = HEADER_CARTEIRA.index("status")
@@ -348,7 +349,7 @@ def _atualizar_campo(gc, cnpj: str, campos: dict) -> bool:
         col_cn = header.index("cnpj") if "cnpj" in header else None
         if col_cn is None:
             return False
-        campos["data_atualizacao"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+        campos["data_atualizacao"] = _agora().strftime("%d/%m/%Y %H:%M")
         for i, row in enumerate(todos[1:], start=2):
             if not row:
                 continue
@@ -474,7 +475,7 @@ def _formatar_cnpj(cnpj: str) -> str:
 def _dias_restantes(data_registro: str) -> int:
     try:
         dt   = datetime.strptime(str(data_registro).strip(), "%d/%m/%Y %H:%M")
-        diff = DIAS_EXPIRACAO - (datetime.now() - dt).days
+        diff = DIAS_EXPIRACAO - (_agora() - dt).days
         return max(diff, 0)
     except Exception:
         return DIAS_EXPIRACAO

@@ -12,6 +12,7 @@ import time
 import logging
 import gspread
 from datetime import date
+from tempo import hoje as _hoje
 from google.oauth2.service_account import Credentials
 
 from selenium import webdriver
@@ -58,7 +59,7 @@ def criar_driver():
 
 
 def periodo_mes_atual():
-    hoje   = date.today()
+    hoje   = _hoje()
     inicio = hoje.replace(day=1)
     return inicio.strftime("%d/%m/%Y"), hoje.strftime("%d/%m/%Y")
 

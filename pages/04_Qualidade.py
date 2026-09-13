@@ -5,6 +5,7 @@ import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import date as _date
+from tempo import hoje as _hoje
 from data_loader import _s, _to_num, _soma_valor, _normalize, _dedup_columns, get_gspread_client, registrar_acesso
 from auth import require_login
 from ui import aplicar_estilo_base
@@ -230,7 +231,7 @@ def _mask_sem_contato(df):
 
 
 def _enviar_alerta_qualidade(df_alerta, safras_sel, parceiros_sel, destinatarios, smtp_user, smtp_pass, smtp_from=None):
-    hoje = _date.today().strftime("%d/%m/%Y")
+    hoje = _hoje().strftime("%d/%m/%Y")
     total       = len(df_alerta)
     inadim      = df_alerta[_mask_inadim(df_alerta)]
     gerada      = df_alerta[_mask_gerada(df_alerta)]

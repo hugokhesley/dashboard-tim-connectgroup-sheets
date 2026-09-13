@@ -7,3 +7,6 @@ gspread>=6.0.0
 google-auth>=2.28.0
 requests>=2.31.0
 reportlab>=4.0.0
+# Banco de fusos para o zoneinfo (tempo.py). O servidor roda em UTC e o
+# dashboard filtra pelo mes de Brasilia. Sem ele o tempo.py cai no UTC-3 fixo.
+tzdata>=2024.1

@@ -7,6 +7,7 @@ MESES_PT = {
     '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'
 }
 import pandas as pd
+from tempo import agora as _agora
 from data_loader import (
     load_data, load_bko, load_metas, load_colaboradores,
     apply_filters, get_parceiros, _s, _to_num, _norm_pedido,
@@ -27,7 +28,7 @@ username = require_login("consolidada")
 aplicar_estilo_base()
 registrar_acesso("consolidada", username=username)
 
-MES_ALVO = datetime.now().strftime("%m/%Y")
+MES_ALVO = _agora().strftime("%m/%Y")
 
 st.markdown("""
 <style>
@@ -82,7 +83,7 @@ def _bar(val, maximo, cor, h=12):
 
 
 def main():
-    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
+    mes_str = MESES_PT.get(_agora().strftime("%m"), "") + "/" + _agora().strftime("%Y")
     st.markdown(f"""
     <div class="header-cons">
       <div>

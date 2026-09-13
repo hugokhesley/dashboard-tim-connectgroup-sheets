@@ -7,6 +7,7 @@ MESES_PT = {
     '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'
 }
 import pandas as pd
+from tempo import agora as _agora
 from data_loader import (load_metas,
     load_data, apply_filters, get_parceiros,
     STATUS_COLORS,
@@ -27,7 +28,7 @@ username = require_login("tramitacao")
 aplicar_estilo_base()
 registrar_acesso("tramitacao", username=username)
 
-MES_ATUAL = datetime.now().strftime("%m/%Y")
+MES_ATUAL = _agora().strftime("%m/%Y")
 
 st.markdown("""
 <style>
@@ -264,7 +265,7 @@ def render_pedidos_tramitacao(df: pd.DataFrame, raw: pd.DataFrame):
 
 
 def main():
-    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
+    mes_str = MESES_PT.get(_agora().strftime("%m"), "") + "/" + _agora().strftime("%Y")
     st.markdown("""
     <div class="header-vendas">
       <div>
@@ -291,7 +292,7 @@ def main():
 
     # Gera lista dos últimos 6 meses (mais atual primeiro)
     def gerar_meses_opcoes():
-        hoje = datetime.now()
+        hoje = _agora()
         meses = []
         for i in range(6):
             m = hoje.month - i

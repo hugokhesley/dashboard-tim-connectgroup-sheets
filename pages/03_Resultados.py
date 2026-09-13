@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import unicodedata
 import re
+from tempo import agora as _agora
 from data_loader import get_gspread_client, _s, _to_num, _normalize, _norm_pedido, _dedup_columns, get_meta_mes, registrar_acesso, load_bko, load_colaboradores, load_data, apply_filters, get_parceiros
 from auth import require_login
 from ui import aplicar_estilo_base
@@ -279,7 +280,7 @@ def gerar_pdf_resultados(df_atv, meta_dict, mes):
     sCli    = s("C", fontSize=7,  textColor=TDIM)
 
     story = []
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    agora = _agora().strftime("%d/%m/%Y %H:%M")
 
     # Header
     h = Table([[Paragraph(f"<b>CONNECT GROUP — Vendas {mes}</b>", sTitle),
@@ -379,7 +380,7 @@ def gerar_excel_resultados(df_atv, meta_dict, mes):
     al_right = Alignment(horizontal="right", vertical="center")
     al_center= Alignment(horizontal="center",vertical="center")
 
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    agora = _agora().strftime("%d/%m/%Y %H:%M")
 
     # Larguras
     ws.column_dimensions["A"].width = 45

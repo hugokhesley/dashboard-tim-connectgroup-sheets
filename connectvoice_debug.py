@@ -8,6 +8,7 @@ import requests
 import os
 import json
 from datetime import date
+from tempo import hoje as _hoje
 
 CONFIG = {
     "cv_login_url":   "https://voice.connectgroup.solutions",
@@ -17,7 +18,7 @@ CONFIG = {
 }
 
 def periodo_mes_atual():
-    hoje   = date.today()
+    hoje   = _hoje()
     inicio = hoje.replace(day=1)
     return f"{inicio.strftime('%d/%m/%Y')} - {hoje.strftime('%d/%m/%Y')}"
 

@@ -12,6 +12,7 @@ import requests
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+from tempo import agora as _agora
 
 # ─────────────────────────────────────────────────────────────────
 #  CONFIGURAÇÕES
@@ -119,7 +120,7 @@ def main():
 
     mensagem = (
         f"👤 <b>Atribuição de Vendedores</b>\n"
-        f"Connect Group · {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+        f"Connect Group · {_agora().strftime('%d/%m/%Y %H:%M')}\n\n"
         f"<b>{total} pedido(s)</b> sem vendedor atribuído:{linhas_preview}\n\n"
         f"👉 <a href=\"{LINK_ATRIBUICAO}\">Abrir formulário de atribuição</a>"
     )

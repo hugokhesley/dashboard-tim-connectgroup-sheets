@@ -34,6 +34,7 @@ import unicodedata
 import requests
 import gspread
 from datetime import datetime
+from tempo import agora as _agora
 from google.oauth2.service_account import Credentials
 from securid.sdtid import SdtidFile
 
@@ -382,7 +383,7 @@ def diagnostico(dados):
 #  MAIN
 # ─────────────────────────────────────────────────────────────────
 def main():
-    run_em = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_em = _agora().strftime("%Y-%m-%d %H:%M:%S")
     print("=" * 55); print("  QUICKTIM STATUS — consulta 3x/dia"); print("=" * 55)
 
     dados = carregar_dados()

@@ -7,6 +7,7 @@ MESES_PT = {
     "09":"Setembro","10":"Outubro","11":"Novembro","12":"Dezembro"
 }
 import pandas as pd
+from tempo import agora as _agora, hoje as _hoje
 from data_loader import (
     load_data, load_bko, load_colaboradores, apply_filters, get_parceiros,
     STATUS_COLORS, _s, _norm_pedido, inserir_pendentes_bko,
@@ -28,7 +29,7 @@ username = require_login("performance")
 aplicar_estilo_base()
 registrar_acesso("performance", username=username)
 
-MES_ALVO          = datetime.now().strftime("%m/%Y")
+MES_ALVO          = _agora().strftime("%m/%Y")
 META_VENDEDOR_PAD = 850
 SPREADSHEET_ID    = "1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg"
 
@@ -118,7 +119,7 @@ def resumo_discador_por_lider(df_disc, colab):
     )
 
     # Hoje e mês atual
-    hoje = date.today()
+    hoje = _hoje()
     mes_ini = hoje.replace(day=1)
 
     resultado = {}
@@ -789,9 +790,8 @@ def render_comissionamento(df, lideres, meta_dict, colab=None):
                 import smtplib
                 from email.mime.multipart import MIMEMultipart as _MM
                 from email.mime.text import MIMEText as _MT
-                from datetime import datetime as _dt
 
-                agora = _dt.now().strftime("%d/%m/%Y às %H:%M")
+                agora = _agora().strftime("%d/%m/%Y às %H:%M")
 
                 # Monta HTML do e-mail
                 rows_html_email = ""
@@ -1105,7 +1105,7 @@ def gerar_pdf_detalhado(df: "pd.DataFrame", meta_dict: dict, mes: str) -> bytes:
     story = []
 
     # ── Cabeçalho ────────────────────────────────────────────────
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    agora = _agora().strftime("%d/%m/%Y %H:%M")
     header_data = [[
         Paragraph(f"<b>CONNECT GROUP — Detalhado {mes}</b>", sTitle),
         Paragraph(f"Gerado em {agora}", sRight),
@@ -1590,7 +1590,7 @@ def render_detalhado(df_merged, lideres, meta_dict, colab, parceiro_sel):
 
 
 def main():
-    mes_str = MESES_PT.get(datetime.now().strftime("%m"), "") + "/" + datetime.now().strftime("%Y")
+    mes_str = MESES_PT.get(_agora().strftime("%m"), "") + "/" + _agora().strftime("%Y")
     st.markdown(f"""<div class="header-perf">
       <div>
         <p class="header-title">🏆 PERFORMANCE — CONNECT GROUP</p>
@@ -1779,7 +1779,7 @@ def main():
 
         # ── Busca pedidos dos últimos 60 dias que não estão no BKO ─────
         from datetime import timedelta
-        hoje   = datetime.today()
+        hoje   = _agora()
         limite = hoje - timedelta(days=60)
 
         # Carrega todos os meses dos últimos 60 dias
@@ -1907,8 +1907,7 @@ def main():
                             ths = "".join(f"<th style='padding:8px 10px;background:{cor};color:#fff;text-align:left'>{c}</th>" for c in df.columns)
                             return f"<h3 style='color:{cor};margin-top:24px'>{titulo} ({len(df)})</h3><table style='border-collapse:collapse;width:100%;font-size:13px'><tr>{ths}</tr>{lns}</table>"
 
-                        from datetime import datetime as _dt
-                        agora = _dt.now().strftime("%d/%m/%Y às %H:%M")
+                        agora = _agora().strftime("%d/%m/%Y às %H:%M")
                         BKO_URL = "https://docs.google.com/spreadsheets/d/1HmtEFf2Akh7NLR2prxDh9S4gmioKYw419B4bkx4yBLg/edit?gid=2090275960#gid=2090275960"
 
                         html = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:900px">

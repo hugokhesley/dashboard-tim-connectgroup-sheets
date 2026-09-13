@@ -7,6 +7,7 @@ MESES_PT = {
     '05':'Maio','06':'Junho','07':'Julho','08':'Agosto',
     '09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'
 }
+from tempo import agora as _agora, hoje as _hoje
 from data_loader import (
     load_data, apply_filters, get_parceiros,
     load_bko, _s, _to_num, _norm_pedido,
@@ -140,7 +141,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
 
     mes_num, ano_num = int(mes_sel[:2]), int(mes_sel[3:])
     nome_mes = MESES_PT.get(f"{mes_num:02d}", mes_sel)
-    agora    = datetime.now().strftime("%d/%m/%Y às %H:%M")
+    agora    = _agora().strftime("%d/%m/%Y às %H:%M")
 
     st.markdown(f"""
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
@@ -691,7 +692,7 @@ def _render_gestao_vista(df_base, df_mes_atv, df_mes_input, mes_sel, hoje, eh_me
                     MESES = {1:"Janeiro",2:"Fevereiro",3:"Março",4:"Abril",5:"Maio",6:"Junho",
                              7:"Julho",8:"Agosto",9:"Setembro",10:"Outubro",11:"Novembro",12:"Dezembro"}
                     nm = MESES.get(mes_num, str(mes_num))
-                    ag = datetime.now().strftime("%d/%m/%Y às %H:%M")
+                    ag = _agora().strftime("%d/%m/%Y às %H:%M")
 
                     # ── Gera PDF ─────────────────────────────────────────────
                     buf = io.BytesIO()
@@ -875,7 +876,7 @@ def main():
         # Página travada no mês corrente: é uma visão operacional de input/
         # ativação diária, cuja única fonte é a aba DadosRadar. Meses passados
         # vivem na aba resultados, que não tem data de input.
-        hoje = date.today()
+        hoje = _hoje()
         mes_sel = f"{hoje.month:02d}/{hoje.year}"
         st.markdown(f"**Mês:** `{mes_sel}`")
 

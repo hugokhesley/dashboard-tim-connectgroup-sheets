@@ -14,6 +14,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from tempo import agora as _agora, hoje as _hoje
 from auth import require_login
 from erros import registrar_falha
 from data_loader import (
@@ -147,7 +148,7 @@ def salvar_emissao(dados: dict) -> tuple:
                 "base_vendas", "comissao_bruta", "desconto_imposto",
                 "comissao_liquida", "pix_tipo", "pix_chave", "canal_envio"
             ]])
-        agora = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S")
+        agora = _agora().strftime("%d/%m/%Y %H:%M:%S")
         ws.append_row([
             agora,
             dados.get("emitido_por", ""),
@@ -454,8 +455,8 @@ def _init_state():
         "com_bruto": 0.0,
         "com_liquido": 0.0,
         "com_desconto_imp": 0.0,
-        "com_comp": date.today().strftime("%Y-%m"),
-        "com_vencimento": (date.today() + timedelta(days=10)).isoformat(),
+        "com_comp": _hoje().strftime("%Y-%m"),
+        "com_vencimento": (_hoje() + timedelta(days=10)).isoformat(),
         "com_pix_chave": "",
         "com_pix_tipo": "CNPJ",
         "com_canal": "E-mail",
@@ -800,7 +801,7 @@ elif step == 4:
         st.markdown("**Preview do documento**")
 
     # Gera conteúdo do contrato como texto
-    hoje_str = date.today().strftime("%d/%m/%Y")
+    hoje_str = _hoje().strftime("%d/%m/%Y")
     venc_str = venc_pag.strftime("%d/%m/%Y")
     linhas_tab = "\n".join(
         f"| {v['desc']} | {v['comp']} | {v['tipo']} | {fmt_brl(v['valor'])} |"
