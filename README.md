@@ -155,6 +155,64 @@ levaria uns 150 MB a mais para subir sem precisar.
 [credentials_gestao]    # usuários das páginas Gestão Equipe e Carteira
 ```
 
+## 🔑 Token RSA das contas do Radar
+
+O login do Radar é RSA SecurID. Cada conta tem um arquivo `.sdtid` (a semente),
+guardado **só** como secret do GitHub em base64 — `SDTID_<LOGIN>_B64`. Ele não
+fica no Streamlit: o dashboard não loga no Radar, quem loga é o Actions.
+
+Desde 09/2026 o portal da TIM gera token **vinculado a dispositivo**: a geração
+pede um "Identificador do dispositivo" e a semente sai cifrada com ele. Sem esse
+ID o arquivo abre, gera 8 dígitos e a TIM recusa o login sem dizer por quê. Por
+isso cada conta com token vinculado precisa de um segundo secret:
+
+| secret | conteúdo |
+|---|---|
+| `SDTID_<LOGIN>_B64` | o `.sdtid` em base64 |
+| `RSA_DEVICE_ID_<LOGIN>` | o ID digitado no portal ao gerar o token |
+
+O device ID é **por conta**, nunca global: as contas que ainda usam token solto
+não podem receber ID nenhum, senão o MAC delas passa a ser conferido com a chave
+errada e quebram junto (`tests/test_rsa_token.py` trava isso).
+
+### Trocar um token (reset de RSA)
+
+1. Gerar no portal: **Compartilhado (semente) → Windows**, preenchendo o
+   "Identificador do dispositivo" com um ID que você guarde.
+2. **Antes de importar o `.sdtid` em qualquer app**, tirar o base64 — o app da
+   RSA APAGA o arquivo ao importar e não dá para recuperar depois:
+
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\caminho\token.sdtid")) | clip
+   ```
+
+3. Conferir o par **antes** de cadastrar — o MAC do arquivo só fecha com o ID
+   certo, então isso responde offline e em 1 segundo o que antes só o Radar
+   respondia (e respondia com 4 minutos de retry e uma mensagem enganosa):
+
+   ```bash
+   python rsa_token.py D:\token.sdtid <device_id>
+   ```
+
+4. Colar em `SDTID_<LOGIN>_B64` e gravar o ID em `RSA_DEVICE_ID_<LOGIN>`, em
+   **Settings → Secrets and variables → Actions**. Secret não abre depois de
+   salvo; para confirmar que pegou, olhe a data em `gh secret list`.
+5. Se o serial mudou, atualizar o nome do arquivo nos 5 pontos que o citam:
+   os 3 workflows, `actions_runner.py` (`CONTAS`) e `quicktim_status.py`
+   (`PARCEIROS`).
+6. Disparar `gh workflow run atualizar_dados_radar.yml` — o único teste real.
+   Nenhuma tela do dashboard valida token; a aba Atualização de Bases só edita
+   uma lista de contas numa planilha.
+
+Device ID errado agora falha falando qual secret conferir, em vez de virar OTP
+inválido (`rsa_token.py`). O mesmo token funciona no PC e na automação ao mesmo
+tempo — a semente é a mesma e os códigos coincidem.
+
+O app da RSA no Windows guarda o token importado num banco criptografado em
+`%LOCALAPPDATA%\RSA\RSA SecurID Software Token Library\RSASecurIDStorage` — isso
+**não** é o `.sdtid` e não serve para a automação. O Device Serial Number da
+máquina fica em **Options → Token Storage Devices**.
+
 ## 🔧 Rodar localmente
 
 ```bash
@@ -174,6 +232,8 @@ python tests/test_data_loader.py    # data_loader: conversões e montagem da bas
 python tests/test_contas_escala.py  # Radar: conta que só roda em certos dias
 python tests/test_paginacao.py      # automação do Radar: varredura paginada
 python tests/test_recover.py        # automação do Radar: recover parcial
+python tests/test_rsa_token.py      # RSA: device ID por conta e falha em claro
+python tests/test_tempo.py          # relógio: UTC do servidor vs. Brasília
 ```
 
 ## 🔎 Falha nunca é silenciosa

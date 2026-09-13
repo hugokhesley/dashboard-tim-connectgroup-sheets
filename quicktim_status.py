@@ -36,7 +36,7 @@ import gspread
 from datetime import datetime
 from tempo import agora as _agora
 from google.oauth2.service_account import Credentials
-from securid.sdtid import SdtidFile
+from rsa_token import gerar_token
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -63,23 +63,15 @@ TIPOS_OK = {"NOVO", "ADITIVO"}      # renegociação fica de fora (decisão Hugo
 # Roteamento: a coluna 'parceiro' da DadosRadar guarda o CÓDIGO (custcode) do
 # parceiro, não o nome. Match EXATO do código define QUAL conta consulta o pedido.
 PARCEIROS = [
-    {"nome": "Serra",   "codigo": "NE80_NEN15I_NEE363",  "login": "t3761125", "sdtid": "T3761125_001938495598.sdtid"},
+    {"nome": "Serra",   "codigo": "NE80_NEN15I_NEE363",  "login": "t3761125", "sdtid": "T3761125_001938495279.sdtid"},
     {"nome": "Campina", "codigo": "NE80_NEN15I_NEE021",  "login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
     {"nome": "Alagoas", "codigo": "NE80_NEN13I_NEE0667", "login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
 ]
 
 # ─────────────────────────────────────────────────────────────────
-#  RSA (idêntico ao actions_runner — login headless automático)
+#  SELENIUM — login headless (o OTP vem do rsa_token, compartilhado
+#  com o actions_runner)
 # ─────────────────────────────────────────────────────────────────
-def _verify_mac_ignorar(self, *a, **k):
-    pass
-SdtidFile.verify_mac = _verify_mac_ignorar
-
-def gerar_token(sdtid_path, pin=1234):
-    tok = SdtidFile(sdtid_path).get_token()
-    tok.pin = pin
-    return tok.now()
-
 def criar_driver():
     import shutil
     opts = Options()
@@ -98,7 +90,7 @@ def criar_driver():
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
 
 def fazer_login(driver, login, sdtid_path):
-    token = gerar_token(sdtid_path)
+    token = gerar_token(sdtid_path, login=login)
     print(f"  🔐 Token gerado para {login.upper()}")
     try:
         driver.delete_all_cookies()

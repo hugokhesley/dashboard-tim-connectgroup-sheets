@@ -10,3 +10,6 @@ venv/
 # Segredos / credenciais
 .env
 .streamlit/secrets.toml
+
+# Tokens RSA (SecurID) - nunca versionar
+*.sdtid

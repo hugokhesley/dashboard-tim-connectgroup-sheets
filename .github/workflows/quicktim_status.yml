@@ -47,7 +47,7 @@ jobs:
           import base64, os
           with open('T3729525_001938489117.sdtid', 'wb') as f:
               f.write(base64.b64decode(os.environ['SDTID_T3729525_B64']))
-          with open('T3761125_001938495598.sdtid', 'wb') as f:
+          with open('T3761125_001938495279.sdtid', 'wb') as f:
               f.write(base64.b64decode(os.environ['SDTID_T3761125_B64']))
           with open('T3748937_001938491397.sdtid', 'wb') as f:
               f.write(base64.b64decode(os.environ['SDTID_T3748937_B64']))
@@ -57,6 +57,9 @@ jobs:
       - name: Consultar QuickTIM e gravar StatusQuickTIM
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          # Token da t3761125 e vinculado a dispositivo desde 09/2026: sem este
+          # ID a seed decifra errado e o OTP e recusado pela TIM sem explicacao.
+          RSA_DEVICE_ID_T3761125: ${{ secrets.RSA_DEVICE_ID_T3761125 }}
           # `|| '0'`: em run por schedule o inputs.dryrun vem vazio, e um dispatch
           # sem body (o botão do CRM) cairia no default. Rodada de verdade é o padrão.
           QUICKTIM_DRYRUN: ${{ inputs.dryrun || '0' }}

@@ -31,7 +31,8 @@ from datetime import datetime, timedelta, timezone
 from tempo import agora as _agora
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
-from securid.sdtid import SdtidFile
+import rsa_token
+from rsa_token import gerar_token
 
 # Logs em tempo real: no Actions o stdout é block-buffered (não é TTY), então os
 # prints ficavam presos no buffer e eram PERDIDOS quando o job era cancelado no
@@ -106,7 +107,7 @@ TERMOS_LOGIN_URL  = ("iam-pf", "signon", "login", "authn")
 # ela rodou continua valendo ate a proxima vez.
 CONTAS = [
     {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid", "dias": None},
-    {"login": "t3761125", "sdtid": "T3761125_001938495598.sdtid", "dias": None},
+    {"login": "t3761125", "sdtid": "T3761125_001938495279.sdtid", "dias": None},
     {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid", "dias": None},
 ]
 
@@ -130,20 +131,6 @@ links_capturados: dict = {}
 # Nome do parâmetro de paginação que a fila do Radar honra, por login (descoberto
 # no 1º poll que precisou paginar). Evita testar 4 nomes a cada checagem.
 paginacao_param: dict = {}
-
-# ─────────────────────────────────────────────────────────────────
-#  MONKEY-PATCH RSA
-# ─────────────────────────────────────────────────────────────────
-
-def _verify_mac_ignorar(self, *args, **kwargs):
-    pass
-SdtidFile.verify_mac = _verify_mac_ignorar
-
-
-def gerar_token(sdtid_path: str, pin: int = 1234) -> str:
-    token_obj = SdtidFile(sdtid_path).get_token()
-    token_obj.pin = pin
-    return token_obj.now()
 
 
 def calcular_datas():
@@ -209,18 +196,18 @@ def criar_driver():
 #  SELENIUM — login RSA
 # ─────────────────────────────────────────────────────────────────
 
-def _token_diferente(sdtid_path, token_anterior=None, espera_max_s=75):
+def _token_diferente(sdtid_path, token_anterior=None, espera_max_s=75, login=""):
     """Gera um token RSA garantindo que NÃO é o mesmo da tentativa anterior.
 
     O SecurID troca de código a cada 60s e o servidor rejeita reuso do mesmo
     código — repetir o login imediatamente com o token velho falharia de novo
     sem motivo. Espera a janela virar (no máx. ~75s)."""
-    token = gerar_token(sdtid_path)
+    token = gerar_token(sdtid_path, login=login)
     if token_anterior and token == token_anterior:
         fim = time.time() + espera_max_s
         while token == token_anterior and time.time() < fim:
             time.sleep(5)
-            token = gerar_token(sdtid_path)
+            token = gerar_token(sdtid_path, login=login)
     return token
 
 
@@ -269,7 +256,7 @@ def fazer_login(driver, login, sdtid_path, tentativas=2):
         try:
             # Token gerado AQUI (e não lá dentro) para que uma tentativa que
             # exploda no meio não faça a seguinte reusar o mesmo código RSA.
-            token_usado = _token_diferente(sdtid_path, token_usado)
+            token_usado = _token_diferente(sdtid_path, token_usado, login=login)
             _fazer_login_uma_vez(driver, login, token_usado)
             if _login_confirmado(driver):
                 print(f"  ✅ Login OK — {driver.current_url[:60]}")
@@ -824,6 +811,12 @@ def main():
     if fora_de_escala:
         print(f"📆 Fora de escala hoje: {', '.join(l.upper() for l in fora_de_escala)} "
               f"— as linhas delas ficam preservadas na aba")
+
+    # Como cada conta esta configurada. Num run que falhou, isso separa "usa
+    # token vinculado e o ID esta la" de "esta sem ID nenhum" — a diferenca
+    # entre um device ID errado e um secret que ninguem cadastrou.
+    for c in contas:
+        print(f"   • {c['login'].upper()}: {rsa_token.descrever(c['sdtid'], c['login'])}")
 
     # ── ETAPA 1: Solicitar relatórios (contas do dia EM PARALELO) ─
     print(f"\n🌐 Solicitando relatórios das {len(contas)} contas em paralelo...")

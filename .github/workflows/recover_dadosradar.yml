@@ -52,7 +52,7 @@ jobs:
           import base64, os
           for var, fname in [
               ('SDTID_T3729525_B64', 'T3729525_001938489117.sdtid'),
-              ('SDTID_T3761125_B64', 'T3761125_001938495598.sdtid'),
+              ('SDTID_T3761125_B64', 'T3761125_001938495279.sdtid'),
               ('SDTID_T3748937_B64', 'T3748937_001938491397.sdtid'),
           ]:
               val = os.environ.get(var, '')
@@ -67,6 +67,9 @@ jobs:
       - name: Buscar relatórios prontos e subir para Sheets
         env:
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          # Token da t3761125 e vinculado a dispositivo desde 09/2026: sem este
+          # ID a seed decifra errado e o OTP e recusado pela TIM sem explicacao.
+          RSA_DEVICE_ID_T3761125: ${{ secrets.RSA_DEVICE_ID_T3761125 }}
           PYTHONUNBUFFERED: "1"
         run: |
           python actions_recover.py

@@ -8,7 +8,7 @@ import sys, types, os
 from datetime import datetime, timezone
 
 # ── stubs das dependencias pesadas (mesmo padrao dos outros testes) ──
-for mod in ("requests", "pandas", "gspread", "securid", "securid.sdtid",
+for mod in ("requests", "pandas", "gspread", "securid", "securid.sdtid", "securid.exceptions",
             "google", "google.oauth2", "google.oauth2.service_account",
             "selenium", "selenium.webdriver", "selenium.webdriver.common",
             "selenium.webdriver.common.by", "selenium.webdriver.support",
@@ -20,6 +20,7 @@ sys.modules["selenium.webdriver.support.expected_conditions"] = types.ModuleType
 sys.modules["selenium.webdriver.common.by"].By = type("By", (), {"XPATH": "xpath", "ID": "id", "NAME": "name"})
 sys.modules["selenium.webdriver.support.ui"].WebDriverWait = object
 sys.modules["securid.sdtid"].SdtidFile = type("SdtidFile", (), {"verify_mac": lambda *a, **k: None})
+sys.modules["securid.exceptions"].InvalidSignature = type("InvalidSignature", (Exception,), {})
 sys.modules["google.oauth2.service_account"].Credentials = object
 os.environ.setdefault("SPREADSHEET_ID", "fake")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
