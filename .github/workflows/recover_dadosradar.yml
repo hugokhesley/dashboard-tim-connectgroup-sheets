@@ -47,22 +47,7 @@ jobs:
           SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
           SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
           SDTID_T3748937_B64: ${{ secrets.SDTID_T3748937_B64 }}
-        run: |
-          python -c "
-          import base64, os
-          for var, fname in [
-              ('SDTID_T3729525_B64', 'T3729525_001938489117.sdtid'),
-              ('SDTID_T3761125_B64', 'T3761125_001938495279.sdtid'),
-              ('SDTID_T3748937_B64', 'T3748937_001938491397.sdtid'),
-          ]:
-              val = os.environ.get(var, '')
-              if val:
-                  with open(fname, 'wb') as f:
-                      f.write(base64.b64decode(val))
-                  print(f'OK: {fname}')
-              else:
-                  print(f'PULANDO: {var} nao configurado')
-          "
+        run: python criar_sdtid.py
 
       - name: Buscar relatórios prontos e subir para Sheets
         env:
