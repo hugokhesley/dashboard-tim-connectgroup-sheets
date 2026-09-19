@@ -178,7 +178,12 @@ errada e quebram junto (`tests/test_rsa_token.py` trava isso).
 ### Trocar um token (reset de RSA)
 
 1. Gerar no portal: **Compartilhado (semente) → Windows**, preenchendo o
-   "Identificador do dispositivo" com um ID que você guarde.
+   "Identificador do dispositivo". **O que o portal grava como senha da semente
+   é o login em MAIÚSCULAS** (`T3764753`), não o número que você digita ali:
+   conferido em 19/09/2026 nos dois tokens vinculados, o MAC só fecha com o
+   login. O `<DeviceSerialNumber>` dentro do arquivo guarda o serial da máquina
+   e **não** decifra nada — foi o que fez a t3764753 reprovar no `rsa_token.py`
+   com o ID "certo" na mão.
 2. **Antes de importar o `.sdtid` em qualquer app**, tirar o base64 — o app da
    RSA APAGA o arquivo ao importar e não dá para recuperar depois:
 
@@ -211,7 +216,8 @@ tempo — a semente é a mesma e os códigos coincidem.
 O app da RSA no Windows guarda o token importado num banco criptografado em
 `%LOCALAPPDATA%\RSA\RSA SecurID Software Token Library\RSASecurIDStorage` — isso
 **não** é o `.sdtid` e não serve para a automação. O Device Serial Number da
-máquina fica em **Options → Token Storage Devices**.
+máquina fica em **Options → Token Storage Devices** — guarde-o para gerar o
+token no portal, mas o que vai em `RSA_DEVICE_ID_<LOGIN>` é o login maiúsculo.
 
 ## 🔧 Rodar localmente
 

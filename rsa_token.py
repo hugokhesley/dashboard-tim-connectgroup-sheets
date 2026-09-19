@@ -30,8 +30,12 @@ PIN_PADRAO = 1234
 def device_id(login: str) -> str | None:
     """Device ID do token dessa conta, ou None se ela ainda usa token solto.
 
-    Vem do secret `RSA_DEVICE_ID_<LOGIN>` — ex.: `RSA_DEVICE_ID_T3761125`. Não
-    existe fallback global de propósito: um `RSA_DEVICE_ID` valendo para todas
+    Vem do secret `RSA_DEVICE_ID_<LOGIN>` — ex.: `RSA_DEVICE_ID_T3761125`. O
+    valor é o **login em maiúsculas**, não o Device Serial Number da máquina: o
+    portal da TIM pede o serial na hora de gerar e grava ele em
+    `<DeviceSerialNumber>`, mas quem decifra a semente (e fecha o MAC) é o
+    login. Conferido em 19/09/2026 nos dois tokens vinculados. Não existe
+    fallback global de propósito: um `RSA_DEVICE_ID` valendo para todas
     passaria o ID também para as contas de token solto e derrubaria as que hoje
     funcionam.
     """
