@@ -47,6 +47,7 @@ jobs:
           SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
           SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
           SDTID_T3748937_B64: ${{ secrets.SDTID_T3748937_B64 }}
+          SDTID_T3793577_B64: ${{ secrets.SDTID_T3793577_B64 }}
         run: python criar_sdtid.py
 
       - name: Buscar relatórios prontos e subir para Sheets
@@ -55,6 +56,7 @@ jobs:
           # Token da t3761125 e vinculado a dispositivo desde 09/2026: sem este
           # ID a seed decifra errado e o OTP e recusado pela TIM sem explicacao.
           RSA_DEVICE_ID_T3761125: ${{ secrets.RSA_DEVICE_ID_T3761125 }}
+          RSA_DEVICE_ID_T3793577: ${{ secrets.RSA_DEVICE_ID_T3793577 }}
           PYTHONUNBUFFERED: "1"
         run: |
           python actions_recover.py

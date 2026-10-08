@@ -109,6 +109,7 @@ CONTAS = [
     {"login": "t3729525", "sdtid": "T3729525_001938489117.sdtid", "dias": None},
     {"login": "t3761125", "sdtid": "T3761125_001938495279.sdtid", "dias": None},
     {"login": "t3748937", "sdtid": "T3748937_001938491397.sdtid", "dias": None},
+    {"login": "t3793577", "sdtid": "T3793577_001938496483.sdtid", "dias": None},  # Piaui, 07/10/2026
 ]
 
 

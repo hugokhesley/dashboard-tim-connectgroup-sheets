@@ -57,7 +57,9 @@ except SystemExit as e:
 
 print("chamadas:", chamadas)
 assert chamadas["subir"]["preservar"] is True, "PERIGO: gravaria sem preservar → base truncada"
-assert chamadas["subir"]["linhas"] == 6, chamadas["subir"]
+# 3 linhas por conta que respondeu: todas menos a flaky. Contado das CONTAS,
+# e nao fixo: incluir conta nova (Piaui, 07/10/2026) nao pode quebrar o teste.
+assert chamadas["subir"]["linhas"] == 3 * (len(REC.CONTAS) - 1), chamadas["subir"]
 assert chamadas["status"]["status"] == "parcial", chamadas["status"]
 assert chamadas["status"]["falhas"] == ["t3729525"], chamadas["status"]
 assert codigo == 1, f"rodada parcial deveria sair com exit 1 (saiu {codigo})"
