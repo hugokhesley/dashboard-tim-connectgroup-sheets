@@ -66,6 +66,7 @@ PARCEIROS = [
     {"nome": "Serra",   "codigo": "NE80_NEN15I_NEE363",  "login": "t3761125", "sdtid": "T3761125_001938495279.sdtid"},
     {"nome": "Campina", "codigo": "NE80_NEN15I_NEE021",  "login": "t3729525", "sdtid": "T3729525_001938489117.sdtid"},
     {"nome": "Alagoas", "codigo": "NE80_NEN13I_NEE0667", "login": "t3748937", "sdtid": "T3748937_001938491397.sdtid"},
+    {"nome": "Piaui",   "codigo": "NE80_NEN17I_NEE0747", "login": "t3793577", "sdtid": "T3793577_001938496483.sdtid"},  # 07/10/2026
 ]
 
 # ─────────────────────────────────────────────────────────────────
