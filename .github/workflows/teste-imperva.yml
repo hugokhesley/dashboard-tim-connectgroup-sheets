@@ -1,0 +1,41 @@
+# Teste: o Imperva do Phoenix deixa a maquina do GitHub passar?
+#
+# Mesmo teste feito da VM 114 em 11/10/2026 (curl puro, sem disfarce):
+#   PASSA   -> HTTP 401 e "Click Provider Link" (manda para o login iam-pf)
+#   BARRADO -> HTTP 403, ou pagina do Incapsula ("Request unsuccessful")
+#
+# Nao usa segredo nenhum e nao faz login. Roda so quando alguem manda,
+# em Actions > Teste Imperva Phoenix > Run workflow.
+
+name: Teste Imperva Phoenix
+
+on:
+  workflow_dispatch:
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    steps:
+      - name: IP de saida desta maquina
+        run: curl -s -m 15 https://api.ipify.org; echo
+
+      - name: Phoenix (porta de entrada)
+        run: |
+          URL=https://phoenix2businesspcs.timbrasil.com.br/
+          CODIGO=$(curl -s -o corpo.html -D cabecalho.txt -w "%{http_code}" -m 20 "$URL")
+          echo "HTTP $CODIGO"
+          grep -i "x-cdn\|x-iinfo" cabecalho.txt || true
+          echo "--- inicio da pagina ---"
+          head -c 300 corpo.html; echo
+          echo "------------------------"
+          if [ "$CODIGO" = "401" ] && grep -q "Click Provider Link" corpo.html; then
+            echo "RESULTADO: PASSA (igual a VM e ao notebook)"
+          else
+            echo "RESULTADO: BARRADO ou diferente - mandar este log"
+            exit 1
+          fi
+
+      - name: Login da TIM (iam-pf)
+        run: |
+          curl -s -o /dev/null -w "HTTP %{http_code} (VM e notebook deram 400)\n" -m 20 \
+            https://iam-pf.timbrasil.com.br/as/authorization.oauth2
