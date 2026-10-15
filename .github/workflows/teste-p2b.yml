@@ -38,6 +38,8 @@ jobs:
         env:
           RSA_DEVICE_ID_T3761125: ${{ secrets.RSA_DEVICE_ID_T3761125 }}
           RSA_DEVICE_ID_T3793577: ${{ secrets.RSA_DEVICE_ID_T3793577 }}
+          # o actions_runner le na importacao; o teste nao toca na planilha
+          SPREADSHEET_ID: "nao-usado-no-teste"
           PYTHONUNBUFFERED: "1"
         run: xvfb-run -a python teste_p2b.py "${{ github.event.inputs.conta }}"
       - name: Apagar as sementes
