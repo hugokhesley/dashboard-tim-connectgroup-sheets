@@ -1,0 +1,45 @@
+# Teste: logado pelo RADAR, o Chrome do GitHub entra no Phoenix (P2B)?
+# Chrome comum, sem headless, numa tela virtual. So roda quando alguem manda.
+name: Teste P2B pelo RADAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      conta:
+        description: "login do RADAR (t37xxxxx)"
+        default: "t3761125"
+
+concurrency:
+  group: dados-radar
+  cancel-in-progress: false
+
+jobs:
+  teste:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencias
+        run: |
+          pip install pandas openpyxl gspread google-auth requests securid selenium webdriver-manager
+          sudo apt-get install -y xvfb >/dev/null
+      - uses: browser-actions/setup-chrome@v1
+      - name: Criar arquivos SDTID
+        env:
+          SDTID_T3729525_B64: ${{ secrets.SDTID_T3729525_B64 }}
+          SDTID_T3761125_B64: ${{ secrets.SDTID_T3761125_B64 }}
+          SDTID_T3748937_B64: ${{ secrets.SDTID_T3748937_B64 }}
+          SDTID_T3793577_B64: ${{ secrets.SDTID_T3793577_B64 }}
+        run: python criar_sdtid.py
+      - name: Login no RADAR e abrir o Phoenix
+        env:
+          RSA_DEVICE_ID_T3761125: ${{ secrets.RSA_DEVICE_ID_T3761125 }}
+          RSA_DEVICE_ID_T3793577: ${{ secrets.RSA_DEVICE_ID_T3793577 }}
+          PYTHONUNBUFFERED: "1"
+        run: xvfb-run -a python teste_p2b.py "${{ github.event.inputs.conta }}"
+      - name: Apagar as sementes
+        if: always()
+        run: rm -f *.sdtid
